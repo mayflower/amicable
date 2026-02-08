@@ -15,7 +15,8 @@ ENV CI=1
 RUN npx -y nuxi@latest init /app \
   --packageManager npm \
   --no-modules \
-  --gitInit false \
+  --no-gitInit \
+  --force \
   && npm install \
   && npm install @nuxtjs/tailwindcss
 
