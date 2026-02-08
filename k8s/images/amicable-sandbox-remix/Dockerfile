@@ -13,7 +13,7 @@ RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 WORKDIR /tmp
 ENV CI=1
 RUN npx -y create-react-router@latest /app \
-  --template remix-run/react-router/templates/basic \
+  --template remix-run/react-router-templates/default \
   --package-manager npm \
   --yes \
   --install \
