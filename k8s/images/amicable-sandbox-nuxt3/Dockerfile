@@ -13,6 +13,9 @@ RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 WORKDIR /app
 ENV CI=1
 RUN npx -y nuxi@latest init /app \
+  --packageManager npm \
+  --no-modules \
+  --gitInit false \
   && npm install \
   && npm install @nuxtjs/tailwindcss
 

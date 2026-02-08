@@ -17,7 +17,6 @@ RUN npx -y sv@latest create /app \
   --types ts \
   --no-add-ons \
   --no-dir-check \
-  --no-download-check \
   --install npm
 
 # Default DeepAgents memory/skills locations.
