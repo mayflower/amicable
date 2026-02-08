@@ -7,33 +7,33 @@ export const TEMPLATES: Array<{
 }> = [
   {
     id: "lovable_vite",
-    title: "Lovable Native",
-    description: "React 19 + Vite + Tailwind + shadcn/ui",
+    title: "Single-Page App",
+    description: "Best for landing pages, dashboards, and client-side apps. React + Vite + Tailwind + shadcn/ui.",
   },
   {
     id: "nextjs15",
-    title: "Production",
-    description: "Next.js 15 (App Router) + TypeScript (strict)",
+    title: "Full-Stack Web App",
+    description: "Best for SEO, server rendering, and production sites. Next.js 15 App Router + TypeScript.",
   },
   {
     id: "fastapi",
-    title: "AI Agent Backend",
-    description: "FastAPI service (Hasura Actions)",
+    title: "Python API",
+    description: "Best for data pipelines, ML endpoints, and backend services. FastAPI + Python.",
   },
   {
     id: "hono",
-    title: "Lightweight Logic",
-    description: "Hono + TypeScript (Hasura webhooks)",
+    title: "Lightweight API",
+    description: "Best for webhooks, edge functions, and small services. Hono + TypeScript.",
   },
   {
     id: "remix",
-    title: "Enterprise Dashboard",
-    description: "Remix-style (React Router) dashboards",
+    title: "Multi-Page App",
+    description: "Best for forms, auth flows, and multi-page apps with server logic. React Router (Remix).",
   },
 ];
 
 export const templateLabel = (id: string | null | undefined): string => {
   const found = TEMPLATES.find((t) => t.id === id);
-  return found ? found.title : "Lovable Native";
+  return found ? found.title : "Single-Page App";
 };
 

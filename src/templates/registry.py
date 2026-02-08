@@ -23,31 +23,31 @@ class TemplateSpec:
 _DEFAULT_SPECS: dict[TemplateId, TemplateSpec] = {
     "lovable_vite": TemplateSpec(
         template_id="lovable_vite",
-        label="Lovable Native (React + Vite)",
+        label="Single-Page App (React + Vite)",
         k8s_sandbox_template_name="amicable-sandbox-lovable-vite",
         db_inject_kind="vite_index_html",
     ),
     "nextjs15": TemplateSpec(
         template_id="nextjs15",
-        label="Production (Next.js 15)",
+        label="Full-Stack Web App (Next.js 15)",
         k8s_sandbox_template_name="amicable-sandbox-nextjs15",
         db_inject_kind="next_layout_tsx",
     ),
     "fastapi": TemplateSpec(
         template_id="fastapi",
-        label="AI Agent Backend (FastAPI)",
+        label="Python API (FastAPI)",
         k8s_sandbox_template_name="amicable-sandbox-fastapi",
         db_inject_kind="none",
     ),
     "hono": TemplateSpec(
         template_id="hono",
-        label="Lightweight Logic (Hono)",
+        label="Lightweight API (Hono)",
         k8s_sandbox_template_name="amicable-sandbox-hono",
         db_inject_kind="none",
     ),
     "remix": TemplateSpec(
         template_id="remix",
-        label="Enterprise Dashboard (Remix)",
+        label="Multi-Page App (React Router)",
         k8s_sandbox_template_name="amicable-sandbox-remix",
         db_inject_kind="remix_root_tsx",
     ),
