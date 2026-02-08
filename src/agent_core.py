@@ -315,8 +315,8 @@ class Agent:
         logger.info("LangGraph PostgresStore initialized for long-term memory")
         return self._lg_store
 
-    def _get_langgraph_checkpointer(self):
-        """Return a PostgresSaver/AsyncPostgresSaver if configured, else None."""
+    async def _get_langgraph_checkpointer(self):
+        """Return an AsyncPostgresSaver if configured, else None."""
         if self._lg_checkpointer is not None:
             return self._lg_checkpointer
 
@@ -324,37 +324,27 @@ class Agent:
         if not dsn:
             return None
 
-        # Prefer async saver if available (production).
-        saver_cls = None
         try:
-            from langgraph.checkpoint.postgres import AsyncPostgresSaver  # type: ignore
-
-            saver_cls = AsyncPostgresSaver
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver  # type: ignore
         except Exception:
-            try:
-                from langgraph.checkpoint.postgres import PostgresSaver  # type: ignore
-
-                saver_cls = PostgresSaver
-            except Exception:
-                logger.warning(
-                    "LangGraph PostgresSaver unavailable (install langgraph-checkpoint-postgres + psycopg); checkpointing stays in-memory"
-                )
-                return None
+            logger.warning(
+                "AsyncPostgresSaver unavailable (install langgraph-checkpoint-postgres + psycopg[binary]); checkpointing stays in-memory"
+            )
+            return None
 
         try:
-            ctx = saver_cls.from_conn_string(dsn)
-            checkpointer = ctx.__enter__()
-            # Must be called once to create tables.
-            checkpointer.setup()
+            ctx = AsyncPostgresSaver.from_conn_string(dsn)
+            checkpointer = await ctx.__aenter__()
+            await checkpointer.setup()
         except Exception:
             logger.exception(
-                "Failed to initialize PostgresSaver; checkpointing stays in-memory"
+                "Failed to initialize AsyncPostgresSaver; checkpointing stays in-memory"
             )
             return None
 
         self._lg_checkpointer_ctx = ctx
         self._lg_checkpointer = checkpointer
-        logger.info("LangGraph PostgresSaver initialized for checkpointing")
+        logger.info("LangGraph AsyncPostgresSaver initialized for checkpointing")
         return self._lg_checkpointer
 
     def _bootstrap_memories(self, *, session_id: str) -> None:
@@ -1512,7 +1502,7 @@ class Agent:
         from deepagents import create_deep_agent
 
         store = self._get_langgraph_store()
-        checkpointer = self._get_langgraph_checkpointer()
+        checkpointer = await self._get_langgraph_checkpointer()
 
         from langchain.agents.middleware.model_retry import ModelRetryMiddleware
         from langchain.agents.middleware.tool_retry import ToolRetryMiddleware
