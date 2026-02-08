@@ -172,4 +172,108 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
           workingDir: /app
-
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: amicable-sandbox-nuxt3
+  namespace: amicable
+spec:
+  podTemplateSpec:
+    metadata:
+      labels:
+        app: amicable-sandbox-nuxt3
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: amicable-sandbox
+          image: ghcr.io/mayflower/amicable-sandbox-nuxt3:main
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: runtime
+              containerPort: 8888
+            - name: preview
+              containerPort: 3000
+          env:
+            - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+              value: ".amicable-preview.data.mayflower.zone"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+          workingDir: /app
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: amicable-sandbox-sveltekit
+  namespace: amicable
+spec:
+  podTemplateSpec:
+    metadata:
+      labels:
+        app: amicable-sandbox-sveltekit
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: amicable-sandbox
+          image: ghcr.io/mayflower/amicable-sandbox-sveltekit:main
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: runtime
+              containerPort: 8888
+            - name: preview
+              containerPort: 3000
+          env:
+            - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+              value: ".amicable-preview.data.mayflower.zone"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+          workingDir: /app
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: amicable-sandbox-laravel
+  namespace: amicable
+spec:
+  podTemplateSpec:
+    metadata:
+      labels:
+        app: amicable-sandbox-laravel
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: amicable-sandbox
+          image: ghcr.io/mayflower/amicable-sandbox-laravel:main
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: runtime
+              containerPort: 8888
+            - name: preview
+              containerPort: 3000
+          env:
+            - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+              value: ".amicable-preview.data.mayflower.zone"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+          workingDir: /app

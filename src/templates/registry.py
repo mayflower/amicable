@@ -5,7 +5,16 @@ import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
-TemplateId = Literal["lovable_vite", "nextjs15", "fastapi", "hono", "remix"]
+TemplateId = Literal[
+    "lovable_vite",
+    "nextjs15",
+    "fastapi",
+    "hono",
+    "remix",
+    "nuxt3",
+    "sveltekit",
+    "laravel",
+]
 
 DEFAULT_TEMPLATE_ID: TemplateId = "lovable_vite"
 
@@ -17,7 +26,15 @@ class TemplateSpec:
     k8s_sandbox_template_name: str
     # DB injection target. "none" means: only write the JS file, do not try to
     # patch HTML/TSX entrypoints.
-    db_inject_kind: Literal["vite_index_html", "next_layout_tsx", "remix_root_tsx", "none"]
+    db_inject_kind: Literal[
+        "vite_index_html",
+        "next_layout_tsx",
+        "remix_root_tsx",
+        "nuxt_config_ts",
+        "sveltekit_app_html",
+        "laravel_blade",
+        "none",
+    ]
 
 
 _DEFAULT_SPECS: dict[TemplateId, TemplateSpec] = {
@@ -50,6 +67,24 @@ _DEFAULT_SPECS: dict[TemplateId, TemplateSpec] = {
         label="Multi-Page App (React Router)",
         k8s_sandbox_template_name="amicable-sandbox-remix",
         db_inject_kind="remix_root_tsx",
+    ),
+    "nuxt3": TemplateSpec(
+        template_id="nuxt3",
+        label="Full-Stack Web App (Nuxt 3)",
+        k8s_sandbox_template_name="amicable-sandbox-nuxt3",
+        db_inject_kind="nuxt_config_ts",
+    ),
+    "sveltekit": TemplateSpec(
+        template_id="sveltekit",
+        label="Full-Stack Web App (SvelteKit)",
+        k8s_sandbox_template_name="amicable-sandbox-sveltekit",
+        db_inject_kind="sveltekit_app_html",
+    ),
+    "laravel": TemplateSpec(
+        template_id="laravel",
+        label="Full-Stack Web App (Laravel)",
+        k8s_sandbox_template_name="amicable-sandbox-laravel",
+        db_inject_kind="laravel_blade",
     ),
 }
 
@@ -90,4 +125,3 @@ def k8s_template_name_for(template_id: str | None) -> str:
 
     v = overrides.get(spec.template_id)
     return str(v).strip() if isinstance(v, str) and v.strip() else spec.k8s_sandbox_template_name
-

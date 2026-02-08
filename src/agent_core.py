@@ -463,12 +463,18 @@ class Agent:
                 )
                 from src.db.sandbox_inject import (
                     ensure_index_includes_db_script,
+                    ensure_laravel_welcome_includes_db_script,
+                    ensure_nuxt_config_includes_db_script,
                     ensure_next_layout_includes_db_script,
                     ensure_remix_root_includes_db_script,
+                    ensure_sveltekit_app_html_includes_db_script,
+                    laravel_db_paths,
+                    nuxt_db_paths,
                     next_db_paths,
                     parse_db_js,
                     remix_db_paths,
                     render_db_js,
+                    sveltekit_db_paths,
                     vite_db_paths,
                 )
                 from src.templates.registry import template_spec
@@ -505,6 +511,16 @@ class Agent:
                 elif inject_kind == "remix_root_tsx":
                     db_js_path, entry_paths = remix_db_paths()
                     ensure_entry = ensure_remix_root_includes_db_script
+                elif inject_kind == "nuxt_config_ts":
+                    db_js_path, entry_paths = nuxt_db_paths()
+                    ensure_entry = ensure_nuxt_config_includes_db_script
+                elif inject_kind == "sveltekit_app_html":
+                    db_js_path, app_html = sveltekit_db_paths()
+                    entry_paths = (app_html,)
+                    ensure_entry = ensure_sveltekit_app_html_includes_db_script
+                elif inject_kind == "laravel_blade":
+                    db_js_path, entry_paths = laravel_db_paths()
+                    ensure_entry = ensure_laravel_welcome_includes_db_script
 
                 # Determine app_key to inject:
                 # - if newly created/rotated, we have plaintext app_key

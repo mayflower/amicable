@@ -1,4 +1,12 @@
-export type TemplateId = "lovable_vite" | "nextjs15" | "fastapi" | "hono" | "remix";
+export type TemplateId =
+  | "lovable_vite"
+  | "nextjs15"
+  | "fastapi"
+  | "hono"
+  | "remix"
+  | "nuxt3"
+  | "sveltekit"
+  | "laravel";
 
 export const TEMPLATES: Array<{
   id: TemplateId;
@@ -30,10 +38,24 @@ export const TEMPLATES: Array<{
     title: "Multi-Page App",
     description: "Best for forms, auth flows, and multi-page apps with server logic. React Router (Remix).",
   },
+  {
+    id: "nuxt3",
+    title: "Vue Full-Stack App",
+    description: "Best for teams preferring Vue and Nuxt conventions. Nuxt 3 + Vite.",
+  },
+  {
+    id: "sveltekit",
+    title: "SvelteKit Full-Stack App",
+    description: "Best for fast iteration and small-to-medium full-stack apps. SvelteKit + Vite.",
+  },
+  {
+    id: "laravel",
+    title: "Laravel Full-Stack App",
+    description: "Best for PHP ecosystems and traditional MVC apps. Laravel + PHP.",
+  },
 ];
 
 export const templateLabel = (id: string | null | undefined): string => {
   const found = TEMPLATES.find((t) => t.id === id);
   return found ? found.title : "Single-Page App";
 };
-

@@ -6,6 +6,9 @@
 #   docker build -t amicable-sandbox-fastapi:latest       k8s/images/amicable-sandbox-fastapi
 #   docker build -t amicable-sandbox-hono:latest          k8s/images/amicable-sandbox-hono
 #   docker build -t amicable-sandbox-remix:latest         k8s/images/amicable-sandbox-remix
+#   docker build -t amicable-sandbox-nuxt3:latest         k8s/images/amicable-sandbox-nuxt3
+#   docker build -t amicable-sandbox-sveltekit:latest     k8s/images/amicable-sandbox-sveltekit
+#   docker build -t amicable-sandbox-laravel:latest       k8s/images/amicable-sandbox-laravel
 #
 # Then load into your cluster (example for kind):
 #   kind load docker-image amicable-sandbox-lovable-vite:latest --name <cluster>
@@ -180,4 +183,105 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
           workingDir: /app
-
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: amicable-sandbox-nuxt3
+spec:
+  podTemplateSpec:
+    metadata:
+      labels:
+        app: amicable-sandbox-nuxt3
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: amicable-sandbox
+          image: amicable-sandbox-nuxt3:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: runtime
+              containerPort: 8888
+            - name: preview
+              containerPort: 3000
+          env:
+            - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+              value: ".preview.example.com"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+          workingDir: /app
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: amicable-sandbox-sveltekit
+spec:
+  podTemplateSpec:
+    metadata:
+      labels:
+        app: amicable-sandbox-sveltekit
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: amicable-sandbox
+          image: amicable-sandbox-sveltekit:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: runtime
+              containerPort: 8888
+            - name: preview
+              containerPort: 3000
+          env:
+            - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+              value: ".preview.example.com"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+          workingDir: /app
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: amicable-sandbox-laravel
+spec:
+  podTemplateSpec:
+    metadata:
+      labels:
+        app: amicable-sandbox-laravel
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: amicable-sandbox
+          image: amicable-sandbox-laravel:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: runtime
+              containerPort: 8888
+            - name: preview
+              containerPort: 3000
+          env:
+            - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+              value: ".preview.example.com"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+          workingDir: /app

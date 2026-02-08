@@ -91,6 +91,45 @@ sandboxTemplates:
       limits:
         cpu: "1000m"
         memory: "1Gi"
+  - name: amicable-sandbox-nuxt3
+    image:
+      repository: ghcr.io/mayflower/amicable-sandbox-nuxt3
+      tag: main
+      pullPolicy: IfNotPresent
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1Gi"
+  - name: amicable-sandbox-sveltekit
+    image:
+      repository: ghcr.io/mayflower/amicable-sandbox-sveltekit
+      tag: main
+      pullPolicy: IfNotPresent
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1Gi"
+  - name: amicable-sandbox-laravel
+    image:
+      repository: ghcr.io/mayflower/amicable-sandbox-laravel
+      tag: main
+      pullPolicy: IfNotPresent
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1Gi"
 
 agent:
   replicas: 2

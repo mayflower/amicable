@@ -35,6 +35,12 @@ jobs:
             dockerfile: k8s/images/amicable-sandbox-hono/Dockerfile
           - name: amicable-sandbox-remix
             dockerfile: k8s/images/amicable-sandbox-remix/Dockerfile
+          - name: amicable-sandbox-nuxt3
+            dockerfile: k8s/images/amicable-sandbox-nuxt3/Dockerfile
+          - name: amicable-sandbox-sveltekit
+            dockerfile: k8s/images/amicable-sandbox-sveltekit/Dockerfile
+          - name: amicable-sandbox-laravel
+            dockerfile: k8s/images/amicable-sandbox-laravel/Dockerfile
           - name: amicable-editor
             dockerfile: k8s/images/amicable-editor/Dockerfile
 
