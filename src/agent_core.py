@@ -1514,19 +1514,6 @@ class Agent:
         store = self._get_langgraph_store()
         checkpointer = self._get_langgraph_checkpointer()
 
-        try:
-            from langchain.agents.middleware import TodoListMiddleware
-        except Exception:  # pragma: no cover
-            from langchain.agents.middleware.todo_list import (  # type: ignore[no-redef]
-                TodoListMiddleware,
-            )
-        try:
-            from langchain.agents.middleware import SummarizationMiddleware
-        except Exception:  # pragma: no cover
-            # Older/newer LangChain builds may locate it elsewhere.
-            from langchain.agents.middleware.summarization import (  # type: ignore[no-redef]
-                SummarizationMiddleware,
-            )
         from langchain.agents.middleware.model_retry import ModelRetryMiddleware
         from langchain.agents.middleware.tool_retry import ToolRetryMiddleware
         from langgraph.checkpoint.memory import MemorySaver
@@ -1586,19 +1573,14 @@ class Agent:
                 # Keep core editing working even if the optional memory backend isn't available.
                 return default_backend
 
+        # NOTE: TodoListMiddleware and SummarizationMiddleware are already added
+        # internally by create_deep_agent(); including them here would cause a
+        # "duplicate middleware" assertion error.
         middleware = [
             # Require approval before destructive deletes (e.g. rm/unlink/git clean/find -delete).
             DangerousExecuteHitlMiddleware(),
             # Require approval before destructive DB ops (drop/truncate).
             DangerousDbHitlMiddleware(),
-            # Keep a tool-updatable todo list for multi-step work (Claude Code-like).
-            TodoListMiddleware(),
-            # Summarize large histories to avoid context blow-ups.
-            SummarizationMiddleware(
-                model=_deepagents_summarization_model(),
-                trigger=("messages", _deepagents_summarization_trigger_messages()),
-                keep=("messages", _deepagents_summarization_keep_messages()),
-            ),
             ModelRetryMiddleware(max_retries=_deepagents_model_retry_max_retries()),
             ToolRetryMiddleware(max_retries=_deepagents_tool_retry_max_retries()),
         ]
