@@ -34,6 +34,7 @@ const NewScreen: React.FC = () => {
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Set<string>>(new Set());
+  const [promptTouched, setPromptTouched] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -79,7 +80,10 @@ const NewScreen: React.FC = () => {
     if (!canUseApi) return;
     const p = prompt.trim();
     const n = name.trim();
-    if (!p) return;
+    if (p.length < 15) {
+      setPromptTouched(true);
+      return;
+    }
     setError(null);
     try {
       const res = await fetch(apiUrl("/api/projects"), {
@@ -232,25 +236,37 @@ const NewScreen: React.FC = () => {
               onChange={(e) => setName(e.target.value)}
               disabled={!canUseApi}
             />
-            <Textarea
-              rows={4}
-              placeholder="Describe what you want to build..."
-              value={prompt}
-              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-                setPrompt(e.target.value)
-              }
-              onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleCreate();
-                }
-              }}
-              disabled={!canUseApi}
-            />
+            <div>
+              <Textarea
+                rows={4}
+                placeholder="Describe what you want to build..."
+                value={prompt}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => {
+                  setPrompt(e.target.value);
+                  if (promptTouched && e.target.value.trim().length >= 15) setPromptTouched(false);
+                }}
+                onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleCreate();
+                  }
+                }}
+                onBlur={() => { if (prompt.trim().length < 15) setPromptTouched(true); }}
+                disabled={!canUseApi}
+                className={promptTouched && prompt.trim().length < 15 ? "border-red-500 focus-visible:ring-red-500" : ""}
+              />
+              {promptTouched && prompt.trim().length < 15 && (
+                <p className="text-sm text-red-500 mt-1">
+                  {!prompt.trim()
+                    ? "Please enter a prompt to get started."
+                    : `Prompt must be at least 15 characters (${prompt.trim().length}/15).`}
+                </p>
+              )}
+            </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <Button
                 onClick={handleCreate}
-                disabled={!canUseApi || !prompt.trim()}
+                disabled={!canUseApi || prompt.trim().length < 15}
               >
                 Create
               </Button>
