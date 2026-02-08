@@ -1,0 +1,76 @@
+{{- if .Values.sandboxTemplates }}
+{{- range $t := .Values.sandboxTemplates }}
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: {{ $t.name | quote }}
+  namespace: {{ $.Values.sandboxNamespace | quote }}
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        app: {{ $t.name | quote }}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: amicable-sandbox
+          image: {{ printf "%s:%s" $t.image.repository $t.image.tag | quote }}
+          imagePullPolicy: {{ $t.image.pullPolicy | quote }}
+          ports:
+            - name: runtime
+              containerPort: 8888
+              protocol: TCP
+            - name: preview
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+              value: {{ ($t.additionalAllowedHosts | default $.Values.sandboxTemplate.additionalAllowedHosts) | quote }}
+          resources:
+            requests:
+              cpu: {{ $t.resources.requests.cpu | quote }}
+              memory: {{ $t.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ $t.resources.limits.cpu | quote }}
+              memory: {{ $t.resources.limits.memory | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+{{- end }}
+{{- else }}
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: {{ .Values.sandboxTemplate.name | quote }}
+  namespace: {{ .Values.sandboxNamespace | quote }}
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        app: {{ .Values.sandboxTemplate.name | quote }}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: amicable-sandbox
+          image: {{ printf "%s:%s" .Values.images.sandbox.repository .Values.images.sandbox.tag | quote }}
+          imagePullPolicy: {{ .Values.images.sandbox.pullPolicy | quote }}
+          ports:
+            - name: runtime
+              containerPort: 8888
+              protocol: TCP
+            - name: preview
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+              value: {{ .Values.sandboxTemplate.additionalAllowedHosts | quote }}
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+{{- end }}

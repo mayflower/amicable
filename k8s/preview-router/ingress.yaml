@@ -1,0 +1,22 @@
+# Example ingress-nginx configuration.
+# Update hosts/TLS to match your cluster.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: preview-router
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: "preview-router"
+spec:
+  rules:
+    - host: "*.preview.example.com"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: preview-router
+                port:
+                  number: 80

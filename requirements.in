@@ -1,0 +1,30 @@
+# Top-level dependencies for local development / running the agent service.
+# The pinned set in requirements.txt is generated via uv.
+
+# Web/API
+fastapi
+uvicorn[standard]
+starlette
+pydantic
+pydantic-settings
+httpx
+requests
+websockets
+python-multipart
+python-dotenv
+itsdangerous
+authlib
+
+# K8s sandbox orchestration
+kubernetes
+
+# MCP + CLI utilities
+fastmcp
+mcp
+rich
+typer
+watchdog
+
+# Dev tooling
+black
+isort

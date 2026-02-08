@@ -1,0 +1,24 @@
+# Top-level deps for the agent service image.
+fastapi
+uvicorn[standard]
+requests
+kubernetes
+authlib
+itsdangerous
+httpx
+
+# DeepAgents (LangChain OSS) engine
+# Keep in sync with our docs/production runtime.
+deepagents
+langchain
+langgraph
+langchain-anthropic
+anthropic
+langfuse
+python-dotenv
+
+# LangGraph PostgresStore (DeepAgents long-term memory)
+psycopg[binary,pool]
+
+# LangGraph Postgres checkpointing (HITL resume across restarts)
+langgraph-checkpoint-postgres

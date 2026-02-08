@@ -1,0 +1,14 @@
+{{- if .Values.editor.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: amicable-editor
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  selector:
+    app: amicable-editor
+  ports:
+    - name: http
+      port: {{ .Values.editor.service.port }}
+      targetPort: 80
+{{- end }}

@@ -1,0 +1,11 @@
+{{- if .Values.editor.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: amicable-editor-config
+  namespace: {{ .Release.Namespace | quote }}
+data:
+  config.js: |
+    window.__AMICABLE_CONFIG__ = {{ .Values.editor.runtimeConfig | toJson }};
+{{- end }}
+

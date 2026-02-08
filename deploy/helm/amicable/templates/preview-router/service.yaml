@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: amicable-preview-router
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  selector:
+    app: amicable-preview-router
+  ports:
+    - name: http
+      port: {{ .Values.previewRouter.service.port }}
+      targetPort: 80

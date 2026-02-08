@@ -1,0 +1,29 @@
+{{- if .Values.agent.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: amicable-agent
+  namespace: {{ .Release.Namespace | quote }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: {{ .Values.agent.ingress.certIssuer | quote }}
+spec:
+  ingressClassName: {{ .Values.agent.ingress.ingressClassName | quote }}
+  {{- if .Values.agent.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.agent.ingress.host | quote }}
+      secretName: {{ .Values.agent.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.agent.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: amicable-agent
+                port:
+                  number: {{ .Values.agent.service.port }}
+{{- end }}

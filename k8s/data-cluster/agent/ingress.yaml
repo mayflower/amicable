@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: amicable-agent
+  namespace: amicable
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: letsencrypt-intern-dns
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - amicable-agent.data.mayflower.zone
+      secretName: amicable-agent-tls
+  rules:
+    - host: amicable-agent.data.mayflower.zone
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: amicable-agent
+                port:
+                  number: 80

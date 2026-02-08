@@ -1,0 +1,29 @@
+{{- if and .Values.editor.enabled .Values.editor.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: amicable-editor
+  namespace: {{ .Release.Namespace | quote }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: {{ .Values.editor.ingress.certIssuer | quote }}
+spec:
+  ingressClassName: {{ .Values.editor.ingress.ingressClassName | quote }}
+  {{- if .Values.editor.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.editor.ingress.host | quote }}
+      secretName: {{ .Values.editor.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.editor.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: amicable-editor
+                port:
+                  number: {{ .Values.editor.service.port }}
+{{- end }}

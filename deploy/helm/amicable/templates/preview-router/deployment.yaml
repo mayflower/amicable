@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amicable-preview-router
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  replicas: {{ .Values.previewRouter.replicas }}
+  selector:
+    matchLabels:
+      app: amicable-preview-router
+  template:
+    metadata:
+      labels:
+        app: amicable-preview-router
+      annotations:
+        checksum/preview-router-config: {{ include (print $.Template.BasePath "/preview-router/configmap.yaml") . | sha256sum | quote }}
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27
+          ports:
+            - containerPort: 80
+              name: http
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+          readinessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 2
+            periodSeconds: 5
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: amicable-preview-router-nginx

@@ -1,0 +1,169 @@
+# Default values for amicable.
+
+sandboxNamespace: amicable
+
+images:
+  agent:
+    repository: ghcr.io/mayflower/amicable-agent
+    tag: main
+    pullPolicy: IfNotPresent
+  sandbox:
+    repository: ghcr.io/mayflower/amicable-sandbox
+    tag: main
+    pullPolicy: IfNotPresent
+  editor:
+    repository: ghcr.io/mayflower/amicable-editor
+    tag: main
+    pullPolicy: IfNotPresent
+
+sandboxTemplate:
+  # Fallback template name used by the agent if a project template id is unknown.
+  # This should match one of the sandboxTemplates names when sandboxTemplates is set.
+  name: amicable-sandbox-lovable-vite
+  additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+
+# Optional: define multiple SandboxTemplates (one per app template).
+# If set, deploy/helm/amicable/templates/sandbox/sandbox-template.yaml will render one
+# SandboxTemplate resource per entry.
+sandboxTemplates:
+  - name: amicable-sandbox-lovable-vite
+    image:
+      repository: ghcr.io/mayflower/amicable-sandbox-lovable-vite
+      tag: main
+      pullPolicy: IfNotPresent
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1Gi"
+  - name: amicable-sandbox-nextjs15
+    image:
+      repository: ghcr.io/mayflower/amicable-sandbox-nextjs15
+      tag: main
+      pullPolicy: IfNotPresent
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+  - name: amicable-sandbox-fastapi
+    image:
+      repository: ghcr.io/mayflower/amicable-sandbox-fastapi
+      tag: main
+      pullPolicy: IfNotPresent
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1Gi"
+  - name: amicable-sandbox-hono
+    image:
+      repository: ghcr.io/mayflower/amicable-sandbox-hono
+      tag: main
+      pullPolicy: IfNotPresent
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1Gi"
+  - name: amicable-sandbox-remix
+    image:
+      repository: ghcr.io/mayflower/amicable-sandbox-remix
+      tag: main
+      pullPolicy: IfNotPresent
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1Gi"
+
+agent:
+  replicas: 2
+  service:
+    port: 80
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    host: amicable-agent.data.mayflower.zone
+    certIssuer: letsencrypt-intern-dns
+    tls:
+      enabled: true
+      secretName: amicable-agent-tls
+  env:
+    previewBaseDomain: amicable-preview.data.mayflower.zone
+    previewScheme: https
+    runtimePort: "8888"
+    previewPort: "3000"
+    # Additional env vars passed directly to the agent container.
+    # Example (Google OAuth):
+    #   AUTH_MODE: "google"
+    #   PUBLIC_BASE_URL: "https://amicable-agent.data.mayflower.zone"
+    #   CORS_ALLOW_ORIGINS: "https://amicable.data.mayflower.zone"
+    #   AUTH_REDIRECT_ALLOW_ORIGINS: "https://amicable.data.mayflower.zone"
+    # Langfuse (non-secret values):
+    #   LANGFUSE_PUBLIC_KEY: "pk-lf-..."
+    #   LANGFUSE_HOST: "https://langfuse.mayflower.cloud"
+    extra: {}
+  secret:
+    name: amicable-agent-secrets
+    openaiApiKeyKey: OPENAI_API_KEY
+    # Optional auth token enforcement.
+    # If enabled, the secret must contain this key.
+    enableAuthToken: false
+    authTokenKey: AGENT_AUTH_TOKEN
+    # Map of env var name -> key in the same Kubernetes secret.
+    # Example:
+    #   GOOGLE_CLIENT_ID: GOOGLE_CLIENT_ID
+    #   GOOGLE_CLIENT_SECRET: GOOGLE_CLIENT_SECRET
+    #   SESSION_SECRET: SESSION_SECRET
+    #   LANGFUSE_SECRET_KEY: LANGFUSE_SECRET_KEY
+    extraEnv: {}
+
+previewRouter:
+  replicas: 2
+  service:
+    port: 80
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    wildcardHost: "*.amicable-preview.data.mayflower.zone"
+    certIssuer: letsencrypt-intern-dns
+    tls:
+      enabled: true
+      secretName: amicable-preview-wildcard-tls
+
+editor:
+  enabled: false
+  replicas: 2
+  service:
+    port: 80
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    host: amicable.data.mayflower.zone
+    certIssuer: letsencrypt-intern-dns
+    tls:
+      enabled: true
+      secretName: amicable-editor-tls
+  runtimeConfig:
+    # These are injected into /config.js and read by frontend/src/config/agent.ts at runtime.
+    VITE_AGENT_WS_URL: "wss://amicable-agent.data.mayflower.zone/"
+    # Note: this value is delivered to the browser, so it is not a real "secret".
+    # If you need access control, enforce auth at the ingress (OIDC/basic auth) or
+    # put the editor behind your SSO.
+    VITE_AGENT_TOKEN: ""

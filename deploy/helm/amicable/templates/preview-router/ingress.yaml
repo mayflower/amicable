@@ -1,0 +1,29 @@
+{{- if .Values.previewRouter.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: amicable-preview-router
+  namespace: {{ .Release.Namespace | quote }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: {{ .Values.previewRouter.ingress.certIssuer | quote }}
+spec:
+  ingressClassName: {{ .Values.previewRouter.ingress.ingressClassName | quote }}
+  {{- if .Values.previewRouter.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.previewRouter.ingress.wildcardHost | quote }}
+      secretName: {{ .Values.previewRouter.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.previewRouter.ingress.wildcardHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: amicable-preview-router
+                port:
+                  number: {{ .Values.previewRouter.service.port }}
+{{- end }}

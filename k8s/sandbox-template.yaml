@@ -1,0 +1,183 @@
+# SandboxTemplates for Amicable workspaces.
+#
+# Build the sandbox images (example):
+#   docker build -t amicable-sandbox-lovable-vite:latest k8s/images/amicable-sandbox-lovable-vite
+#   docker build -t amicable-sandbox-nextjs15:latest      k8s/images/amicable-sandbox-nextjs15
+#   docker build -t amicable-sandbox-fastapi:latest       k8s/images/amicable-sandbox-fastapi
+#   docker build -t amicable-sandbox-hono:latest          k8s/images/amicable-sandbox-hono
+#   docker build -t amicable-sandbox-remix:latest         k8s/images/amicable-sandbox-remix
+#
+# Then load into your cluster (example for kind):
+#   kind load docker-image amicable-sandbox-lovable-vite:latest --name <cluster>
+#   ... repeat for each image ...
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: amicable-sandbox-lovable-vite
+spec:
+  podTemplateSpec:
+    metadata:
+      labels:
+        app: amicable-sandbox-lovable-vite
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: amicable-sandbox
+          image: amicable-sandbox-lovable-vite:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: runtime
+              containerPort: 8888
+            - name: preview
+              containerPort: 3000
+          env:
+            - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+              value: ".preview.example.com"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+          workingDir: /app
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: amicable-sandbox-nextjs15
+spec:
+  podTemplateSpec:
+    metadata:
+      labels:
+        app: amicable-sandbox-nextjs15
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: amicable-sandbox
+          image: amicable-sandbox-nextjs15:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: runtime
+              containerPort: 8888
+            - name: preview
+              containerPort: 3000
+          env:
+            - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+              value: ".preview.example.com"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+          workingDir: /app
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: amicable-sandbox-fastapi
+spec:
+  podTemplateSpec:
+    metadata:
+      labels:
+        app: amicable-sandbox-fastapi
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: amicable-sandbox
+          image: amicable-sandbox-fastapi:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: runtime
+              containerPort: 8888
+            - name: preview
+              containerPort: 3000
+          env:
+            - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+              value: ".preview.example.com"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+          workingDir: /app
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: amicable-sandbox-hono
+spec:
+  podTemplateSpec:
+    metadata:
+      labels:
+        app: amicable-sandbox-hono
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: amicable-sandbox
+          image: amicable-sandbox-hono:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: runtime
+              containerPort: 8888
+            - name: preview
+              containerPort: 3000
+          env:
+            - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+              value: ".preview.example.com"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+          workingDir: /app
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: amicable-sandbox-remix
+spec:
+  podTemplateSpec:
+    metadata:
+      labels:
+        app: amicable-sandbox-remix
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: amicable-sandbox
+          image: amicable-sandbox-remix:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: runtime
+              containerPort: 8888
+            - name: preview
+              containerPort: 3000
+          env:
+            - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+              value: ".preview.example.com"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+          workingDir: /app
+

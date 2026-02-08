@@ -1,0 +1,58 @@
+# Build an agent image that contains this repo and runs uvicorn.
+# Example image name used below: amicable-agent:latest
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amicable-agent
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: amicable-agent
+  template:
+    metadata:
+      labels:
+        app: amicable-agent
+    spec:
+      serviceAccountName: amicable-agent
+      containers:
+        - name: agent
+          image: amicable-agent:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: amicable-agent-secrets
+                  key: OPENAI_API_KEY
+            - name: SANDBOX_BACKEND
+              value: "k8s"
+            - name: K8S_SANDBOX_NAMESPACE
+              value: "default"
+            - name: K8S_SANDBOX_TEMPLATE_NAME
+              value: "amicable-sandbox-lovable-vite"
+            - name: PREVIEW_BASE_DOMAIN
+              value: "preview.example.com" # override for your cluster
+            - name: PREVIEW_SCHEME
+              value: "https"
+            - name: SANDBOX_RUNTIME_PORT
+              value: "8888"
+            - name: SANDBOX_PREVIEW_PORT
+              value: "3000"
+            # Optional: enforce token auth. Frontend sends ?auth_token=...
+            # - name: AGENT_AUTH_TOKEN
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: amicable-agent-secrets
+            #       key: AGENT_AUTH_TOKEN
+          command: ["uvicorn"]
+          args: ["src.runtimes.ws_server:app", "--host", "0.0.0.0", "--port", "8000"]
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 2
+            periodSeconds: 5

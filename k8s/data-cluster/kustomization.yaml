@@ -1,0 +1,12 @@
+resources:
+  - namespace.yaml
+  - sandbox-template.yaml
+  - preview-router/deployment.yaml
+  - preview-router/service.yaml
+  - preview-router/ingress.yaml
+  - agent/rbac.yaml
+  - agent/deployment.yaml
+  - agent/service.yaml
+  - agent/ingress.yaml
+  # Apply your real secret separately:
+  # - agent/secret.example.yaml

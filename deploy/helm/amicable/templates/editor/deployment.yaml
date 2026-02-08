@@ -1,0 +1,40 @@
+{{- if .Values.editor.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amicable-editor
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  replicas: {{ .Values.editor.replicas }}
+  selector:
+    matchLabels:
+      app: amicable-editor
+  template:
+    metadata:
+      labels:
+        app: amicable-editor
+      annotations:
+        checksum/editor-config: {{ .Values.editor.runtimeConfig | toJson | sha256sum | quote }}
+    spec:
+      containers:
+        - name: editor
+          image: {{ printf "%s:%s" .Values.images.editor.repository .Values.images.editor.tag | quote }}
+          imagePullPolicy: {{ .Values.images.editor.pullPolicy | quote }}
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: editor-config
+              mountPath: /usr/share/nginx/html/config.js
+              subPath: config.js
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 2
+            periodSeconds: 5
+      volumes:
+        - name: editor-config
+          configMap:
+            name: amicable-editor-config
+{{- end }}

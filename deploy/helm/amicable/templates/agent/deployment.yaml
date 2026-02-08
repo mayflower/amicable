@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amicable-agent
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  replicas: {{ .Values.agent.replicas }}
+  selector:
+    matchLabels:
+      app: amicable-agent
+  template:
+    metadata:
+      labels:
+        app: amicable-agent
+    spec:
+      serviceAccountName: amicable-agent
+      containers:
+        - name: agent
+          image: {{ printf "%s:%s" .Values.images.agent.repository .Values.images.agent.tag | quote }}
+          imagePullPolicy: {{ .Values.images.agent.pullPolicy | quote }}
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agent.secret.name | quote }}
+                  key: {{ .Values.agent.secret.openaiApiKeyKey | quote }}
+            {{- if .Values.agent.secret.enableAuthToken }}
+            - name: AGENT_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agent.secret.name | quote }}
+                  key: {{ .Values.agent.secret.authTokenKey | quote }}
+            {{- end }}
+            - name: SANDBOX_BACKEND
+              value: "k8s"
+            - name: K8S_SANDBOX_NAMESPACE
+              value: {{ .Values.sandboxNamespace | quote }}
+            - name: K8S_SANDBOX_TEMPLATE_NAME
+              value: {{ .Values.sandboxTemplate.name | quote }}
+            - name: PREVIEW_BASE_DOMAIN
+              value: {{ .Values.agent.env.previewBaseDomain | quote }}
+            - name: PREVIEW_SCHEME
+              value: {{ .Values.agent.env.previewScheme | quote }}
+            - name: SANDBOX_RUNTIME_PORT
+              value: {{ .Values.agent.env.runtimePort | quote }}
+            - name: SANDBOX_PREVIEW_PORT
+              value: {{ .Values.agent.env.previewPort | quote }}
+            {{- range $name, $val := .Values.agent.env.extra }}
+            - name: {{ $name | quote }}
+              value: {{ $val | quote }}
+            {{- end }}
+            {{- range $envName, $secretKey := .Values.agent.secret.extraEnv }}
+            - name: {{ $envName | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.agent.secret.name | quote }}
+                  key: {{ $secretKey | quote }}
+                  optional: true
+            {{- end }}
+          command: ["uvicorn"]
+          args: ["src.runtimes.ws_server:app", "--host", "0.0.0.0", "--port", "8000"]
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 2
+            periodSeconds: 5

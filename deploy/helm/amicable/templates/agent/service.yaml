@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: amicable-agent
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  selector:
+    app: amicable-agent
+  ports:
+    - name: http
+      port: {{ .Values.agent.service.port }}
+      targetPort: 8000
