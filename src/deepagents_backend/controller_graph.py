@@ -229,12 +229,21 @@ def build_controller_graph(
         return {"final_status": "failed_qa", "messages": messages}
 
     async def git_sync(_state: ControllerState, config: Any) -> dict[str, Any]:
-        """Best-effort snapshot + commit + push to GitLab."""
+        """Snapshot + commit + push to GitLab.
+
+        In production, GitLab sync is required (AMICABLE_GIT_SYNC_REQUIRED=1).
+        """
 
         try:
-            from src.gitlab.config import git_sync_enabled
+            from src.gitlab.config import (
+                ensure_git_sync_configured,
+                git_sync_enabled,
+                git_sync_required,
+            )
             from src.gitlab.sync import export_sandbox_snapshot, sync_snapshot_to_repo
 
+            ensure_git_sync_configured()
+            required = git_sync_required()
             if not git_sync_enabled():
                 return {"git_pushed": False, "git_last_commit": None, "git_error": None}
 
@@ -247,11 +256,9 @@ def build_controller_graph(
             project_slug = cfg.get("project_slug") or thread_id
 
             if not isinstance(repo_http_url, str) or not repo_http_url:
-                return {
-                    "git_pushed": False,
-                    "git_last_commit": None,
-                    "git_error": "git repo url missing",
-                }
+                if required:
+                    raise RuntimeError("git repo url missing")
+                return {"git_pushed": False, "git_last_commit": None, "git_error": "git repo url missing"}
 
             backend = get_backend(thread_id)
             snapshot = await asyncio.to_thread(export_sandbox_snapshot, backend)
@@ -264,6 +271,14 @@ def build_controller_graph(
             return {"git_pushed": bool(pushed), "git_last_commit": sha, "git_error": None}
         except Exception as e:
             logger.exception("git_sync failed")
+            # In required mode, bubble up so the user sees a hard error.
+            try:
+                from src.gitlab.config import git_sync_required
+
+                if git_sync_required():
+                    raise
+            except Exception:
+                raise
             return {"git_pushed": False, "git_last_commit": None, "git_error": str(e)}
 
     def route_after_qa(state: ControllerState) -> Literal["pass", "heal", "fail"]:

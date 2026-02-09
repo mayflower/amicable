@@ -79,3 +79,15 @@ def test_create_project_path_taken(monkeypatch):
     with pytest.raises(GitLabError) as e:
         gl.create_project(namespace_id=2, name="My App", path="my-app")
     assert e.value.status_code == 400
+
+
+def test_delete_project_success(monkeypatch):
+    monkeypatch.setenv("GITLAB_TOKEN", "t")
+    monkeypatch.setenv("GITLAB_BASE_URL", "https://git.example")
+
+    url = "https://git.example/api/v4/projects/123"
+    routes = {("DELETE", url): _Resp(202, {})}
+    s = _Sess(routes)
+    gl = GitLabClient.from_env(session=s)
+    ok = gl.delete_project(123)
+    assert ok is True

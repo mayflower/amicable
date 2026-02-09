@@ -161,6 +161,8 @@ agent:
   secret:
     name: amicable-agent-secrets
     openaiApiKeyKey: OPENAI_API_KEY
+    # Required GitLab token for project persistence (repo create/sync/delete).
+    gitlabTokenKey: GITLAB_TOKEN
     # Optional auth token enforcement.
     # If enabled, the secret must contain this key.
     enableAuthToken: false

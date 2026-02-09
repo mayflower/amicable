@@ -128,6 +128,11 @@ class GitLabClient:
         data = self._request("PUT", f"/projects/{int(project_id)}", params=params)
         return self._parse_project(data)
 
+    def delete_project(self, project_id: int) -> bool:
+        # GitLab returns 202/204/200 depending on settings; treat 404 as "already deleted".
+        data = self._request("DELETE", f"/projects/{int(project_id)}")
+        return data is not None
+
     @staticmethod
     def _parse_project(data: Any) -> GitLabProject:
         if not isinstance(data, dict):

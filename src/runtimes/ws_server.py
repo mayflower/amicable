@@ -307,18 +307,23 @@ async def api_create_project(request: Request) -> JSONResponse:
 
     from src.db.provisioning import hasura_client_from_env
     from src.gitlab.integration import ensure_gitlab_repo_for_project
-    from src.projects.store import ProjectOwner, create_project
+    from src.projects.store import ProjectOwner, create_project, hard_delete_project_row
 
     client = hasura_client_from_env()
     owner = ProjectOwner(sub=sub, email=email)
     p = create_project(client, owner=owner, name=name, template_id=effective_template_id)
 
-    # Best-effort GitLab repo creation; may adjust slug on collision.
     try:
         p, _git = ensure_gitlab_repo_for_project(client, owner=owner, project=p)
-    except Exception:
-        # Never block project creation on git integration.
-        p = p
+    except Exception as e:
+        # Roll back the project row if GitLab provisioning fails; Amicable requires GitLab.
+        try:
+            hard_delete_project_row(client, owner=owner, project_id=p.project_id)
+        except Exception:
+            pass
+        detail = str(e)
+        status = 503 if ("GITLAB_TOKEN" in detail or "required" in detail) else 502
+        return JSONResponse({"error": "gitlab_error", "detail": detail}, status_code=status)
 
     return JSONResponse(
         {
@@ -428,14 +433,12 @@ async def api_rename_project(project_id: str, request: Request) -> JSONResponse:
     except PermissionError:
         return JSONResponse({"error": "not_found"}, status_code=404)
 
-    # Best-effort GitLab repo rename/move to match slug.
     try:
         p, _git = rename_gitlab_repo_to_match_project_slug(
             client, owner=owner, project=p, new_name=name
         )
     except Exception:
-        # Never block rename on git integration.
-        p = p
+        return JSONResponse({"error": "gitlab_error"}, status_code=502)
     return JSONResponse(
         {"project_id": p.project_id, "name": p.name, "slug": p.slug}, status_code=200
     )
@@ -455,6 +458,7 @@ async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
     from src.db.cleanup import cleanup_app_db
     from src.db.provisioning import hasura_client_from_env
     from src.deepagents_backend.session_sandbox_manager import SessionSandboxManager
+    from src.gitlab.integration import delete_gitlab_repo_for_project
     from src.projects.store import (
         ProjectOwner,
         get_project_by_id,
@@ -467,6 +471,13 @@ async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
     p = get_project_by_id(client, owner=owner, project_id=project_id)
     if not p:
         return JSONResponse({"error": "not_found"}, status_code=404)
+
+    try:
+        delete_gitlab_repo_for_project(client, owner=owner, project=p)
+    except Exception as e:
+        detail = str(e)
+        status = 503 if ("GITLAB_TOKEN" in detail or "required" in detail) else 502
+        return JSONResponse({"error": "gitlab_error", "detail": detail}, status_code=status)
 
     # Mark deleted immediately (so it disappears from the list), then cleanup async.
     mark_project_deleted(client, owner=owner, project_id=project_id)
@@ -1032,9 +1043,7 @@ async def _handle_ws(ws: WebSocket) -> None:
             session_id = data.get("session_id")
             if not session_id:
                 # Keep behavior: server-side session id if missing.
-                session_id = Message.new(
-                    MessageType.INIT, {}, session_id=None
-                ).session_id
+                session_id = Message.new(MessageType.INIT, {}, session_id=None).session_id
 
             project = None
             git = None
@@ -1051,21 +1060,22 @@ async def _handle_ws(ws: WebSocket) -> None:
                         client, owner=owner, project_id=str(session_id)
                     )
 
-                    # Best-effort GitLab enrichment.
-                    try:
-                        project, git = ensure_gitlab_repo_for_project(
-                            client, owner=owner, project=project
-                        )
-                    except Exception:
-                        git = None
+                    project, git = ensure_gitlab_repo_for_project(
+                        client, owner=owner, project=project
+                    )
                 except PermissionError:
                     await ws.close(code=1008)
                     return
-                except Exception:
-                    # If projects are misconfigured, continue without project metadata.
-                    project = None
-                    git = None
-
+                except Exception as e:
+                    await ws.send_json(
+                        Message.new(
+                            MessageType.ERROR,
+                            {"error": "project_init_failed", "detail": str(e)},
+                            session_id=session_id,
+                        ).to_dict()
+                    )
+                    await ws.close(code=1011)
+                    return
             template_id = getattr(project, "template_id", None) if project is not None else None
             exists = await agent.init(session_id=session_id, template_id=template_id)
             init_data = agent.session_data[session_id]
@@ -1117,27 +1127,29 @@ async def _handle_ws(ws: WebSocket) -> None:
                     # Ensure agent session exists so we can attach project/git metadata
                     # for downstream controller graph nodes (git_sync).
                     await agent.init(session_id=session_id)
-                    try:
-                        project, git = ensure_gitlab_repo_for_project(
-                            client, owner=owner, project=project
-                        )
-                    except Exception:
-                        git = None
+                    project, git = ensure_gitlab_repo_for_project(
+                        client, owner=owner, project=project
+                    )
 
                     # Persist into session_data for the controller run.
                     init_data = agent.session_data.get(session_id) or {}
                     if isinstance(init_data, dict):
                         init_data["project"] = _project_dto(project)
-                        if git is not None:
-                            init_data["git"] = git
+                        init_data["git"] = git
                         agent.session_data[session_id] = init_data
                 except PermissionError:
                     await ws.close(code=1008)
                     return
-                except Exception:
-                    # If projects are misconfigured, don't block core editing.
-                    pass
-            if agent.has_pending_hitl(session_id):
+                except Exception as e:
+                    await ws.send_json(
+                        Message.new(
+                            MessageType.ERROR,
+                            {"error": "project_init_failed", "detail": str(e)},
+                            session_id=session_id,
+                        ).to_dict()
+                    )
+                    await ws.close(code=1011)
+                    return
                 await ws.send_json(
                     Message.new(
                         MessageType.ERROR,
@@ -1185,25 +1197,28 @@ async def _handle_ws(ws: WebSocket) -> None:
                     )
 
                     await agent.init(session_id=session_id)
-                    try:
-                        project, git = ensure_gitlab_repo_for_project(
-                            client, owner=owner, project=project
-                        )
-                    except Exception:
-                        git = None
+                    project, git = ensure_gitlab_repo_for_project(
+                        client, owner=owner, project=project
+                    )
 
                     init_data = agent.session_data.get(session_id) or {}
                     if isinstance(init_data, dict):
                         init_data["project"] = _project_dto(project)
-                        if git is not None:
-                            init_data["git"] = git
+                        init_data["git"] = git
                         agent.session_data[session_id] = init_data
                 except PermissionError:
                     await ws.close(code=1008)
                     return
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    await ws.send_json(
+                        Message.new(
+                            MessageType.ERROR,
+                            {"error": "project_init_failed", "detail": str(e)},
+                            session_id=session_id,
+                        ).to_dict()
+                    )
+                    await ws.close(code=1011)
+                    return
             async for out in agent.resume_hitl(
                 session_id=session_id,
                 interrupt_id=interrupt_id,

@@ -4,7 +4,9 @@ import logging
 
 from src.gitlab.client import GitLabClient, GitLabError, GitLabProject
 from src.gitlab.config import (
+    ensure_git_sync_configured,
     git_sync_enabled,
+    git_sync_required,
     gitlab_group_path,
     gitlab_repo_visibility,
 )
@@ -47,17 +49,14 @@ def ensure_gitlab_repo_for_project(
     """Ensure GitLab repo exists for this project.
 
     Returns (updated_project, git_dto_or_none).
-
-    Best-effort: if GitLab is not configured or fails, returns original project and None.
     """
 
+    ensure_git_sync_configured()
+    required = git_sync_required()
     if not git_sync_enabled():
         return project, None
 
-    try:
-        gl = GitLabClient.from_env()
-    except Exception:
-        return project, None
+    gl = GitLabClient.from_env()
 
     group = gitlab_group_path()
 
@@ -88,6 +87,8 @@ def ensure_gitlab_repo_for_project(
                 return updated, _git_dto(existing)
         except Exception:
             logger.exception("gitlab lookup failed")
+            if required:
+                raise
             return project, None
 
         # Try create with the desired slug.
@@ -104,10 +105,14 @@ def ensure_gitlab_repo_for_project(
         except GitLabError as e:
             if not _path_taken(e):
                 logger.warning("gitlab create failed: %s", e)
+                if required:
+                    raise
                 return project, None
             # collision: fall through to fallback logic.
         except Exception:
             logger.exception("gitlab create failed")
+            if required:
+                raise
             return project, None
 
     base = projects_store.slugify(project.name)
@@ -118,6 +123,8 @@ def ensure_gitlab_repo_for_project(
         ns_id = gl.get_group_id(group)
     except Exception:
         logger.exception("gitlab group lookup failed")
+        if required:
+            raise
         return project, None
 
     for attempt in range(1, 20):
@@ -156,11 +163,19 @@ def ensure_gitlab_repo_for_project(
                 project = updated_p
                 continue
             logger.warning("gitlab create failed: %s", e)
+            if required:
+                raise
             return updated_p, None
         except Exception:
             logger.exception("gitlab create failed")
+            if required:
+                raise
             return updated_p, None
 
+    msg = "Failed to allocate a unique GitLab project path after multiple attempts"
+    if required:
+        raise RuntimeError(msg)
+    logger.warning(msg)
     return project, None
 
 
@@ -178,6 +193,8 @@ def rename_gitlab_repo_to_match_project_slug(
     Returns (updated_project, git_dto_or_none). Best-effort.
     """
 
+    ensure_git_sync_configured()
+    required = git_sync_required()
     if not git_sync_enabled():
         return project, None
 
@@ -187,10 +204,7 @@ def rename_gitlab_repo_to_match_project_slug(
     if not isinstance(gitlab_id, int):
         return project, git_dto
 
-    try:
-        gl = GitLabClient.from_env()
-    except Exception:
-        return project, git_dto
+    gl = GitLabClient.from_env()
     base = projects_store.slugify(new_name)
 
     def _git_dto_from_proj(p: GitLabProject) -> dict:
@@ -234,9 +248,61 @@ def rename_gitlab_repo_to_match_project_slug(
             if _path_taken(e):
                 continue
             logger.warning("gitlab rename failed: %s", e)
+            if required:
+                raise
             return project, git_dto
         except Exception:
             logger.exception("gitlab rename failed")
+            if required:
+                raise
             return project, git_dto
 
     return project, git_dto
+
+
+def delete_gitlab_repo_for_project(
+    client,
+    *,
+    owner: projects_store.ProjectOwner,
+    project: projects_store.Project,
+) -> None:
+    """Delete the GitLab repo for a project.
+
+    Behavior:
+    - If Git sync is disabled: no-op.
+    - If required and deletion fails: raise.
+    - 404 is treated as already deleted.
+    """
+    ensure_git_sync_configured()
+    required = git_sync_required()
+    if not git_sync_enabled():
+        return
+
+    gl = GitLabClient.from_env()
+
+    gitlab_id = project.gitlab_project_id
+    if isinstance(gitlab_id, int):
+        try:
+            gl.delete_project(gitlab_id)
+            return
+        except Exception:
+            logger.exception("gitlab delete failed")
+            if required:
+                raise
+            return
+
+    # Fallback: try lookup by stored path/slug.
+    group = gitlab_group_path()
+    slug = (project.gitlab_path or project.slug or "").strip()
+    if not slug:
+        return
+
+    try:
+        existing = gl.get_project_by_path(f"{group}/{slug}")
+        if existing is None:
+            return
+        gl.delete_project(existing.id)
+    except Exception:
+        logger.exception("gitlab delete failed")
+        if required:
+            raise

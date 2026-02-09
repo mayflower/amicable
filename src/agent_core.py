@@ -559,6 +559,8 @@ class Agent:
         sent_final = False
         final_from_end: str | None = None
         interrupted = False
+        saw_git_sync = False
+        controller_failed = False
         tool_trace_for_reason: list[str] = []
 
         config: dict[str, Any] = {
@@ -684,6 +686,8 @@ class Agent:
                     "qa_fail_summary",
                     "git_sync",
                 ):
+                    if name == "git_sync":
+                        saw_git_sync = True
                     text = None
                     if name == "qa_validate":
                         text = "Running QA checks (lint/typecheck/build)..."
@@ -916,6 +920,7 @@ class Agent:
 
         except Exception as e:
             logger.exception("deepagents run failed")
+            controller_failed = True
             yield Message.new(
                 MessageType.ERROR,
                 {"error": str(e)},
@@ -923,6 +928,47 @@ class Agent:
             ).to_dict()
         finally:
             reset_current_app_id(ctx_token)
+
+        # Safety net: if the controller graph failed before reaching `git_sync`, attempt a
+        # direct snapshot sync so "agent stops working" still produces a commit.
+        if not interrupted:
+            try:
+                from src.gitlab.config import git_sync_enabled
+
+                if git_sync_enabled() and (controller_failed or not saw_git_sync):
+                    from src.gitlab.sync import export_sandbox_snapshot, sync_snapshot_to_repo
+
+                    repo_http_url = config.get("configurable", {}).get("git_repo_http_url")
+                    project_slug = config.get("configurable", {}).get("project_slug") or session_id
+                    if not (isinstance(repo_http_url, str) and repo_http_url):
+                        yield Message.new(
+                            MessageType.ERROR,
+                            {"error": "git_sync_failed: missing repo url"},
+                            session_id=session_id,
+                        ).to_dict()
+                    else:
+                        yield Message.new(
+                            MessageType.UPDATE_FILE,
+                            {"text": "Committing snapshot to GitLab..."},
+                            id=file_msg_id,
+                            session_id=session_id,
+                        ).to_dict()
+                        assert self._session_manager is not None
+                        backend = self._session_manager.get_backend(session_id)
+                        snapshot = await asyncio.to_thread(export_sandbox_snapshot, backend)
+                        await asyncio.to_thread(
+                            sync_snapshot_to_repo,
+                            snapshot,
+                            repo_http_url=repo_http_url,
+                            project_slug=str(project_slug),
+                        )
+            except Exception as e:
+                logger.exception("git sync fallback failed")
+                yield Message.new(
+                    MessageType.ERROR,
+                    {"error": f"git_sync_failed: {e}"},
+                    session_id=session_id,
+                ).to_dict()
 
         # If we paused for HITL, do not mark the update as completed.
         if interrupted:
@@ -1083,12 +1129,50 @@ class Agent:
         sent_final = False
         final_from_end: str | None = None
         interrupted = False
+        saw_git_sync = False
+        controller_failed = False
         tool_trace_for_reason: list[str] = []
 
         config: dict[str, Any] = {
             "configurable": {"thread_id": session_id, "checkpoint_ns": "controller"},
             "metadata": {"assistant_id": session_id},
         }
+
+        # Provide project/git metadata to the controller graph (required for git_sync).
+        try:
+            init_data = self.session_data.get(session_id) or {}
+            proj = init_data.get("project") if isinstance(init_data, dict) else None
+            git = init_data.get("git") if isinstance(init_data, dict) else None
+
+            if isinstance(proj, dict):
+                slug = proj.get("slug")
+                name = proj.get("name")
+                if isinstance(slug, str) and slug:
+                    config["configurable"]["project_slug"] = slug
+                if isinstance(name, str) and name:
+                    config["configurable"]["project_name"] = name
+
+            if isinstance(git, dict):
+                repo_url = git.get("http_url_to_repo") or git.get("repo_http_url")
+                if isinstance(repo_url, str) and repo_url:
+                    config["configurable"]["git_repo_http_url"] = repo_url
+
+                if "git_repo_http_url" not in config["configurable"]:
+                    web_url = git.get("web_url")
+                    if isinstance(web_url, str) and web_url:
+                        url = web_url.rstrip("/")
+                        config["configurable"]["git_repo_http_url"] = (
+                            url if url.endswith(".git") else url + ".git"
+                        )
+
+                pwn = git.get("path_with_namespace")
+                web = git.get("web_url")
+                if isinstance(pwn, str) and pwn:
+                    config["configurable"]["git_path_with_namespace"] = pwn
+                if isinstance(web, str) and web:
+                    config["configurable"]["git_web_url"] = web
+        except Exception:
+            pass
         lf = _langfuse_callback_handler()
         if lf is not None:
             lf.session_id = session_id
@@ -1162,7 +1246,10 @@ class Agent:
                     "qa_validate",
                     "self_heal_message",
                     "qa_fail_summary",
+                    "git_sync",
                 ):
+                    if name == "git_sync":
+                        saw_git_sync = True
                     text = None
                     if name == "qa_validate":
                         text = "Running QA checks (lint/typecheck/build)..."
@@ -1170,6 +1257,8 @@ class Agent:
                         text = "QA failed, attempting self-heal..."
                     elif name == "qa_fail_summary":
                         text = "QA still failing after self-heal attempts; preparing summary..."
+                    elif name == "git_sync":
+                        text = "Committing snapshot to GitLab..."
                     if text:
                         tool_trace_for_reason.append(name)
                         yield Message.new(
@@ -1361,6 +1450,7 @@ class Agent:
 
         except Exception as e:
             logger.exception("deepagents resume failed")
+            controller_failed = True
             yield Message.new(
                 MessageType.ERROR,
                 {"error": str(e)},
@@ -1368,6 +1458,45 @@ class Agent:
             ).to_dict()
         finally:
             reset_current_app_id(ctx_token)
+
+        if not interrupted:
+            try:
+                from src.gitlab.config import git_sync_enabled
+
+                if git_sync_enabled() and (controller_failed or not saw_git_sync):
+                    from src.gitlab.sync import export_sandbox_snapshot, sync_snapshot_to_repo
+
+                    repo_http_url = config.get("configurable", {}).get("git_repo_http_url")
+                    project_slug = config.get("configurable", {}).get("project_slug") or session_id
+                    if not (isinstance(repo_http_url, str) and repo_http_url):
+                        yield Message.new(
+                            MessageType.ERROR,
+                            {"error": "git_sync_failed: missing repo url"},
+                            session_id=session_id,
+                        ).to_dict()
+                    else:
+                        yield Message.new(
+                            MessageType.UPDATE_FILE,
+                            {"text": "Committing snapshot to GitLab..."},
+                            id=file_msg_id,
+                            session_id=session_id,
+                        ).to_dict()
+                        assert self._session_manager is not None
+                        backend = self._session_manager.get_backend(session_id)
+                        snapshot = await asyncio.to_thread(export_sandbox_snapshot, backend)
+                        await asyncio.to_thread(
+                            sync_snapshot_to_repo,
+                            snapshot,
+                            repo_http_url=repo_http_url,
+                            project_slug=str(project_slug),
+                        )
+            except Exception as e:
+                logger.exception("git sync fallback failed")
+                yield Message.new(
+                    MessageType.ERROR,
+                    {"error": f"git_sync_failed: {e}"},
+                    session_id=session_id,
+                ).to_dict()
 
         if interrupted:
             narrator = self._get_trace_narrator()

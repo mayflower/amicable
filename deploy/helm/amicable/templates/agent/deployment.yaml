@@ -24,6 +24,13 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.agent.secret.name | quote }}
                   key: {{ .Values.agent.secret.openaiApiKeyKey | quote }}
+            - name: GITLAB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.agent.secret.name | quote }}
+                  key: {{ .Values.agent.secret.gitlabTokenKey | quote }}
+            - name: AMICABLE_GIT_SYNC_REQUIRED
+              value: "1"
             {{- if .Values.agent.secret.enableAuthToken }}
             - name: AGENT_AUTH_TOKEN
               valueFrom:
