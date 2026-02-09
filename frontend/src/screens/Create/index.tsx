@@ -545,7 +545,7 @@ const Create = () => {
     },
 
     [MessageType.TRACE_EVENT]: (message: Message) => {
-      // Keep trace in message stream; render it in the Actions tab.
+      // Keep trace events in the message stream; render tool runs inline in the chat timeline.
       try {
         const phase = typeof message.data.phase === "string" ? message.data.phase : "";
         const toolName =
@@ -660,6 +660,69 @@ const Create = () => {
       .filter((x) => x.text.trim())
       .sort((a, b) => a.ts - b.ts);
   }, [messages]);
+
+  const chatItems = useMemo(() => {
+    type ToolRunItem = {
+      kind: "tool_run";
+      key: string;
+      ts: number;
+      run: (typeof toolRuns)[number];
+    };
+    type ReasoningItem = {
+      kind: "reasoning_summary";
+      key: string;
+      ts: number;
+      text: string;
+    };
+    type MsgItem = {
+      kind: "message";
+      key: string;
+      ts: number;
+      msg: Message;
+    };
+
+    const items: Array<ToolRunItem | ReasoningItem | MsgItem> = [];
+
+    for (const msg of messages) {
+      if (msg.type === MessageType.TRACE_EVENT) continue;
+      if (msg.type === MessageType.UPDATE_FILE) continue;
+      if (msg.type === MessageType.UPDATE_IN_PROGRESS) continue;
+      if (msg.type === MessageType.UPDATE_COMPLETED) continue;
+
+      if (!(msg.data.text && typeof msg.data.text === "string" && msg.data.text.trim())) {
+        continue;
+      }
+
+      const ts = typeof msg.timestamp === "number" ? msg.timestamp : 0;
+      items.push({
+        kind: "message",
+        key: msg.id || `msg-${msg.type}-${ts}`,
+        ts,
+        msg,
+      });
+    }
+
+    for (const r of toolRuns) {
+      items.push({
+        kind: "tool_run",
+        key: `tool-${r.runId}`,
+        ts: r.startTs || 0,
+        run: r,
+      });
+    }
+
+    for (const r of reasoningSummaries) {
+      items.push({
+        kind: "reasoning_summary",
+        key: `reason-${r.key}`,
+        ts: r.ts,
+        text: r.text,
+      });
+    }
+
+    items.sort((a, b) => a.ts - b.ts);
+    return items;
+  }, [messages, toolRuns, reasoningSummaries]);
 
   const { isConnecting, isConnected, error, connect, send } = useMessageBus({
     wsUrl: AGENT_CONFIG.WS_URL,
@@ -831,131 +894,113 @@ const Create = () => {
     );
   };
 
-  const renderActions = () => {
-    const statusLines = messages
-      .filter((m) => m.type === MessageType.UPDATE_FILE)
-      .map((m, i) => ({
-        key: m.id || `status-${i}-${m.timestamp ?? 0}`,
-        text: typeof m.data.text === "string" ? m.data.text : "",
-        ts: typeof m.timestamp === "number" ? m.timestamp : 0,
-      }))
-      .filter((x) => x.text.trim())
-      .sort((a, b) => a.ts - b.ts);
+  const renderToolRunBubble = (r: (typeof toolRuns)[number]) => {
+    const dur =
+      r.startTs && r.endTs ? Math.max(0, r.endTs - r.startTs) : undefined;
+    const badge =
+      r.status === "running" ? "Running" : r.status === "success" ? "OK" : "Error";
+    const badgeColor =
+      r.status === "running"
+        ? "bg-blue-500/10 text-blue-200"
+        : r.status === "success"
+          ? "bg-green-500/10 text-green-200"
+          : "bg-red-500/10 text-red-200";
+    const explain = r.explanations.length
+      ? r.explanations[r.explanations.length - 1]
+      : "";
 
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <div className="text-xs text-muted-foreground">
-          {toolRuns.length} tool runs
-          {statusLines.length ? `, ${statusLines.length} status updates` : ""}
-        </div>
-
-        {reasoningSummaries.length ? (
-          <details
-            className="border w-full bg-muted-foreground/5 rounded-md text-sm text-muted-foreground"
-            style={{ padding: 10 }}
-            open
-          >
-            <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-              Reasoning summary
-            </summary>
-            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
-              {reasoningSummaries.map((r) => (
-                <div key={r.key} className="text-xs text-muted-foreground" style={{ whiteSpace: "pre-wrap" }}>
-                  {r.text.replace(/^\[reasoning\]\s*/i, "")}
-                </div>
-              ))}
+      <div className="flex justify-start">
+        <details
+          className="border w-full bg-muted-foreground/5 rounded-md text-sm text-muted-foreground max-w-[90%]"
+          style={{ padding: 10 }}
+          open={r.status !== "success"}
+        >
+          <summary style={{ cursor: "pointer", listStyle: "none" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span className={`px-2 py-0.5 rounded ${badgeColor}`}>{badge}</span>
+              <span style={{ fontWeight: 600 }}>{r.toolName}</span>
+              {dur !== undefined ? (
+                <span className="text-xs text-muted-foreground">{dur}ms</span>
+              ) : null}
+              {r.status === "running" ? (
+                <span className="ml-auto flex gap-1 justify-start">
+                  <span
+                    className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
+                    style={{ animationDelay: "0ms" }}
+                  />
+                  <span
+                    className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
+                    style={{ animationDelay: "150ms" }}
+                  />
+                  <span
+                    className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
+                    style={{ animationDelay: "300ms" }}
+                  />
+                </span>
+              ) : null}
             </div>
-          </details>
-        ) : null}
-
-        {toolRuns.map((r) => {
-          const dur =
-            r.startTs && r.endTs ? Math.max(0, r.endTs - r.startTs) : undefined;
-          const badge =
-            r.status === "running"
-              ? "Running"
-              : r.status === "success"
-              ? "OK"
-              : "Error";
-          const badgeColor =
-            r.status === "running"
-              ? "bg-blue-500/10 text-blue-700"
-              : r.status === "success"
-              ? "bg-green-500/10 text-green-700"
-              : "bg-red-500/10 text-red-700";
-          const explain = r.explanations.length ? r.explanations[r.explanations.length - 1] : "";
-
-          return (
-            <details
-              key={r.runId}
-              className="border w-full bg-muted-foreground/5 rounded-md text-sm text-muted-foreground"
-              style={{ padding: 10 }}
-              open={r.status === "error"}
-	            >
-	              <summary style={{ cursor: "pointer", listStyle: "none" }}>
-	                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-	                  <span className={`px-2 py-0.5 rounded ${badgeColor}`}>{badge}</span>
-	                  <span style={{ fontWeight: 600 }}>{r.toolName}</span>
-                  {dur !== undefined ? (
-                    <span className="text-xs text-muted-foreground">
-                      {dur}ms
-                    </span>
-                  ) : null}
-                </div>
-                {explain ? (
-                  <div className="text-xs text-muted-foreground" style={{ marginTop: 4 }}>
-                    {explain}
-                  </div>
-                ) : null}
-              </summary>
-              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-                {r.input !== undefined ? (
-                  <details className="border bg-background rounded-md" style={{ padding: 8 }}>
-                    <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-                      Input
-                    </summary>
-                    <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
-                      {JSON.stringify(r.input, null, 2)}
-                    </pre>
-                  </details>
-                ) : null}
-                {r.output !== undefined ? (
-                  <details className="border bg-background rounded-md" style={{ padding: 8 }}>
-                    <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-                      Output
-                    </summary>
-                    <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
-                      {JSON.stringify(r.output, null, 2)}
-                    </pre>
-                  </details>
-                ) : null}
-                {r.error !== undefined ? (
-                  <details className="border bg-background rounded-md" style={{ padding: 8 }} open>
-                    <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-                      Error
-                    </summary>
-                    <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
-                      {JSON.stringify(r.error, null, 2)}
-                    </pre>
-                  </details>
-                ) : null}
+            {explain ? (
+              <div className="text-xs text-muted-foreground" style={{ marginTop: 4 }}>
+                {explain}
               </div>
-            </details>
-          );
-        })}
+            ) : null}
+          </summary>
+          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+            {r.input !== undefined ? (
+              <details className="border bg-background/60 rounded-md" style={{ padding: 8 }}>
+                <summary style={{ cursor: "pointer", fontWeight: 600 }}>Input</summary>
+                <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
+                  {JSON.stringify(r.input, null, 2)}
+                </pre>
+              </details>
+            ) : null}
+            {r.output !== undefined ? (
+              <details className="border bg-background/60 rounded-md" style={{ padding: 8 }}>
+                <summary style={{ cursor: "pointer", fontWeight: 600 }}>Output</summary>
+                <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
+                  {JSON.stringify(r.output, null, 2)}
+                </pre>
+              </details>
+            ) : null}
+            {r.error !== undefined ? (
+              <details
+                className="border bg-background/60 rounded-md"
+                style={{ padding: 8 }}
+                open
+              >
+                <summary style={{ cursor: "pointer", fontWeight: 600 }}>Error</summary>
+                <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
+                  {JSON.stringify(r.error, null, 2)}
+                </pre>
+              </details>
+            ) : null}
+          </div>
+        </details>
+      </div>
+    );
+  };
 
-        {statusLines.length ? (
-          <details className="border w-full bg-muted-foreground/5 rounded-md text-sm text-muted-foreground" style={{ padding: 10 }}>
-            <summary style={{ cursor: "pointer", fontWeight: 600 }}>Status</summary>
-            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-              {statusLines.map((s) => (
-                <div key={s.key} className="text-xs text-muted-foreground">
-                  {s.text}
-                </div>
-              ))}
-            </div>
-          </details>
-        ) : null}
+  const renderReasoningSummaryBubble = (text: string) => {
+    const cleaned = text.replace(/^\[reasoning\]\s*/i, "").trim();
+    if (!cleaned) return null;
+
+    return (
+      <div className="flex justify-start">
+        <details
+          className="border w-full bg-muted-foreground/5 rounded-md text-sm text-muted-foreground max-w-[90%]"
+          style={{ padding: 10 }}
+        >
+          <summary style={{ cursor: "pointer", fontWeight: 600, listStyle: "none" }}>
+            Reasoning summary
+          </summary>
+          <div
+            className="text-xs text-muted-foreground"
+            style={{ marginTop: 8, whiteSpace: "pre-wrap" }}
+          >
+            {cleaned}
+          </div>
+        </details>
       </div>
     );
   };
@@ -1753,73 +1798,58 @@ const Create = () => {
             className="flex flex-col gap-2.5 overflow-y-auto flex-1 min-h-0"
             ref={chatHistoryRef}
           >
-            {messages
-              .filter((msg) => {
-                if (msg.type === MessageType.TRACE_EVENT) return false;
-                if (msg.type === MessageType.UPDATE_FILE) return false;
-                if (msg.type === MessageType.UPDATE_IN_PROGRESS) return false;
-                if (msg.type === MessageType.UPDATE_COMPLETED) return false;
-                return (
-                  msg.data.text &&
-                  typeof msg.data.text === "string" &&
-                  msg.data.text.trim()
-                );
-              })
-              .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
-              .map((msg, index) => {
-                const isUser = msg.data.sender === Sender.USER;
-                return (
-                  <div
-                    key={msg.id || `msg-${index}-${msg.timestamp ?? 0}`}
-                    className={cn("flex", isUser ? "justify-end" : "justify-start")}
-                  >
-                    <div
-                      className={cn(
-                        "p-3 rounded-md max-w-[70%]",
-                        "border w-full bg-muted-foreground/10 rounded-md text-sm text-muted-foreground"
-                      )}
-                    >
-                      {!isUser ? renderUiBlocks(msg.data.ui_blocks) : null}
-                      <p
-                        style={{
-                          whiteSpace: "pre-wrap",
-                        }}
-                        className={isUser ? "text-white" : "text-foreground"}
-                      >
-                        {String(msg.data.text || "")}
-                      </p>
-                      {msg.data.isStreaming && (
-                        <div className="flex gap-1 mt-2 justify-start">
-                          <div
-                            className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
-                            style={{ animationDelay: "0ms" }}
-                          />
-                          <div
-                            className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
-                            style={{ animationDelay: "150ms" }}
-                          />
-                          <div
-                            className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
-                            style={{ animationDelay: "300ms" }}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-          </div>
+            {chatItems.map((item) => {
+              if (item.kind === "tool_run") {
+                return <div key={item.key}>{renderToolRunBubble(item.run)}</div>;
+              }
+              if (item.kind === "reasoning_summary") {
+                const el = renderReasoningSummaryBubble(item.text);
+                if (!el) return null;
+                return <div key={item.key}>{el}</div>;
+              }
 
-          <div
-            className="border-t"
-            style={{
-              padding: "10px 12px",
-              maxHeight: 260,
-              overflow: "auto",
-              background: "rgba(0,0,0,0.02)",
-            }}
-          >
-            {renderActions()}
+              const msg = item.msg;
+              const isUser = msg.data.sender === Sender.USER;
+              return (
+                <div
+                  key={item.key}
+                  className={cn("flex", isUser ? "justify-end" : "justify-start")}
+                >
+                  <div
+                    className={cn(
+                      "p-3 rounded-md max-w-[70%]",
+                      "border w-full bg-muted-foreground/10 rounded-md text-sm text-muted-foreground"
+                    )}
+                  >
+                    {!isUser ? renderUiBlocks(msg.data.ui_blocks) : null}
+                    <p
+                      style={{
+                        whiteSpace: "pre-wrap",
+                      }}
+                      className={isUser ? "text-white" : "text-foreground"}
+                    >
+                      {String(msg.data.text || "")}
+                    </p>
+                    {msg.data.isStreaming && (
+                      <div className="flex gap-1 mt-2 justify-start">
+                        <div
+                          className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
+                          style={{ animationDelay: "0ms" }}
+                        />
+                        <div
+                          className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
+                          style={{ animationDelay: "150ms" }}
+                        />
+                        <div
+                          className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
+                          style={{ animationDelay: "300ms" }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
