@@ -5,7 +5,9 @@ import os
 import shlex
 import subprocess
 import threading
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
@@ -32,6 +34,16 @@ class WriteB64Request(BaseModel):
     content_b64: str
 
 
+@dataclass(frozen=True)
+class _ManifestEntry:
+    path: str
+    kind: Literal["file", "dir", "symlink"]
+    size: int | None
+    mtime_ns: int
+    mode: int
+    link_target: str | None
+
+
 def _safe_path(rel_path: str) -> Path:
     p = rel_path.strip().lstrip("/")
     if not p:
@@ -42,6 +54,89 @@ def _safe_path(rel_path: str) -> Path:
     if APP_ROOT not in full.parents and full != APP_ROOT:
         raise ValueError("path escapes /app")
     return full
+
+
+def _walk_manifest(base: Path, *, include_hidden: bool) -> list[_ManifestEntry]:
+    out: list[_ManifestEntry] = []
+
+    def _is_hidden(rel_parts: tuple[str, ...]) -> bool:
+        return any(part.startswith(".") for part in rel_parts if part)
+
+    prune_dirs = {".git", "node_modules"}
+
+    for root, dirs, files in os.walk(base, followlinks=False):
+        try:
+            root_path = Path(root)
+            rel_root = root_path.relative_to(APP_ROOT)
+        except Exception:
+            continue
+
+        dirs[:] = [d for d in dirs if d not in prune_dirs]
+
+        if not include_hidden:
+            if _is_hidden(rel_root.parts):
+                dirs[:] = []
+                continue
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            files = [f for f in files if not f.startswith(".")]
+
+        for d in dirs:
+            full = root_path / d
+            rel = full.relative_to(APP_ROOT)
+            try:
+                st = full.lstat()
+            except Exception:
+                continue
+            out.append(
+                _ManifestEntry(
+                    path=str(rel),
+                    kind="dir",
+                    size=None,
+                    mtime_ns=int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))),
+                    mode=int(st.st_mode) & 0o777,
+                    link_target=None,
+                )
+            )
+
+        for f in files:
+            full = root_path / f
+            rel = full.relative_to(APP_ROOT)
+            try:
+                st = full.lstat()
+            except Exception:
+                continue
+
+            if full.is_symlink():
+                try:
+                    target = os.readlink(full)
+                except Exception:
+                    target = ""
+                out.append(
+                    _ManifestEntry(
+                        path=str(rel),
+                        kind="symlink",
+                        size=None,
+                        mtime_ns=int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))),
+                        mode=int(st.st_mode) & 0o777,
+                        link_target=target,
+                    )
+                )
+                continue
+
+            if full.is_file():
+                out.append(
+                    _ManifestEntry(
+                        path=str(rel),
+                        kind="file",
+                        size=int(st.st_size),
+                        mtime_ns=int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9))),
+                        mode=int(st.st_mode) & 0o777,
+                        link_target=None,
+                    )
+                )
+
+    out.sort(key=lambda e: e.path)
+    return out
 
 
 def _start_preview() -> None:
@@ -116,6 +211,31 @@ async def list_files(dir: str = "src") -> dict:
 
     out.sort()
     return {"files": out}
+
+
+@app.get("/manifest")
+async def manifest(dir: str = ".", include_hidden: int = 1) -> dict:
+    try:
+        base = _safe_path(dir or ".")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if not base.exists() or not base.is_dir():
+        raise HTTPException(status_code=404, detail="dir not found")
+
+    entries = _walk_manifest(base, include_hidden=bool(int(include_hidden or 0)))
+    payload = [
+        {
+            "path": e.path,
+            "kind": e.kind,
+            "size": e.size,
+            "mtime_ns": e.mtime_ns,
+            "mode": e.mode,
+            "link_target": e.link_target,
+        }
+        for e in entries
+    ]
+    return {"entries": payload}
 
 
 @app.get("/download/{file_path:path}")
