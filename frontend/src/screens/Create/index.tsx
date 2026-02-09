@@ -1745,52 +1745,6 @@ const Create = () => {
             ) : null}
           </div>
           <div className="flex-1" />
-          {projectInfo?.project_id ? (
-            <Button
-              variant="outline"
-              onClick={async () => {
-                const next = window.prompt("Project name:", projectInfo.name);
-                if (!next || !next.trim()) return;
-                try {
-                  const url = new URL(
-                    `/api/projects/${encodeURIComponent(projectInfo.project_id)}`,
-                    AGENT_CONFIG.HTTP_URL
-                  ).toString();
-                  const res = await fetch(url, {
-                    method: "PATCH",
-                    headers: { "content-type": "application/json" },
-                    credentials: "include",
-                    body: JSON.stringify({ name: next.trim() }),
-                  });
-                  const data = (await res.json()) as unknown;
-                  const d = asObj(data);
-                  if (!res.ok) return;
-                  if (
-                    d &&
-                    typeof d.slug === "string" &&
-                    typeof d.name === "string"
-                  ) {
-                    setProjectInfo({
-                      project_id: projectInfo.project_id,
-                      name: d.name,
-                      slug: d.slug,
-                    });
-                    navigate(`/p/${d.slug}`, {
-                      replace: true,
-                      state: routeState ?? undefined,
-                    });
-                  }
-                } catch {
-                  // ignore
-                }
-              }}
-              style={{ marginRight: 8 }}
-              disabled={!isConnected}
-              title="Rename project (updates URL)"
-            >
-              Rename
-            </Button>
-          ) : null}
           <AgentAuthStatus />
         </div>
 
