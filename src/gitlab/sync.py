@@ -81,7 +81,10 @@ def export_sandbox_snapshot(backend: Any, *, excludes: list[str] | None = None) 
     out_name = ".amicable_snapshot.tgz"
 
     res = backend.execute(_build_tar_command(out_name=out_name, excludes=ex))
-    if getattr(res, "exit_code", 1) != 0:
+    exit_code = getattr(res, "exit_code", 2)
+    # tar exits 1 when files change during archiving (e.g. Vite dev server);
+    # the archive is still valid.  Only exit code >= 2 is a real failure.
+    if exit_code >= 2:
         raise RuntimeError(f"Snapshot tar failed: {getattr(res, 'output', '')}")
 
     downloads = backend.download_files([f"/{out_name}"])
