@@ -202,7 +202,7 @@ const NewScreen: React.FC = () => {
             </h1>
             <p className="text-lg font-normal max-w-[60ch]">
               Amicable helps non-engineers and teams build real apps on sanctioned stacks. Choose a
-              template, write a short prompt, and get a sandboxed project that can plug into your
+              template, write a short prompt, and get a sandboxed project that works within your
               org’s QA, security, and observability practices.
             </p>
           </div>
