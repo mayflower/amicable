@@ -188,20 +188,24 @@ const NewScreen: React.FC = () => {
       </div>
 
       <div className="flex flex-col items-center w-full max-w-[980px] mx-auto gap-10">
-        <div className="flex flex-col items-center gap-2">
+        <div className="flex flex-col md:flex-row items-center md:items-start gap-4 md:gap-8 w-full">
           <img
-            className="w-48 h-48 object-contain"
+            className="w-32 h-32 md:w-40 md:h-40 object-contain shrink-0"
             src="/amicable-logo.svg"
             alt="Amicable"
             loading="eager"
             decoding="async"
           />
-          <h1 className="text-2xl font-bold">Ship internal tools without skipping controls.</h1>
-          <p className="text-lg font-normal text-center max-w-[60ch]">
-            Amicable helps non-engineers and teams build real apps on sanctioned stacks. Choose a
-            template, write a short prompt, and get a sandboxed project that can plug into your
-            org’s QA, security, and observability practices.
-          </p>
+          <div className="flex flex-col gap-2 text-center md:text-left">
+            <h1 className="text-2xl font-bold">
+              Ship internal tools without skipping controls.
+            </h1>
+            <p className="text-lg font-normal max-w-[60ch]">
+              Amicable helps non-engineers and teams build real apps on sanctioned stacks. Choose a
+              template, write a short prompt, and get a sandboxed project that can plug into your
+              org’s QA, security, and observability practices.
+            </p>
+          </div>
         </div>
 
         <div className="w-full rounded-2xl p-4 border border-border bg-background/5">
