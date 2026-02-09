@@ -108,6 +108,7 @@ def build_controller_graph(
     get_backend: GetBackendFn,
     qa_enabled: bool,
     checkpointer: Any | None = None,
+    store: Any | None = None,
 ) -> Any:
     # Imports are kept inside to avoid requiring langgraph/langchain in minimal dev environments.
     from langchain_core.messages import AIMessage, HumanMessage  # type: ignore
@@ -310,4 +311,5 @@ def build_controller_graph(
     g.add_edge("git_sync", END)
 
     # A checkpointer is required for HITL interrupts/resume (Command(resume=...)).
-    return g.compile(checkpointer=checkpointer)
+    # The store must be propagated so the inner agent's StoreBackend can access it.
+    return g.compile(checkpointer=checkpointer, store=store)

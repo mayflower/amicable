@@ -1611,6 +1611,7 @@ class Agent:
             get_backend=policy_backend,
             qa_enabled=_deepagents_qa_enabled(),
             checkpointer=self._deep_controller_checkpointer,
+            store=store,
         )
         logger.info(
             "DeepAgents controller initialized (qa_enabled=%s)",
