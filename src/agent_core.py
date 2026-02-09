@@ -92,10 +92,6 @@ def _deepagents_skills_sources() -> list[str]:
     )
 
 
-def _deepagents_model_retry_max_retries() -> int:
-    return max(0, _env_int("DEEPAGENTS_MODEL_RETRY_MAX_RETRIES", 2))
-
-
 def _deepagents_tool_retry_max_retries() -> int:
     return max(0, _env_int("DEEPAGENTS_TOOL_RETRY_MAX_RETRIES", 2))
 
@@ -1504,7 +1500,6 @@ class Agent:
         store = self._get_langgraph_store()
         checkpointer = await self._get_langgraph_checkpointer()
 
-        from langchain.agents.middleware.model_retry import ModelRetryMiddleware
         from langchain.agents.middleware.tool_retry import ToolRetryMiddleware
         from langgraph.checkpoint.memory import MemorySaver
 
@@ -1571,7 +1566,6 @@ class Agent:
             DangerousExecuteHitlMiddleware(),
             # Require approval before destructive DB ops (drop/truncate).
             DangerousDbHitlMiddleware(),
-            ModelRetryMiddleware(max_retries=_deepagents_model_retry_max_retries()),
             ToolRetryMiddleware(max_retries=_deepagents_tool_retry_max_retries()),
         ]
 
