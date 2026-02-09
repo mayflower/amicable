@@ -51,6 +51,10 @@ export type MessageData = JsonObject & {
   isStreaming?: boolean;
   error?: unknown;
 
+  // Optional: associate trace events with the assistant message they belong to.
+  // (Backend may omit this; frontend can best-effort infer in that case.)
+  assistant_msg_id?: string;
+
   // Optional generative UI blocks parsed from assistant text.
   ui_blocks?: JsonObject[];
 

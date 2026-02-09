@@ -350,6 +350,20 @@ class Agent:
         if self._session_manager is None:
             self._session_manager = SessionSandboxManager()
 
+        # Resolve missing slug from the DB so all init paths (WS + HTTP sandbox FS)
+        # can create/reuse the same sandbox and generate stable preview URLs.
+        effective_slug = slug
+        if effective_slug is None and db_enabled_from_env():
+            try:
+                from src.projects.store import get_project_any_owner
+
+                client = hasura_client_from_env()
+                p = get_project_any_owner(client, project_id=session_id)
+                if p is not None and isinstance(p.slug, str) and p.slug.strip():
+                    effective_slug = p.slug.strip()
+            except Exception:
+                effective_slug = slug
+
         effective_template_id = parse_template_id(template_id) if template_id else None
         if effective_template_id is None and db_enabled_from_env():
             try:
@@ -365,7 +379,7 @@ class Agent:
 
         sandbox_template_name = k8s_template_name_for(effective_template_id)
         sess = self._session_manager.ensure_session(
-            session_id, template_name=sandbox_template_name, slug=slug
+            session_id, template_name=sandbox_template_name, slug=effective_slug
         )
 
         backend = None
@@ -379,6 +393,9 @@ class Agent:
             pass
 
         init_data: dict[str, Any] = {
+            # Prefer a slug-based preview hostname when we have a slug. With the
+            # preview-router resolver in place, this remains stable even if the
+            # underlying sandbox_id is hash-based or if the slug changes later.
             "url": sess.preview_url,
             "sandbox_id": sess.sandbox_id,
             "exists": sess.exists,
@@ -386,6 +403,28 @@ class Agent:
             "template_id": effective_template_id,
             "k8s_template_name": sandbox_template_name,
         }
+
+        # Persist sandbox_id (best-effort) for preview routing and debugging.
+        if db_enabled_from_env():
+            try:
+                from src.projects.store import set_project_sandbox_id_any_owner
+
+                client = hasura_client_from_env()
+                set_project_sandbox_id_any_owner(
+                    client, project_id=session_id, sandbox_id=str(sess.sandbox_id)
+                )
+            except Exception:
+                pass
+
+        # Now that we have both PREVIEW_BASE_DOMAIN and the slug, override the
+        # init preview URL to use the slug host label if possible.
+        try:
+            base = (os.environ.get("PREVIEW_BASE_DOMAIN") or "").strip().lstrip(".")
+            scheme = (os.environ.get("PREVIEW_SCHEME") or "https").strip()
+            if effective_slug and base:
+                init_data["url"] = f"{scheme}://{effective_slug}.{base}/"
+        except Exception:
+            pass
 
         # Platform scaffolding: Backstage + SonarQube + TechDocs (+ optional CI).
         # Non-destructive (create-only) and best-effort.
@@ -880,6 +919,7 @@ class Agent:
                             "run_id": event.get("run_id"),
                             "parent_ids": event.get("parent_ids"),
                             "tags": event.get("tags"),
+                            "assistant_msg_id": plan_msg_id,
                             "text": f"[tool_start] {name}\n{_pretty_json(tool_input)}",
                         },
                         session_id=session_id,
@@ -897,6 +937,7 @@ class Agent:
                             "run_id": event.get("run_id"),
                             "parent_ids": event.get("parent_ids"),
                             "tags": event.get("tags"),
+                            "assistant_msg_id": plan_msg_id,
                             "text": f"[tool_end] {name}\n{_pretty_json(tool_output)}",
                         },
                         session_id=session_id,
@@ -924,6 +965,7 @@ class Agent:
                                     "tool_name": name,
                                     "text": f"[explain] {explain}",
                                     "run_id": event.get("run_id"),
+                                    "assistant_msg_id": plan_msg_id,
                                 },
                                 session_id=session_id,
                             ).to_dict()
@@ -940,6 +982,7 @@ class Agent:
                             "run_id": event.get("run_id"),
                             "parent_ids": event.get("parent_ids"),
                             "tags": event.get("tags"),
+                            "assistant_msg_id": plan_msg_id,
                             "text": f"[tool_error] {name}\n{_pretty_json(err)}",
                         },
                         session_id=session_id,
@@ -967,6 +1010,7 @@ class Agent:
                                     "tool_name": name,
                                     "text": f"[explain] {explain}",
                                     "run_id": event.get("run_id"),
+                                    "assistant_msg_id": plan_msg_id,
                                 },
                                 session_id=session_id,
                             ).to_dict()
@@ -1083,6 +1127,7 @@ class Agent:
                             "phase": "reasoning_summary",
                             "tool_name": "reasoning",
                             "text": f"[reasoning] {reason}",
+                            "assistant_msg_id": plan_msg_id,
                         },
                         session_id=session_id,
                     ).to_dict()
@@ -1115,6 +1160,7 @@ class Agent:
                         "phase": "reasoning_summary",
                         "tool_name": "reasoning",
                         "text": f"[reasoning] {reason}",
+                        "assistant_msg_id": plan_msg_id,
                     },
                     session_id=session_id,
                 ).to_dict()
@@ -1425,6 +1471,7 @@ class Agent:
                             "run_id": event.get("run_id"),
                             "parent_ids": event.get("parent_ids"),
                             "tags": event.get("tags"),
+                            "assistant_msg_id": plan_msg_id,
                             "text": f"[tool_start] {name}\n{_pretty_json(tool_input)}",
                         },
                         session_id=session_id,
@@ -1442,6 +1489,7 @@ class Agent:
                             "run_id": event.get("run_id"),
                             "parent_ids": event.get("parent_ids"),
                             "tags": event.get("tags"),
+                            "assistant_msg_id": plan_msg_id,
                             "text": f"[tool_end] {name}\n{_pretty_json(tool_output)}",
                         },
                         session_id=session_id,
@@ -1469,6 +1517,7 @@ class Agent:
                                     "tool_name": name,
                                     "text": f"[explain] {explain}",
                                     "run_id": event.get("run_id"),
+                                    "assistant_msg_id": plan_msg_id,
                                 },
                                 session_id=session_id,
                             ).to_dict()
@@ -1485,6 +1534,7 @@ class Agent:
                             "run_id": event.get("run_id"),
                             "parent_ids": event.get("parent_ids"),
                             "tags": event.get("tags"),
+                            "assistant_msg_id": plan_msg_id,
                             "text": f"[tool_error] {name}\n{_pretty_json(err)}",
                         },
                         session_id=session_id,
@@ -1512,6 +1562,7 @@ class Agent:
                                     "tool_name": name,
                                     "text": f"[explain] {explain}",
                                     "run_id": event.get("run_id"),
+                                    "assistant_msg_id": plan_msg_id,
                                 },
                                 session_id=session_id,
                             ).to_dict()
@@ -1623,6 +1674,7 @@ class Agent:
                             "phase": "reasoning_summary",
                             "tool_name": "reasoning",
                             "text": f"[reasoning] {reason}",
+                            "assistant_msg_id": plan_msg_id,
                         },
                         session_id=session_id,
                     ).to_dict()
@@ -1655,6 +1707,7 @@ class Agent:
                         "phase": "reasoning_summary",
                         "tool_name": "reasoning",
                         "text": f"[reasoning] {reason}",
+                        "assistant_msg_id": plan_msg_id,
                     },
                     session_id=session_id,
                 ).to_dict()

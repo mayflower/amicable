@@ -175,6 +175,7 @@ const Create = () => {
     useAgentAuth();
   const [agentTouchedPath, setAgentTouchedPath] = useState<string | null>(null);
   const toolFileByRunId = useRef<Map<string, string>>(new Map());
+  const latestAssistantMsgIdRef = useRef<string | null>(null);
   const [mainView, setMainView] = useState<"preview" | "code">("preview");
 
   useEffect(() => {
@@ -329,6 +330,7 @@ const Create = () => {
         console.warn("AGENT_PARTIAL message missing id, ignoring:", message);
         return;
       }
+      latestAssistantMsgIdRef.current = id;
 
       if (text && text.trim()) {
         const cleaned = stripUiBlocks(text.replace(/\\/g, ""));
@@ -375,6 +377,7 @@ const Create = () => {
         console.warn("AGENT_FINAL message missing id, ignoring:", message);
         return;
       }
+      latestAssistantMsgIdRef.current = id;
       if (text && text.trim()) {
         const cleanedText = text.replace(/\\/g, "");
         const extracted = extractUiBlocks(cleanedText);
@@ -587,6 +590,10 @@ const Create = () => {
           timestamp: message.timestamp || Date.now(),
           data: {
             ...message.data,
+            assistant_msg_id:
+              typeof message.data.assistant_msg_id === "string" && message.data.assistant_msg_id
+                ? message.data.assistant_msg_id
+                : latestAssistantMsgIdRef.current || undefined,
             sender: Sender.ASSISTANT,
             isStreaming: false,
           },
@@ -654,81 +661,131 @@ const Create = () => {
     return Array.from(byId.values()).sort((a, b) => (a.startTs || 0) - (b.startTs || 0));
   }, [messages]);
 
-  const reasoningSummaries = useMemo(() => {
-    return messages
-      .filter((m) => m.type === MessageType.TRACE_EVENT)
-      .filter((m) => typeof m.data.phase === "string" && m.data.phase === "reasoning_summary")
-      .map((m) => ({
-        key: m.id || `reason-${m.timestamp ?? 0}`,
-        ts: typeof m.timestamp === "number" ? m.timestamp : 0,
-        text: typeof m.data.text === "string" ? m.data.text : "",
-      }))
-      .filter((x) => x.text.trim())
-      .sort((a, b) => a.ts - b.ts);
-  }, [messages]);
+  const toolRunsByAssistantMsgId = useMemo(() => {
+    const map = new Map<string, (typeof toolRuns)[number][]>();
+    for (const m of messages) {
+      if (m.type !== MessageType.TRACE_EVENT) continue;
+      const runId = typeof m.data.run_id === "string" ? m.data.run_id : "";
+      const toolName = typeof m.data.tool_name === "string" ? m.data.tool_name : "";
+      if (!runId || !toolName) continue;
 
-  const chatItems = useMemo(() => {
-    type ToolRunItem = {
-      kind: "tool_run";
-      key: string;
-      ts: number;
-      run: (typeof toolRuns)[number];
-    };
-    type ReasoningItem = {
-      kind: "reasoning_summary";
-      key: string;
-      ts: number;
-      text: string;
-    };
-    type MsgItem = {
-      kind: "message";
-      key: string;
-      ts: number;
-      msg: Message;
-    };
+      const phase = typeof m.data.phase === "string" ? m.data.phase : "";
+      if (phase === "reasoning_summary") continue;
 
-    const items: Array<ToolRunItem | ReasoningItem | MsgItem> = [];
+      const assistantMsgId =
+        typeof m.data.assistant_msg_id === "string" ? m.data.assistant_msg_id : "";
+      if (!assistantMsgId) continue;
 
-    for (const msg of messages) {
-      if (msg.type === MessageType.TRACE_EVENT) continue;
-      if (msg.type === MessageType.UPDATE_FILE) continue;
-      if (msg.type === MessageType.UPDATE_IN_PROGRESS) continue;
-      if (msg.type === MessageType.UPDATE_COMPLETED) continue;
+      // toolRuns is already aggregated; we'll attach by matching run_id below.
+      // (This loop just collects assistant_msg_id values present in trace stream.)
+      if (!map.has(assistantMsgId)) map.set(assistantMsgId, []);
+    }
 
-      if (!(msg.data.text && typeof msg.data.text === "string" && msg.data.text.trim())) {
-        continue;
-      }
-
-      const ts = typeof msg.timestamp === "number" ? msg.timestamp : 0;
-      items.push({
-        kind: "message",
-        key: msg.id || `msg-${msg.type}-${ts}`,
-        ts,
-        msg,
-      });
+    // Populate by scanning aggregated runs and attaching them to the first seen assistant_msg_id
+    // in the trace stream for that run.
+    const runToAssistant = new Map<string, string>();
+    for (const m of messages) {
+      if (m.type !== MessageType.TRACE_EVENT) continue;
+      const runId = typeof m.data.run_id === "string" ? m.data.run_id : "";
+      if (!runId) continue;
+      const assistantMsgId =
+        typeof m.data.assistant_msg_id === "string" ? m.data.assistant_msg_id : "";
+      if (!assistantMsgId) continue;
+      if (!runToAssistant.has(runId)) runToAssistant.set(runId, assistantMsgId);
     }
 
     for (const r of toolRuns) {
-      items.push({
-        kind: "tool_run",
-        key: `tool-${r.runId}`,
-        ts: r.startTs || 0,
-        run: r,
+      const assistantMsgId = runToAssistant.get(r.runId);
+      if (!assistantMsgId) continue;
+      const arr = map.get(assistantMsgId) || [];
+      arr.push(r);
+      map.set(assistantMsgId, arr);
+    }
+
+    for (const v of map.values()) {
+      v.sort((a, b) => (a.startTs || 0) - (b.startTs || 0));
+    }
+    return map;
+  }, [messages, toolRuns]);
+
+  const reasoningByAssistantMsgId = useMemo(() => {
+    const map = new Map<string, { key: string; ts: number; text: string }[]>();
+    for (const m of messages) {
+      if (m.type !== MessageType.TRACE_EVENT) continue;
+      if (!(typeof m.data.phase === "string" && m.data.phase === "reasoning_summary")) continue;
+      const assistantMsgId =
+        typeof m.data.assistant_msg_id === "string" ? m.data.assistant_msg_id : "";
+      if (!assistantMsgId) continue;
+      const ts = typeof m.timestamp === "number" ? m.timestamp : 0;
+      const text = typeof m.data.text === "string" ? m.data.text : "";
+      const key = m.id || `reason-${ts}`;
+      if (!text.trim()) continue;
+      const arr = map.get(assistantMsgId) || [];
+      arr.push({ key, ts, text });
+      map.set(assistantMsgId, arr);
+    }
+
+    for (const v of map.values()) {
+      v.sort((a, b) => a.ts - b.ts);
+    }
+    return map;
+  }, [messages]);
+
+  const displayMessages = useMemo(() => {
+    const base = messages.filter((msg) => {
+      if (msg.type === MessageType.TRACE_EVENT) return false;
+      if (msg.type === MessageType.UPDATE_FILE) return false;
+      if (msg.type === MessageType.UPDATE_IN_PROGRESS) return false;
+      if (msg.type === MessageType.UPDATE_COMPLETED) return false;
+      return true;
+    });
+
+    const haveIds = new Set(base.map((m) => m.id).filter(Boolean) as string[]);
+
+    // If tools start before any assistant token stream, we still want a bubble to hang them from.
+    const placeholders: Message[] = [];
+    const assistantIds = new Set<string>();
+    for (const k of toolRunsByAssistantMsgId.keys()) assistantIds.add(k);
+    for (const k of reasoningByAssistantMsgId.keys()) assistantIds.add(k);
+    for (const assistantMsgId of assistantIds) {
+      if (!assistantMsgId || haveIds.has(assistantMsgId)) continue;
+
+      // Find earliest trace timestamp for this assistant id.
+      let ts = Date.now();
+      for (const m of messages) {
+        if (m.type !== MessageType.TRACE_EVENT) continue;
+        const a =
+          typeof m.data.assistant_msg_id === "string" ? m.data.assistant_msg_id : "";
+        if (a !== assistantMsgId) continue;
+        const mts = typeof m.timestamp === "number" ? m.timestamp : ts;
+        ts = Math.min(ts, mts);
+      }
+
+      placeholders.push({
+        type: MessageType.AGENT_PARTIAL,
+        id: assistantMsgId,
+        timestamp: ts,
+        session_id: resolvedSessionId || undefined,
+        data: { text: "", sender: Sender.ASSISTANT, isStreaming: true },
       });
     }
 
-    for (const r of reasoningSummaries) {
-      items.push({
-        kind: "reasoning_summary",
-        key: `reason-${r.key}`,
-        ts: r.ts,
-        text: r.text,
-      });
-    }
+    const combined = [...base, ...placeholders]
+      .filter((msg) => {
+        const id = typeof msg.id === "string" ? msg.id : "";
+        const isUser = msg.data.sender === Sender.USER;
+        const text = typeof msg.data.text === "string" ? msg.data.text : "";
+        const hasTools = id ? (toolRunsByAssistantMsgId.get(id)?.length || 0) > 0 : false;
+        const hasReason = id ? (reasoningByAssistantMsgId.get(id)?.length || 0) > 0 : false;
 
-    items.sort((a, b) => a.ts - b.ts);
-    return items;
-  }, [messages, toolRuns, reasoningSummaries]);
+        if (msg.type === MessageType.ERROR) return true;
+        if (isUser) return !!text.trim();
+        return !!text.trim() || hasTools || hasReason;
+      })
+      .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+    return combined;
+  }, [messages, toolRunsByAssistantMsgId, reasoningByAssistantMsgId, resolvedSessionId]);
 
   const { isConnecting, isConnected, error, connect, send } = useMessageBus({
     wsUrl: AGENT_CONFIG.WS_URL,
@@ -918,7 +975,7 @@ const Create = () => {
     return (
       <div className="flex justify-start">
         <details
-          className="border w-full bg-muted-foreground/5 rounded-md text-sm text-muted-foreground max-w-[90%]"
+          className="border w-full bg-muted-foreground/5 rounded-md text-sm text-muted-foreground"
           style={{ padding: 10 }}
           open={r.status !== "success"}
         >
@@ -994,7 +1051,7 @@ const Create = () => {
     return (
       <div className="flex justify-start">
         <details
-          className="border w-full bg-muted-foreground/5 rounded-md text-sm text-muted-foreground max-w-[90%]"
+          className="border w-full bg-muted-foreground/5 rounded-md text-sm text-muted-foreground"
           style={{ padding: 10 }}
         >
           <summary style={{ cursor: "pointer", fontWeight: 600, listStyle: "none" }}>
@@ -1850,21 +1907,15 @@ const Create = () => {
             className="flex flex-col gap-2.5 overflow-y-auto flex-1 min-h-0"
             ref={chatHistoryRef}
           >
-            {chatItems.map((item) => {
-              if (item.kind === "tool_run") {
-                return <div key={item.key}>{renderToolRunBubble(item.run)}</div>;
-              }
-              if (item.kind === "reasoning_summary") {
-                const el = renderReasoningSummaryBubble(item.text);
-                if (!el) return null;
-                return <div key={item.key}>{el}</div>;
-              }
-
-              const msg = item.msg;
+            {displayMessages.map((msg, index) => {
+              const id = typeof msg.id === "string" ? msg.id : "";
               const isUser = msg.data.sender === Sender.USER;
+              const runs = !isUser && id ? toolRunsByAssistantMsgId.get(id) || [] : [];
+              const reasons = !isUser && id ? reasoningByAssistantMsgId.get(id) || [] : [];
+
               return (
                 <div
-                  key={item.key}
+                  key={msg.id || `msg-${index}-${msg.timestamp ?? 0}`}
                   className={cn("flex", isUser ? "justify-end" : "justify-start")}
                 >
                   <div
@@ -1874,14 +1925,31 @@ const Create = () => {
                     )}
                   >
                     {!isUser ? renderUiBlocks(msg.data.ui_blocks) : null}
-                    <p
-                      style={{
-                        whiteSpace: "pre-wrap",
-                      }}
-                      className={isUser ? "text-white" : "text-foreground"}
-                    >
-                      {String(msg.data.text || "")}
-                    </p>
+
+                    {!isUser && (runs.length || reasons.length) ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 8 }}>
+                        {runs.map((r) => (
+                          <div key={r.runId}>{renderToolRunBubble(r)}</div>
+                        ))}
+                        {reasons.map((r) => {
+                          const el = renderReasoningSummaryBubble(r.text);
+                          if (!el) return null;
+                          return <div key={r.key}>{el}</div>;
+                        })}
+                      </div>
+                    ) : null}
+
+                    {msg.data.text && typeof msg.data.text === "string" && msg.data.text.trim() ? (
+                      <p
+                        style={{
+                          whiteSpace: "pre-wrap",
+                        }}
+                        className={isUser ? "text-white" : "text-foreground"}
+                      >
+                        {String(msg.data.text || "")}
+                      </p>
+                    ) : null}
+
                     {msg.data.isStreaming && (
                       <div className="flex gap-1 mt-2 justify-start">
                         <div
