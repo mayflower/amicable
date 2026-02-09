@@ -229,18 +229,23 @@ def build_controller_graph(
         return {"final_status": "failed_qa", "messages": messages}
 
     async def git_sync(_state: ControllerState, config: Any) -> dict[str, Any]:
-        """Snapshot + commit + push to GitLab.
+        """Sync sandbox tree + commit + push to GitLab.
 
         In production, GitLab sync is required (AMICABLE_GIT_SYNC_REQUIRED=1).
         """
 
         try:
+            from src.deepagents_backend.tool_journal import drain as drain_tool_journal
+            from src.deepagents_backend.tool_journal import (
+                summarize as summarize_tool_journal,
+            )
+            from src.gitlab.commit_message import generate_agent_commit_message_llm
             from src.gitlab.config import (
                 ensure_git_sync_configured,
                 git_sync_enabled,
                 git_sync_required,
             )
-            from src.gitlab.sync import export_sandbox_snapshot, sync_snapshot_to_repo
+            from src.gitlab.sync import sync_sandbox_tree_to_repo
 
             ensure_git_sync_configured()
             required = git_sync_required()
@@ -261,12 +266,56 @@ def build_controller_graph(
                 return {"git_pushed": False, "git_last_commit": None, "git_error": "git repo url missing"}
 
             backend = get_backend(thread_id)
-            snapshot = await asyncio.to_thread(export_sandbox_snapshot, backend)
-            pushed, sha = await asyncio.to_thread(
-                sync_snapshot_to_repo,
-                snapshot,
+
+            # Gather "why" context for the commit message.
+            events = drain_tool_journal(thread_id)
+            journal_summary = summarize_tool_journal(events)
+
+            messages = list(_state.get("messages") or [])
+            user_request = ""
+            for m in reversed(messages):
+                # LangChain messages expose .type/.content, but we keep this defensive.
+                mtype = getattr(m, "type", None)
+                content = getattr(m, "content", None)
+                if mtype == "human" and isinstance(content, str) and content.strip():
+                    user_request = content.strip()
+                    break
+            # Fallback (older message objects): if we couldn't detect a human message,
+            # take the earliest non-empty string content.
+            if not user_request:
+                for m in messages:
+                    content = getattr(m, "content", None)
+                    if isinstance(content, str) and content.strip():
+                        user_request = content.strip()
+                        break
+
+            qa_passed = _state.get("qa_passed")
+            qa_results = _state.get("qa_results") or []
+            qa_last_output = ""
+            if isinstance(qa_results, list) and qa_results:
+                last = qa_results[-1]
+                if isinstance(last, dict):
+                    out = last.get("output")
+                    if isinstance(out, str):
+                        qa_last_output = out
+
+            def _commit_message(diff_stat: str, name_status: str) -> str:
+                return generate_agent_commit_message_llm(
+                    user_request=user_request,
+                    project_slug=str(project_slug),
+                    qa_passed=bool(qa_passed) if qa_passed is not None else None,
+                    qa_last_output=qa_last_output,
+                    diff_stat=diff_stat,
+                    name_status=name_status,
+                    tool_journal_summary=journal_summary,
+                )
+
+            pushed, sha, _diff_stat, _name_status = await asyncio.to_thread(
+                sync_sandbox_tree_to_repo,
+                backend,
                 repo_http_url=repo_http_url,
                 project_slug=str(project_slug),
+                commit_message_fn=_commit_message,
             )
             return {"git_pushed": bool(pushed), "git_last_commit": sha, "git_error": None}
         except Exception as e:

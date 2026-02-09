@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -33,6 +34,7 @@ load_dotenv()
 app = FastAPI()
 _agent: Agent | None = None
 
+_bootstrap_lock_by_project: dict[str, asyncio.Lock] = {}
 
 _naming_llm: Any = None
 
@@ -1099,6 +1101,58 @@ async def _handle_ws(ws: WebSocket) -> None:
                 init_data["template_id"] = getattr(project, "template_id", None)
             if git is not None:
                 init_data["git"] = git
+
+            # Baseline bootstrap commit: only when the remote branch doesn't exist yet.
+            try:
+                from src.gitlab.commit_message import (
+                    deterministic_bootstrap_commit_message,
+                )
+                from src.gitlab.config import git_sync_enabled
+                from src.gitlab.sync import bootstrap_repo_if_empty
+
+                if git_sync_enabled() and isinstance(git, dict):
+                    repo_url = git.get("http_url_to_repo") or git.get("repo_http_url")
+                    if isinstance(repo_url, str) and repo_url:
+                        lock = _bootstrap_lock_by_project.get(session_id)
+                        if lock is None:
+                            lock = asyncio.Lock()
+                            _bootstrap_lock_by_project[session_id] = lock
+                        async with lock:
+                            assert agent._session_manager is not None
+                            backend = agent._session_manager.get_backend(session_id)
+                            slug_for_commit = (
+                                str(getattr(project, "slug", "") or "") if project is not None else ""
+                            ).strip() or str(session_id)
+                            msg = deterministic_bootstrap_commit_message(
+                                project_slug=slug_for_commit,
+                                template_id=str(template_id) if template_id else None,
+                            )
+                            await asyncio.to_thread(
+                                bootstrap_repo_if_empty,
+                                backend,
+                                repo_http_url=str(repo_url),
+                                project_slug=slug_for_commit,
+                                commit_message=msg,
+                            )
+            except Exception as e:
+                # In required mode, treat as init failure; otherwise best-effort.
+                try:
+                    from src.gitlab.config import (
+                        git_sync_required as _git_sync_required,
+                    )
+
+                    if _git_sync_required():
+                        await ws.send_json(
+                            Message.new(
+                                MessageType.ERROR,
+                                {"error": "git_bootstrap_failed", "detail": str(e)},
+                                session_id=session_id,
+                            ).to_dict()
+                        )
+                        await ws.close(code=1011)
+                        return
+                except Exception:
+                    pass
             pending = agent.get_pending_hitl(session_id)
             if pending:
                 init_data["hitl_pending"] = pending

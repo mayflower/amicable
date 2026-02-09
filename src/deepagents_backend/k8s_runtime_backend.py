@@ -88,6 +88,37 @@ class K8sSandboxRuntimeBackend(SandboxBackendProtocol):
     async def aexecute(self, command: str) -> ExecuteResponse:
         return await asyncio.to_thread(self.execute, command)
 
+    def manifest(self, dir: str = "/") -> list[dict[str, object]]:
+        """Return a recursive file manifest rooted at `dir` (public path).
+
+        Requires sandbox runtime support for GET /manifest.
+        """
+        rel = self._to_relative(dir or "/")
+        # Runtime expects a path relative to /app.
+        payload_dir = "." if rel == "." else rel
+        resp = self._request(
+            "GET",
+            "manifest",
+            params={"dir": payload_dir, "include_hidden": 1},
+            timeout=self._request_timeout_s,
+        )
+        data = resp.json()
+        entries = data.get("entries")
+        if not isinstance(entries, list):
+            return []
+        out: list[dict[str, object]] = []
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            path = e.get("path")
+            kind = e.get("kind")
+            if not isinstance(path, str) or not path:
+                continue
+            if not isinstance(kind, str) or kind not in ("file", "dir", "symlink"):
+                continue
+            out.append(e)
+        return out
+
     def ls_info(self, path: str) -> list[FileInfo]:
         internal_path = self._to_internal(path)
         # List direct children only.
@@ -297,6 +328,55 @@ class K8sSandboxRuntimeBackend(SandboxBackendProtocol):
         return responses
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        # Prefer a batch endpoint when available to avoid N HTTP round-trips.
+        # Fall back to per-file download for older sandbox images.
+        normalized: list[tuple[str, str] | tuple[str, None]] = []
+        for p in paths:
+            try:
+                _ = self._to_internal(p)
+                normalized.append((p, self._to_relative(p)))
+            except ValueError:
+                normalized.append((p, None))
+
+        # If everything is invalid, short-circuit.
+        if all(rel is None for _p, rel in normalized):
+            return [
+                FileDownloadResponse(path=p, content=None, error="invalid_path")
+                for p, _rel in normalized
+            ]
+
+        try:
+            batch_map = self._download_many([rel for _p, rel in normalized if rel is not None])
+        except Exception:
+            batch_map = None
+
+        if batch_map is not None:
+            out: list[FileDownloadResponse] = []
+            for public_path, rel in normalized:
+                if rel is None:
+                    out.append(FileDownloadResponse(path=public_path, content=None, error="invalid_path"))
+                    continue
+                item = batch_map.get(rel)
+                if not isinstance(item, dict):
+                    out.append(FileDownloadResponse(path=public_path, content=None, error="file_not_found"))
+                    continue
+                err = item.get("error")
+                if isinstance(err, str) and err:
+                    out.append(FileDownloadResponse(path=public_path, content=None, error=err))
+                    continue
+                b64 = item.get("content_b64")
+                if not isinstance(b64, str):
+                    out.append(FileDownloadResponse(path=public_path, content=None, error="file_not_found"))
+                    continue
+                try:
+                    content = base64.b64decode(b64.encode("ascii"), validate=True)
+                except Exception:
+                    out.append(FileDownloadResponse(path=public_path, content=None, error="file_not_found"))
+                    continue
+                out.append(FileDownloadResponse(path=public_path, content=content, error=None))
+            return out
+
+        # Fallback: original behavior (per-file state check + GET /download).
         responses: list[FileDownloadResponse] = []
         for path in paths:
             try:
@@ -375,6 +455,32 @@ class K8sSandboxRuntimeBackend(SandboxBackendProtocol):
         rel = rel_path.lstrip("/")
         resp = self._request("GET", f"download/{rel}")
         return resp.content
+
+    def _download_many(self, rel_paths: list[str]) -> dict[str, dict[str, object]] | None:
+        # Newer sandbox images provide POST /download_many. If the endpoint is missing,
+        # allow callers to fall back to per-file downloads.
+        rels = [p.lstrip("/") for p in rel_paths if isinstance(p, str) and p.strip()]
+        if not rels:
+            return {}
+        try:
+            resp = self._request("POST", "download_many", json={"paths": rels})
+        except requests.HTTPError as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status in (404, 405):
+                return None
+            raise
+        data = resp.json()
+        files = data.get("files")
+        if not isinstance(files, list):
+            return {}
+        out: dict[str, dict[str, object]] = {}
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            p = item.get("path")
+            if isinstance(p, str) and p:
+                out[p.lstrip("/")] = item
+        return out
 
     def _write_bytes(self, rel_path: str, payload: bytes) -> None:
         rel = rel_path.lstrip("/")

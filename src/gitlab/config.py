@@ -69,7 +69,6 @@ _DEFAULT_EXCLUDES = [
     ".cache/",
     ".turbo/",
     "coverage/",
-    ".amicable_snapshot.tgz",
     ".env",
     ".env.*",
 ]

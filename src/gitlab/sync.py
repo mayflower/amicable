@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import glob
-import io
 import os
 import re
 import shutil
 import subprocess
-import tarfile
 import tempfile
 import time
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from typing import Any, Protocol
 
 from src.gitlab.config import (
@@ -61,49 +60,8 @@ def _sanitize_dir_name(name: str) -> str:
     return s or "project"
 
 
-def _build_tar_command(*, out_name: str, excludes: list[str]) -> str:
-    # Run from /app inside the sandbox.
-    parts = ["tar", "-czf", out_name]
-    for ex in excludes:
-        ex = (ex or "").strip()
-        if not ex:
-            continue
-        ex = ex.rstrip("/")
-        # Use patterns relative to /app.
-        parts.append(f"--exclude=./{ex}")
-    parts.append(".")
-    return " ".join(parts)
-
-
-def export_sandbox_snapshot(backend: Any, *, excludes: list[str] | None = None) -> bytes:
-    """Create a tar.gz snapshot in the sandbox, download it, delete it."""
-    ex = excludes or git_sync_excludes()
-    out_name = ".amicable_snapshot.tgz"
-
-    res = backend.execute(_build_tar_command(out_name=out_name, excludes=ex))
-    exit_code = getattr(res, "exit_code", 2)
-    # tar exits 1 when files change during archiving (e.g. Vite dev server);
-    # the archive is still valid.  Only exit code >= 2 is a real failure.
-    if exit_code >= 2:
-        raise RuntimeError(f"Snapshot tar failed: {getattr(res, 'output', '')}")
-
-    downloads = backend.download_files([f"/{out_name}"])
-    if not downloads or downloads[0].error is not None or downloads[0].content is None:
-        raise RuntimeError(f"Snapshot download failed: {downloads[0].error if downloads else 'unknown'}")
-
-    backend.execute(f"rm -f {out_name}")
-    return bytes(downloads[0].content)
-
-
-def _safe_extract_tgz(payload: bytes, *, dest_dir: str) -> None:
-    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as tf:
-        for m in tf.getmembers():
-            name = m.name
-            if name.startswith("/"):
-                raise ValueError("tar contains absolute path")
-            if ".." in name.split("/"):
-                raise ValueError("tar contains parent traversal")
-        tf.extractall(dest_dir)
+def _is_glob(pat: str) -> bool:
+    return any(ch in pat for ch in ("*", "?", "["))
 
 
 @contextmanager
@@ -137,6 +95,44 @@ esac
 
 def _rsync_available() -> bool:
     return shutil.which("rsync") is not None
+
+
+def _normalize_rel_path(p: str) -> str:
+    s = (p or "").strip().lstrip("/")
+    if s.startswith("./"):
+        s = s[2:]
+    return s
+
+
+def _excluded(path: str, *, excludes: list[str]) -> bool:
+    rel = _normalize_rel_path(path)
+    if not rel or rel == ".":
+        return False
+
+    for raw in excludes:
+        pat = (raw or "").strip()
+        if not pat:
+            continue
+        pat = _normalize_rel_path(pat)
+        if not pat:
+            continue
+
+        # Treat trailing slash as directory prefix exclude.
+        if raw.rstrip() != raw.rstrip("/"):
+            base = pat.rstrip("/")
+            if rel == base or rel.startswith(base + "/"):
+                return True
+            continue
+
+        if _is_glob(pat):
+            if fnmatch(rel, pat):
+                return True
+            continue
+
+        if rel == pat:
+            return True
+
+    return False
 
 
 def _remove_excluded_paths(repo_dir: str, *, excludes: list[str]) -> None:
@@ -209,19 +205,64 @@ def _git_dirty(runner: CommandRunner, repo_dir: str, *, env: dict[str, str]) -> 
     return bool((cp.stdout or "").strip())
 
 
-def sync_snapshot_to_repo(
-    snapshot_tgz: bytes,
+def _clear_worktree(repo_dir: str) -> None:
+    for entry in os.listdir(repo_dir):
+        if entry == ".git":
+            continue
+        path = os.path.join(repo_dir, entry)
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path)
+        else:
+            with suppress(FileNotFoundError):
+                os.unlink(path)
+
+
+def _write_file(path: str, content: bytes, *, mode: int | None) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(content)
+    if mode is not None:
+        with suppress(Exception):
+            os.chmod(path, int(mode) & 0o777)
+
+
+def _write_symlink(path: str, target: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with suppress(FileNotFoundError):
+        os.unlink(path)
+    os.symlink(target, path)
+
+
+def _backend_manifest_entries(backend: Any) -> list[dict[str, Any]]:
+    if not hasattr(backend, "manifest"):
+        raise RuntimeError("sandbox backend does not support manifest()")
+    entries = backend.manifest("/")  # public root
+    if not isinstance(entries, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for e in entries:
+        if isinstance(e, dict):
+            out.append(e)
+    return out
+
+
+def sync_sandbox_tree_to_repo(
+    backend: Any,
     *,
     repo_http_url: str,
     project_slug: str,
+    commit_message: str | None = None,
+    commit_message_fn: Any | None = None,
     branch: str | None = None,
     cache_dir: str | None = None,
     excludes: list[str] | None = None,
     runner: CommandRunner | None = None,
-) -> tuple[bool, str | None]:
-    """Sync sandbox snapshot into a cached clone, commit, and push.
+    allow_empty_commit: bool = False,
+) -> tuple[bool, str | None, str, str]:
+    """Sync sandbox filesystem tree into a cached clone, commit, and push.
 
-    Returns (pushed, commit_sha).
+    Returns (pushed, commit_sha, diff_stat, name_status) where diff outputs are
+    from the staged index (git diff --cached).
     """
 
     token = gitlab_token()
@@ -255,37 +296,103 @@ def sync_snapshot_to_repo(
             # Clear index and working tree (except .git).
             r.run(["git", "rm", "-rf", "."], cwd=repo_dir, env=env, check=False)
 
-        # Extract to temp dir.
-        with tempfile.TemporaryDirectory(prefix="amicable-snap-") as tmp:
-            _safe_extract_tgz(snapshot_tgz, dest_dir=tmp)
+        # Populate worktree from sandbox manifest.
+        _clear_worktree(repo_dir)
 
-            # Snapshot tar is created from /app with '.' root; normalize.
-            src_root = tmp
-            dot = os.path.join(tmp, ".")
-            if os.path.isdir(dot):
-                src_root = dot
+        entries = _backend_manifest_entries(backend)
+        file_entries: list[dict[str, Any]] = []
+        link_entries: list[dict[str, Any]] = []
+        for e in entries:
+            rel = e.get("path")
+            kind = e.get("kind")
+            if not isinstance(rel, str) or not rel or rel.startswith("/"):
+                continue
+            if _excluded(rel, excludes=ex):
+                continue
+            if kind == "file":
+                file_entries.append(e)
+            elif kind == "symlink":
+                link_entries.append(e)
 
-            if _rsync_available():
-                args = ["rsync", "-a", "--delete"]
-                # Ensure we never overwrite git metadata.
-                args.append("--exclude=.git/")
-                args.extend([src_root + "/", repo_dir + "/"])
-                r.run(args, env=env, check=True)
-            else:
-                _sync_tree_fallback(src_root, repo_dir)
+        # Download and write files in chunks.
+        chunk: list[str] = []
+        meta_by_path: dict[str, dict[str, Any]] = {}
+        for e in file_entries:
+            p = str(e.get("path") or "")
+            if p:
+                meta_by_path[p] = e
 
-            # Enforce excludes (remove from destination even if previously present).
-            _remove_excluded_paths(repo_dir, excludes=ex)
+        def _flush() -> None:
+            nonlocal chunk
+            if not chunk:
+                return
+            downloads = backend.download_files(["/" + p for p in chunk])
+            if not isinstance(downloads, list):
+                raise RuntimeError("sandbox download_files returned invalid response")
+            if len(downloads) != len(chunk):
+                raise RuntimeError("sandbox download_files length mismatch")
+            for rel_path, dl in zip(chunk, downloads, strict=False):
+                if isinstance(dl, dict):
+                    err = dl.get("error")
+                    content = dl.get("content")
+                else:
+                    err = getattr(dl, "error", None) if dl is not None else None
+                    content = getattr(dl, "content", None) if dl is not None else None
+                if err is not None or content is None:
+                    raise RuntimeError(f"download failed for {rel_path}: {err}")
+                payload = bytes(content)
+                meta = meta_by_path.get(rel_path) or {}
+                mode = meta.get("mode")
+                out_path = os.path.join(repo_dir, rel_path)
+                _write_file(out_path, payload, mode=int(mode) if isinstance(mode, int) else None)
+            chunk = []
+
+        for e in file_entries:
+            rel_path = str(e.get("path") or "")
+            if not rel_path:
+                continue
+            chunk.append(rel_path)
+            if len(chunk) >= 200:
+                _flush()
+        _flush()
+
+        for e in link_entries:
+            rel_path = e.get("path")
+            target = e.get("link_target")
+            if not isinstance(rel_path, str) or not rel_path:
+                continue
+            if not isinstance(target, str):
+                target = ""
+            _write_symlink(os.path.join(repo_dir, rel_path), target)
+
+        # Enforce excludes (remove from destination even if previously present).
+        _remove_excluded_paths(repo_dir, excludes=ex)
 
         # Configure author.
         r.run(["git", "config", "user.name", git_commit_author_name()], cwd=repo_dir, env=env, check=True)
         r.run(["git", "config", "user.email", git_commit_author_email()], cwd=repo_dir, env=env, check=True)
 
         if not _git_dirty(r, repo_dir, env=env):
-            return False, None
+            return False, None, "", ""
 
         r.run(["git", "add", "-A"], cwd=repo_dir, env=env, check=True)
-        msg = f"Amicable snapshot ({project_slug}) {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        diff_stat = r.run(["git", "diff", "--cached", "--stat"], cwd=repo_dir, env=env, check=True).stdout or ""
+        name_status = r.run(["git", "diff", "--cached", "--name-status"], cwd=repo_dir, env=env, check=True).stdout or ""
+
+        msg = None
+        if commit_message_fn is not None and callable(commit_message_fn):
+            msg = str(commit_message_fn(diff_stat, name_status))
+        elif commit_message is not None:
+            msg = str(commit_message)
+        else:
+            msg = f"Amicable sync ({project_slug}) {time.strftime('%Y-%m-%d %H:%M:%S')}"
+
+        if not msg.strip() and not allow_empty_commit:
+            return False, None, diff_stat, name_status
+
+        if not allow_empty_commit and not _git_dirty(r, repo_dir, env=env):
+            return False, None, diff_stat, name_status
+
         r.run(["git", "commit", "-m", msg], cwd=repo_dir, env=env, check=True)
 
         sha = r.run(["git", "rev-parse", "HEAD"], cwd=repo_dir, env=env, check=True).stdout.strip() or None
@@ -294,8 +401,48 @@ def sync_snapshot_to_repo(
         for _attempt in range(3):
             cp = r.run(["git", "push", "origin", br], cwd=repo_dir, env=env, check=False)
             if cp.returncode == 0:
-                return True, sha
+                return True, sha, diff_stat, name_status
             # Best-effort rebase then retry.
             r.run(["git", "pull", "--rebase", "origin", br], cwd=repo_dir, env=env, check=False)
 
         raise RuntimeError(f"git push failed: {cp.stderr or cp.stdout}")
+
+
+def bootstrap_repo_if_empty(
+    backend: Any,
+    *,
+    repo_http_url: str,
+    project_slug: str,
+    commit_message: str,
+    branch: str | None = None,
+    cache_dir: str | None = None,
+    excludes: list[str] | None = None,
+    runner: CommandRunner | None = None,
+) -> tuple[bool, str | None]:
+    """Create a baseline commit if the remote branch doesn't exist yet.
+
+    Returns (bootstrapped, commit_sha).
+    """
+    token = gitlab_token()
+    if not token:
+        raise RuntimeError("GITLAB_TOKEN is not set")
+
+    r = runner or SubprocessRunner()
+    br = (branch or git_sync_branch()).strip() or "main"
+
+    with _git_auth_env(token=token) as env:
+        heads = r.run(["git", "ls-remote", "--heads", repo_http_url, br], env=env, check=True)
+        if (heads.stdout or "").strip():
+            return False, None
+
+    pushed, sha, _ds, _ns = sync_sandbox_tree_to_repo(
+        backend,
+        repo_http_url=repo_http_url,
+        project_slug=project_slug,
+        commit_message=commit_message,
+        branch=br,
+        cache_dir=cache_dir,
+        excludes=excludes,
+        runner=r,
+    )
+    return bool(pushed), sha

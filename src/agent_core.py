@@ -542,6 +542,15 @@ class Agent:
         }
 
     async def send_feedback(self, *, session_id: str, feedback: str):
+        # Per-run tool journal: cleared at the start so the eventual git commit
+        # message only describes this run.
+        try:
+            from src.deepagents_backend.tool_journal import clear as _clear_tool_journal
+
+            _clear_tool_journal(session_id)
+        except Exception:
+            pass
+
         yield Message.new(
             MessageType.UPDATE_IN_PROGRESS, {}, session_id=session_id
         ).to_dict()
@@ -705,7 +714,7 @@ class Agent:
                     elif name == "qa_fail_summary":
                         text = "QA still failing after self-heal attempts; preparing summary..."
                     elif name == "git_sync":
-                        text = "Committing snapshot to GitLab..."
+                        text = "Committing changes to GitLab..."
                     if text:
                         tool_trace_for_reason.append(name)
                         yield Message.new(
@@ -945,7 +954,10 @@ class Agent:
                 from src.gitlab.config import git_sync_enabled
 
                 if git_sync_enabled() and (controller_failed or not saw_git_sync):
-                    from src.gitlab.sync import export_sandbox_snapshot, sync_snapshot_to_repo
+                    from src.gitlab.commit_message import (
+                        deterministic_agent_commit_message,
+                    )
+                    from src.gitlab.sync import sync_sandbox_tree_to_repo
 
                     repo_http_url = config.get("configurable", {}).get("git_repo_http_url")
                     project_slug = config.get("configurable", {}).get("project_slug") or session_id
@@ -958,18 +970,27 @@ class Agent:
                     else:
                         yield Message.new(
                             MessageType.UPDATE_FILE,
-                            {"text": "Committing snapshot to GitLab..."},
+                            {"text": "Committing changes to GitLab..."},
                             id=file_msg_id,
                             session_id=session_id,
                         ).to_dict()
                         assert self._session_manager is not None
                         backend = self._session_manager.get_backend(session_id)
-                        snapshot = await asyncio.to_thread(export_sandbox_snapshot, backend)
+
+                        def _msg(diff_stat: str, name_status: str) -> str:
+                            return deterministic_agent_commit_message(
+                                project_slug=str(project_slug),
+                                qa_passed=None,
+                                diff_stat=diff_stat,
+                                name_status=name_status,
+                            )
+
                         await asyncio.to_thread(
-                            sync_snapshot_to_repo,
-                            snapshot,
+                            sync_sandbox_tree_to_repo,
+                            backend,
                             repo_http_url=repo_http_url,
                             project_slug=str(project_slug),
+                            commit_message_fn=_msg,
                         )
             except Exception as e:
                 logger.exception("git sync fallback failed")
@@ -1268,7 +1289,7 @@ class Agent:
                     elif name == "qa_fail_summary":
                         text = "QA still failing after self-heal attempts; preparing summary..."
                     elif name == "git_sync":
-                        text = "Committing snapshot to GitLab..."
+                        text = "Committing changes to GitLab..."
                     if text:
                         tool_trace_for_reason.append(name)
                         yield Message.new(
@@ -1474,7 +1495,10 @@ class Agent:
                 from src.gitlab.config import git_sync_enabled
 
                 if git_sync_enabled() and (controller_failed or not saw_git_sync):
-                    from src.gitlab.sync import export_sandbox_snapshot, sync_snapshot_to_repo
+                    from src.gitlab.commit_message import (
+                        deterministic_agent_commit_message,
+                    )
+                    from src.gitlab.sync import sync_sandbox_tree_to_repo
 
                     repo_http_url = config.get("configurable", {}).get("git_repo_http_url")
                     project_slug = config.get("configurable", {}).get("project_slug") or session_id
@@ -1487,18 +1511,27 @@ class Agent:
                     else:
                         yield Message.new(
                             MessageType.UPDATE_FILE,
-                            {"text": "Committing snapshot to GitLab..."},
+                            {"text": "Committing changes to GitLab..."},
                             id=file_msg_id,
                             session_id=session_id,
                         ).to_dict()
                         assert self._session_manager is not None
                         backend = self._session_manager.get_backend(session_id)
-                        snapshot = await asyncio.to_thread(export_sandbox_snapshot, backend)
+
+                        def _msg(diff_stat: str, name_status: str) -> str:
+                            return deterministic_agent_commit_message(
+                                project_slug=str(project_slug),
+                                qa_passed=None,
+                                diff_stat=diff_stat,
+                                name_status=name_status,
+                            )
+
                         await asyncio.to_thread(
-                            sync_snapshot_to_repo,
-                            snapshot,
+                            sync_sandbox_tree_to_repo,
+                            backend,
                             repo_http_url=repo_http_url,
                             project_slug=str(project_slug),
+                            commit_message_fn=_msg,
                         )
             except Exception as e:
                 logger.exception("git sync fallback failed")
@@ -1584,6 +1617,7 @@ class Agent:
         )
         from src.deepagents_backend.policy import SandboxPolicyWrapper
         from src.deepagents_backend.session_sandbox_manager import SessionSandboxManager
+        from src.deepagents_backend.tool_journal import append as _append_tool_journal
 
         if self._session_manager is None:
             self._session_manager = SessionSandboxManager()
@@ -1609,6 +1643,9 @@ class Agent:
                 deny_write_paths=deny_write_paths,
                 deny_write_prefixes=deny_write_prefixes,
                 deny_commands=deny_commands,
+                audit_log=lambda op, target, meta: _append_tool_journal(
+                    thread_id, op, target, meta
+                ),
             )
 
         def backend_factory(runtime: Any):
