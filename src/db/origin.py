@@ -4,8 +4,16 @@ import hashlib
 from urllib.parse import urlparse
 
 
-def _claim_name_for_app_id(app_id: str, *, prefix: str = "amicable") -> str:
+def _claim_name_for_app_id(
+    app_id: str, *, slug: str | None = None, prefix: str = "amicable"
+) -> str:
     # Must match src/sandbox_backends/k8s_backend.py _dns_safe_claim_name logic.
+    if slug and isinstance(slug, str) and slug.strip():
+        import re
+
+        name = re.sub(r"[^a-z0-9-]", "-", slug.strip().lower()).strip("-")
+        if name and len(name) <= 63:
+            return name
     digest = hashlib.sha256(app_id.encode("utf-8")).hexdigest()[:8]
     return f"{prefix}-{digest}"
 
@@ -13,6 +21,7 @@ def _claim_name_for_app_id(app_id: str, *, prefix: str = "amicable") -> str:
 def expected_preview_origin(
     *,
     app_id: str,
+    slug: str | None = None,
     preview_base_domain: str,
     preview_scheme: str,
 ) -> str:
@@ -20,7 +29,7 @@ def expected_preview_origin(
     base = (preview_base_domain or "").strip().lstrip(".")
     if not base:
         raise ValueError("missing PREVIEW_BASE_DOMAIN")
-    host = f"{_claim_name_for_app_id(app_id)}.{base}"
+    host = f"{_claim_name_for_app_id(app_id, slug=slug)}.{base}"
     return f"{scheme}://{host}"
 
 
@@ -28,6 +37,7 @@ def origin_matches_expected(
     origin: str,
     *,
     app_id: str,
+    slug: str | None = None,
     preview_base_domain: str,
     preview_scheme: str,
 ) -> bool:
@@ -41,6 +51,7 @@ def origin_matches_expected(
         return False
     expected = expected_preview_origin(
         app_id=app_id,
+        slug=slug,
         preview_base_domain=preview_base_domain,
         preview_scheme=preview_scheme,
     )

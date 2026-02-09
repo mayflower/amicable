@@ -25,6 +25,19 @@ class TestK8sBackendUtils(unittest.TestCase):
         self.assertFalse(name.startswith("-"))
         self.assertFalse(name.endswith("-"))
 
+    def test_dns_safe_claim_name_uses_slug(self):
+        name = _dns_safe_claim_name("session-123", slug="counter-test")
+        self.assertEqual(name, "counter-test")
+
+    def test_dns_safe_claim_name_slug_sanitized(self):
+        name = _dns_safe_claim_name("session-123", slug="My Cool App!")
+        self.assertRegex(name, r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+
+    def test_dns_safe_claim_name_slug_fallback_on_empty(self):
+        a = _dns_safe_claim_name("session-123", slug="")
+        b = _dns_safe_claim_name("session-123")
+        self.assertEqual(a, b)
+
     def test_preview_url_format(self):
         url = _preview_url(claim_name="amicable-0f3a9c2e", base_domain="preview.example.com", scheme="https")
         self.assertEqual(url, "https://amicable-0f3a9c2e.preview.example.com/")

@@ -791,10 +791,23 @@ def _origin_allowed_for_app(origin: str, *, app_id: str) -> bool:
     # Default: only allow the expected preview origin for this deterministic app.
     from src.db.origin import origin_matches_expected
 
+    # Resolve slug from session data when available.
+    slug: str | None = None
+    try:
+        agent = _get_agent()
+        sd = agent.session_data.get(app_id)
+        if isinstance(sd, dict):
+            proj = sd.get("project")
+            if isinstance(proj, dict):
+                slug = proj.get("slug")
+    except Exception:
+        pass
+
     try:
         return origin_matches_expected(
             origin,
             app_id=app_id,
+            slug=slug,
             preview_base_domain=os.environ.get("PREVIEW_BASE_DOMAIN") or "",
             preview_scheme=os.environ.get("PREVIEW_SCHEME") or "https",
         )
@@ -1077,7 +1090,8 @@ async def _handle_ws(ws: WebSocket) -> None:
                     await ws.close(code=1011)
                     return
             template_id = getattr(project, "template_id", None) if project is not None else None
-            exists = await agent.init(session_id=session_id, template_id=template_id)
+            project_slug = getattr(project, "slug", None) if project is not None else None
+            exists = await agent.init(session_id=session_id, template_id=template_id, slug=project_slug)
             init_data = agent.session_data[session_id]
             init_data["exists"] = exists
             if project is not None:

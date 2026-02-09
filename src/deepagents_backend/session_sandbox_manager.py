@@ -48,13 +48,17 @@ class SessionSandboxManager:
         self._exec_timeout_s = int(os.environ.get("SANDBOX_EXEC_TIMEOUT_S") or "600")
 
     def ensure_session(
-        self, session_id: str, *, template_name: str | None = None
+        self,
+        session_id: str,
+        *,
+        template_name: str | None = None,
+        slug: str | None = None,
     ) -> SessionEnv:
         if session_id in self._env_by_session:
             return self._env_by_session[session_id]
 
         env = self._k8s_backend.create_app_environment(
-            session_id=session_id, template_name=template_name
+            session_id=session_id, template_name=template_name, slug=slug
         )
         sandbox_id = str(env["sandbox_id"])
         preview_url = str(env["url"])

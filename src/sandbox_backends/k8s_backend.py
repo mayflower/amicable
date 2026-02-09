@@ -31,19 +31,24 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def _dns_safe_claim_name(session_id: str, *, prefix: str = "amicable") -> str:
-    # Deterministic name: prefix + '-' + 8 hex chars.
-    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:8]
-    name = f"{prefix}-{digest}"
+def _dns_safe_claim_name(
+    session_id: str, *, slug: str | None = None, prefix: str = "amicable"
+) -> str:
+    # Prefer the human-readable slug when available; fall back to hash.
+    if slug and isinstance(slug, str) and slug.strip():
+        raw = slug.strip().lower()
+    else:
+        digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:8]
+        raw = f"{prefix}-{digest}"
+
     # Enforce k8s DNS label rules.
-    name = name.lower()
-    name = re.sub(r"[^a-z0-9-]", "-", name)
+    name = re.sub(r"[^a-z0-9-]", "-", raw)
     name = name.strip("-")
     if len(name) > 63:
         name = name[:63].rstrip("-")
 
-    if not _DNS_LABEL_RE.match(name):
-        # As a last resort, fall back to a safe fixed prefix.
+    if not name or not _DNS_LABEL_RE.match(name):
+        digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:8]
         name = f"{prefix}-{digest}"[:63].rstrip("-")
 
     return name
@@ -99,7 +104,11 @@ class K8sAgentSandboxBackend:
         self._http = requests.Session()
 
     def create_app_environment(
-        self, *, session_id: str, template_name: str | None = None
+        self,
+        *,
+        session_id: str,
+        template_name: str | None = None,
+        slug: str | None = None,
     ) -> dict:
         if not self.preview_base_domain:
             raise RuntimeError(
@@ -107,7 +116,7 @@ class K8sAgentSandboxBackend:
             )
 
         tmpl = (template_name or self.template_name).strip() or self.template_name
-        claim_name = _dns_safe_claim_name(session_id)
+        claim_name = _dns_safe_claim_name(session_id, slug=slug)
 
         exists = self._claim_exists(claim_name)
         if not exists:
@@ -138,12 +147,14 @@ class K8sAgentSandboxBackend:
             "exists": exists,
         }
 
-    def delete_app_environment(self, *, session_id: str) -> bool:
+    def delete_app_environment(
+        self, *, session_id: str, slug: str | None = None
+    ) -> bool:
         """Delete the SandboxClaim for a session_id (best-effort).
 
         Returns True if a claim existed and a delete was issued.
         """
-        claim_name = _dns_safe_claim_name(session_id)
+        claim_name = _dns_safe_claim_name(session_id, slug=slug)
         if not self._claim_exists(claim_name):
             return False
         try:

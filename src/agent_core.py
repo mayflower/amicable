@@ -322,12 +322,19 @@ class Agent:
             self._trace_narrator = None
         return self._trace_narrator
 
-    async def init(self, session_id: str, template_id: str | None = None) -> bool:
-        exists = await self._ensure_app_environment(session_id, template_id=template_id)
+    async def init(
+        self,
+        session_id: str,
+        template_id: str | None = None,
+        slug: str | None = None,
+    ) -> bool:
+        exists = await self._ensure_app_environment(
+            session_id, template_id=template_id, slug=slug
+        )
         return exists
 
     async def _ensure_app_environment(
-        self, session_id: str, *, template_id: str | None = None
+        self, session_id: str, *, template_id: str | None = None, slug: str | None = None
     ) -> bool:
         if session_id in self.session_data:
             return True
@@ -358,7 +365,7 @@ class Agent:
 
         sandbox_template_name = k8s_template_name_for(effective_template_id)
         sess = self._session_manager.ensure_session(
-            session_id, template_name=sandbox_template_name
+            session_id, template_name=sandbox_template_name, slug=slug
         )
 
         # Ensure the conventional memories directory exists inside the sandbox workspace.
