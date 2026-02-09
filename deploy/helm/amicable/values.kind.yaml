@@ -1,0 +1,104 @@
+# Local development values for kind.
+#
+# Usage:
+#   helm upgrade --install amicable ./deploy/helm/amicable \
+#     -n amicable --create-namespace \
+#     -f ./deploy/helm/amicable/values.kind.yaml
+#
+# Notes:
+# - This assumes your kind cluster maps host port 80 -> ingress controller.
+# - Uses http + ws (no TLS) to keep local setup simple.
+
+sandboxNamespace: amicable
+
+# Recommended for kind: load locally built images into the cluster:
+#   docker build -t amicable-agent:dev k8s/images/amicable-agent
+#   docker build -t amicable-editor:dev k8s/images/amicable-editor
+#   docker build -t amicable-sandbox-lovable-vite:dev k8s/images/amicable-sandbox-lovable-vite
+#   kind load docker-image amicable-agent:dev amicable-editor:dev amicable-sandbox-lovable-vite:dev
+images:
+  agent:
+    repository: amicable-agent
+    tag: dev
+    pullPolicy: IfNotPresent
+  editor:
+    repository: amicable-editor
+    tag: dev
+    pullPolicy: IfNotPresent
+
+sandboxTemplate:
+  # The backend template id "vite" maps to this K8s SandboxTemplate name.
+  name: amicable-sandbox-lovable-vite
+  additionalAllowedHosts: ".preview.127.0.0.1.nip.io"
+  # Set to "gvisor" after you installed gVisor + created a RuntimeClass named gvisor.
+  runtimeClassName: ""
+
+# Only define the templates you want to use locally.
+# Add more entries if you want Next.js/FastAPI/etc locally.
+sandboxTemplates:
+  - name: amicable-sandbox-lovable-vite
+    image:
+      repository: amicable-sandbox-lovable-vite
+      tag: dev
+      pullPolicy: IfNotPresent
+    additionalAllowedHosts: ".preview.127.0.0.1.nip.io"
+    runtimeClassName: ""
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1Gi"
+
+agent:
+  replicas: 1
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    host: agent.127.0.0.1.nip.io
+    certIssuer: ""
+    tls:
+      enabled: false
+      secretName: ""
+  env:
+    previewBaseDomain: preview.127.0.0.1.nip.io
+    previewScheme: http
+    runtimePort: "8888"
+    previewPort: "3000"
+    gitSyncRequired: "0"
+    extra:
+      # Disable GitLab sync for local dev unless you actually configured it.
+      AMICABLE_GIT_SYNC_ENABLED: "0"
+      # Keep QA off by default for local speed (optional).
+      DEEPAGENTS_QA: "0"
+  secret:
+    # You still need to create this secret, but values can be dummy for local dev.
+    name: amicable-agent-secrets
+
+previewRouter:
+  replicas: 1
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    wildcardHost: "*.preview.127.0.0.1.nip.io"
+    certIssuer: ""
+    tls:
+      enabled: false
+      secretName: ""
+
+editor:
+  enabled: true
+  replicas: 1
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    host: editor.127.0.0.1.nip.io
+    certIssuer: ""
+    tls:
+      enabled: false
+      secretName: ""
+  runtimeConfig:
+    VITE_AGENT_WS_URL: "ws://agent.127.0.0.1.nip.io/"
+    VITE_AGENT_TOKEN: ""
+

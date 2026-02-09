@@ -12,6 +12,10 @@ spec:
       labels:
         app: {{ $t.name | quote }}
     spec:
+      {{- $rc := ($t.runtimeClassName | default $.Values.sandboxTemplate.runtimeClassName) }}
+      {{- if $rc }}
+      runtimeClassName: {{ $rc | quote }}
+      {{- end }}
       automountServiceAccountToken: false
       containers:
         - name: amicable-sandbox
@@ -49,6 +53,9 @@ spec:
       labels:
         app: {{ .Values.sandboxTemplate.name | quote }}
     spec:
+      {{- if .Values.sandboxTemplate.runtimeClassName }}
+      runtimeClassName: {{ .Values.sandboxTemplate.runtimeClassName | quote }}
+      {{- end }}
       automountServiceAccountToken: false
       containers:
         - name: amicable-sandbox

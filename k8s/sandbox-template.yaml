@@ -13,6 +13,10 @@
 # Then load into your cluster (example for kind):
 #   kind load docker-image amicable-sandbox-lovable-vite:latest --name <cluster>
 #   ... repeat for each image ...
+#
+# Optional: if your cluster supports sandboxed runtimes (gVisor/Kata), set
+# `runtimeClassName` in each template's pod spec, e.g.:
+#   runtimeClassName: gvisor
 ---
 apiVersion: extensions.agents.x-k8s.io/v1alpha1
 kind: SandboxTemplate
