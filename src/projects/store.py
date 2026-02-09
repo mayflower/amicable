@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import re
+import threading
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -33,34 +35,47 @@ def _sql_str(value: str) -> str:
     return "'" + (value or "").replace("'", "''") + "'"
 
 
+_schema_ready = False
+_schema_lock = threading.Lock()
+_log = logging.getLogger(__name__)
+
+
 def ensure_projects_schema(client: HasuraClient) -> None:
-    client.run_sql(
-        """
-        CREATE SCHEMA IF NOT EXISTS amicable_meta;
-        CREATE TABLE IF NOT EXISTS amicable_meta.projects (
-          project_id text PRIMARY KEY,
-          owner_sub text NOT NULL,
-          owner_email text NOT NULL,
-          name text NOT NULL,
-          slug text NOT NULL UNIQUE,
-          template_id text NULL,
-          gitlab_project_id bigint NULL,
-          gitlab_path text NULL,
-          gitlab_web_url text NULL,
-          created_at timestamptz NOT NULL DEFAULT now(),
-          updated_at timestamptz NOT NULL DEFAULT now(),
-          deleted_at timestamptz NULL
-        );
-        ALTER TABLE amicable_meta.projects
-          ADD COLUMN IF NOT EXISTS template_id text NULL;
-        ALTER TABLE amicable_meta.projects
-          ADD COLUMN IF NOT EXISTS gitlab_project_id bigint NULL;
-        ALTER TABLE amicable_meta.projects
-          ADD COLUMN IF NOT EXISTS gitlab_path text NULL;
-        ALTER TABLE amicable_meta.projects
-          ADD COLUMN IF NOT EXISTS gitlab_web_url text NULL;
-        """.strip()
-    )
+    global _schema_ready
+    if _schema_ready:
+        return
+    with _schema_lock:
+        if _schema_ready:
+            return
+        _log.info("Running projects schema migration (once per process)")
+        client.run_sql(
+            """
+            CREATE SCHEMA IF NOT EXISTS amicable_meta;
+            CREATE TABLE IF NOT EXISTS amicable_meta.projects (
+              project_id text PRIMARY KEY,
+              owner_sub text NOT NULL,
+              owner_email text NOT NULL,
+              name text NOT NULL,
+              slug text NOT NULL UNIQUE,
+              template_id text NULL,
+              gitlab_project_id bigint NULL,
+              gitlab_path text NULL,
+              gitlab_web_url text NULL,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              updated_at timestamptz NOT NULL DEFAULT now(),
+              deleted_at timestamptz NULL
+            );
+            ALTER TABLE amicable_meta.projects
+              ADD COLUMN IF NOT EXISTS template_id text NULL;
+            ALTER TABLE amicable_meta.projects
+              ADD COLUMN IF NOT EXISTS gitlab_project_id bigint NULL;
+            ALTER TABLE amicable_meta.projects
+              ADD COLUMN IF NOT EXISTS gitlab_path text NULL;
+            ALTER TABLE amicable_meta.projects
+              ADD COLUMN IF NOT EXISTS gitlab_web_url text NULL;
+            """.strip()
+        )
+        _schema_ready = True
 
 
 @dataclass(frozen=True)
