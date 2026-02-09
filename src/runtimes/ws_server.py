@@ -1150,16 +1150,18 @@ async def _handle_ws(ws: WebSocket) -> None:
                     )
                     await ws.close(code=1011)
                     return
-                await ws.send_json(
-                    Message.new(
-                        MessageType.ERROR,
-                        {
-                            "error": "HITL approval pending. Approve/reject the pending tool call to continue."
-                        },
-                        session_id=session_id,
-                    ).to_dict()
-                )
-                continue
+                pending = agent.get_pending_hitl(session_id)
+                if pending:
+                    await ws.send_json(
+                        Message.new(
+                            MessageType.ERROR,
+                            {
+                                "error": "HITL approval pending. Approve/reject the pending tool call to continue."
+                            },
+                            session_id=session_id,
+                        ).to_dict()
+                    )
+                    continue
 
             async for out in agent.send_feedback(session_id=session_id, feedback=text):
                 await ws.send_json(out)
