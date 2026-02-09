@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,7 +39,9 @@ class HasuraClient:
             "content-type": "application/json",
         }
 
-    def run_sql(self, sql: str, *, read_only: bool = False) -> dict[str, Any]:
+    def run_sql(
+        self, sql: str, *, read_only: bool = False, _retries: int = 3
+    ) -> dict[str, Any]:
         payload = {
             "type": "run_sql",
             "args": {
@@ -47,12 +50,22 @@ class HasuraClient:
                 "read_only": bool(read_only),
             },
         }
-        resp = self._http.post(
-            self._url("/v2/query"), headers=self._headers(), json=payload, timeout=30
-        )
-        if resp.status_code >= 400:
-            raise HasuraError(f"run_sql failed ({resp.status_code}): {resp.text}")
-        return resp.json()
+        for attempt in range(_retries):
+            resp = self._http.post(
+                self._url("/v2/query"),
+                headers=self._headers(),
+                json=payload,
+                timeout=30,
+            )
+            if resp.status_code == 409 and attempt < _retries - 1:
+                time.sleep(0.2 * (attempt + 1))
+                continue
+            if resp.status_code >= 400:
+                raise HasuraError(
+                    f"run_sql failed ({resp.status_code}): {resp.text}"
+                )
+            return resp.json()
+        raise HasuraError("run_sql: retries exhausted")
 
     def metadata(self, payload: dict[str, Any]) -> dict[str, Any]:
         resp = self._http.post(
