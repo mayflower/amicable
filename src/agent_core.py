@@ -1603,7 +1603,15 @@ class Agent:
             )
 
         def backend_factory(runtime: Any):
-            config = getattr(runtime, "config", {}) or {}
+            # Runtime (model middleware) does not carry config; use LangGraph's
+            # context-var based get_config() to retrieve the RunnableConfig
+            # (which contains thread_id set by the controller graph).
+            from langgraph.config import get_config as _lg_get_config
+
+            try:
+                config = _lg_get_config()
+            except RuntimeError:
+                config = getattr(runtime, "config", {}) or {}
             configurable = config.get("configurable", {}) or {}
             thread_id = configurable.get("thread_id", "default-thread")
             default_backend = policy_backend(thread_id)
