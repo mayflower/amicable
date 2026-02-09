@@ -133,21 +133,9 @@ export const CodePane = ({
 
   const { ref: treeWrapRef, height: treeHeight } = useElementHeight();
 
-  const [memoriesEnabled, setMemoriesEnabled] = useState<boolean>(false);
-
-  const rootNodes = useMemo(() => {
-    const base: FileNode[] = [{ id: "/", name: "/", isDir: true, loaded: false, children: [] }];
-    if (memoriesEnabled) {
-      base.unshift({
-        id: "/memories",
-        name: "/memories",
-        isDir: true,
-        loaded: false,
-        children: [],
-      });
-    }
-    return base;
-  }, [memoriesEnabled]);
+  const rootNodes = useMemo((): FileNode[] => {
+    return [{ id: "/", name: "/", isDir: true, loaded: false, children: [] }];
+  }, []);
 
   useEffect(() => {
     setTreeData(rootNodes);
@@ -156,14 +144,6 @@ export const CodePane = ({
   const refreshRoots = async () => {
     setSaveStatus("");
     setConflict(false);
-    // Detect whether /memories is available (503 -> disabled).
-    try {
-      await sandboxLs(projectId, "/memories");
-      setMemoriesEnabled(true);
-    } catch (e: unknown) {
-      if (asErrorWithStatus(e).status === 503) setMemoriesEnabled(false);
-    }
-
     // Mark roots as unloaded; children are lazy-loaded.
     setTreeData((prev) =>
       prev.map((n) => ({
@@ -176,7 +156,6 @@ export const CodePane = ({
 
   useEffect(() => {
     refreshRoots();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   const loadChildren = async (dirPath: string) => {

@@ -6,7 +6,6 @@ import os
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -165,7 +164,7 @@ _DEEPAGENTS_SYSTEM_PROMPT = """You are Amicable, an AI editor for sandboxed web 
 Your job: implement the user's request by editing the live sandboxed codebase. The user can see a live preview.
 
 Long-term memory:
-- You can store durable notes/preferences in files under `/memories/` (these persist across sessions).
+- You can store notes/preferences in files under `/memories/` (inside the sandbox workspace).
 - Read `/AGENTS.md` in the sandbox and follow any stack-specific constraints and conventions it defines.
 
 User-visible output format:
@@ -268,48 +267,9 @@ class Agent:
         # Optional tool-trace narrator.
         self._trace_narrator = None
 
-        # Optional persistent LangGraph store (PostgresStore) for DeepAgents long-term memory.
-        self._lg_store_ctx = None
-        self._lg_store = None
-
         # Optional persistent LangGraph checkpointer (PostgresSaver) for HITL resume across restarts.
         self._lg_checkpointer_ctx = None
         self._lg_checkpointer = None
-
-    def _get_langgraph_store(self):
-        """Return a PostgresStore if configured, else None.
-
-        This is used for DeepAgents "long-term memory" via StoreBackend + /memories/.
-        """
-        if self._lg_store is not None:
-            return self._lg_store
-
-        dsn = _langgraph_database_url()
-        if not dsn:
-            return None
-
-        try:
-            from langgraph.store.postgres import PostgresStore  # type: ignore
-        except Exception:
-            logger.warning(
-                "LangGraph PostgresStore unavailable (install psycopg[binary,pool]); long-term memory disabled"
-            )
-            return None
-
-        try:
-            ctx = PostgresStore.from_conn_string(dsn)
-            store = ctx.__enter__()
-            store.setup()
-        except Exception:
-            logger.exception(
-                "Failed to initialize PostgresStore; long-term memory disabled"
-            )
-            return None
-
-        self._lg_store_ctx = ctx
-        self._lg_store = store
-        logger.info("LangGraph PostgresStore initialized for long-term memory")
-        return self._lg_store
 
     async def _get_langgraph_checkpointer(self):
         """Return an AsyncPostgresSaver if configured, else None."""
@@ -321,7 +281,9 @@ class Agent:
             return None
 
         try:
-            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver  # type: ignore
+            from langgraph.checkpoint.postgres.aio import (
+                AsyncPostgresSaver,  # type: ignore
+            )
         except Exception:
             logger.warning(
                 "AsyncPostgresSaver unavailable (install langgraph-checkpoint-postgres + psycopg[binary]); checkpointing stays in-memory"
@@ -343,43 +305,6 @@ class Agent:
         logger.info("LangGraph AsyncPostgresSaver initialized for checkpointing")
         return self._lg_checkpointer
 
-    def _bootstrap_memories(self, *, session_id: str) -> None:
-        """Ensure a default /memories/AGENTS.md exists in the Postgres store (best-effort)."""
-        store = self._get_langgraph_store()
-        if store is None:
-            return
-        try:
-            namespace = (session_id, "filesystem")
-            key = "/memories/AGENTS.md"
-            existing = store.get(namespace, key)  # type: ignore[attr-defined]
-            if existing is not None:
-                return
-
-            now = datetime.now(UTC).isoformat()
-            content = [
-                "# Amicable Memory",
-                "",
-                "This file is durable per-project memory. Add preferences, conventions, and important context here.",
-                "",
-                "## Preferences",
-                "- (add items here)",
-                "",
-                "## Notes",
-                "- (add items here)",
-                "",
-            ]
-            store.put(  # type: ignore[attr-defined]
-                namespace,
-                key,
-                {
-                    "content": content,
-                    "created_at": now,
-                    "modified_at": now,
-                },
-            )
-        except Exception:
-            # Never block core editing on optional memory bootstrapping.
-            logger.exception("Failed to bootstrap /memories/AGENTS.md")
 
     def has_pending_hitl(self, session_id: str) -> bool:
         return session_id in self._hitl_pending
@@ -408,7 +333,11 @@ class Agent:
 
         from src.db.provisioning import db_enabled_from_env, hasura_client_from_env
         from src.deepagents_backend.session_sandbox_manager import SessionSandboxManager
-        from src.templates.registry import default_template_id, k8s_template_name_for, parse_template_id
+        from src.templates.registry import (
+            default_template_id,
+            k8s_template_name_for,
+            parse_template_id,
+        )
 
         if self._session_manager is None:
             self._session_manager = SessionSandboxManager()
@@ -430,6 +359,15 @@ class Agent:
         sess = self._session_manager.ensure_session(
             session_id, template_name=sandbox_template_name
         )
+
+        # Ensure the conventional memories directory exists inside the sandbox workspace.
+        # (This is sandbox-local, not store-backed.)
+        try:
+            backend = self._session_manager.get_backend(session_id)
+            backend.execute("cd /app && mkdir -p memories")
+        except Exception:
+            pass
+
         init_data: dict[str, Any] = {
             "url": sess.preview_url,
             "sandbox_id": sess.sandbox_id,
@@ -442,6 +380,8 @@ class Agent:
         # DB provisioning + sandbox injection (optional if not configured).
         if db_enabled_from_env():
             try:
+                from urllib.parse import urlparse
+
                 from src.db.provisioning import (
                     ensure_app,
                     rotate_app_key,
@@ -450,13 +390,13 @@ class Agent:
                 from src.db.sandbox_inject import (
                     ensure_index_includes_db_script,
                     ensure_laravel_welcome_includes_db_script,
-                    ensure_nuxt_config_includes_db_script,
                     ensure_next_layout_includes_db_script,
+                    ensure_nuxt_config_includes_db_script,
                     ensure_remix_root_includes_db_script,
                     ensure_sveltekit_app_html_includes_db_script,
                     laravel_db_paths,
-                    nuxt_db_paths,
                     next_db_paths,
+                    nuxt_db_paths,
                     parse_db_js,
                     remix_db_paths,
                     render_db_js,
@@ -464,7 +404,6 @@ class Agent:
                     vite_db_paths,
                 )
                 from src.templates.registry import template_spec
-                from urllib.parse import urlparse
 
                 client = hasura_client_from_env()
                 app = ensure_app(client, app_id=session_id)
@@ -580,9 +519,6 @@ class Agent:
                 logger.exception(
                     "DB provisioning/injection failed (continuing without DB)"
                 )
-
-        # Ensure a durable memory file exists when PostgresStore is configured.
-        self._bootstrap_memories(session_id=session_id)
 
         self.session_data[session_id] = init_data
         return bool(sess.exists)
@@ -1497,7 +1433,6 @@ class Agent:
 
         from deepagents import create_deep_agent
 
-        store = self._get_langgraph_store()
         checkpointer = await self._get_langgraph_checkpointer()
 
         from langchain.agents.middleware.tool_retry import ToolRetryMiddleware
@@ -1542,21 +1477,7 @@ class Agent:
             configurable = config.get("configurable", {}) or {}
             thread_id = configurable.get("thread_id", "default-thread")
             default_backend = policy_backend(thread_id)
-
-            # Enable DeepAgents long-term memory using PostgresStore.
-            # We route /memories/ to StoreBackend so it persists outside the sandbox.
-            if store is None:
-                return default_backend
-            try:
-                from deepagents.backends import CompositeBackend, StoreBackend
-
-                return CompositeBackend(
-                    default=default_backend,
-                    routes={"/memories/": StoreBackend(runtime)},
-                )
-            except Exception:
-                # Keep core editing working even if the optional memory backend isn't available.
-                return default_backend
+            return default_backend
 
         # NOTE: TodoListMiddleware and SummarizationMiddleware are already added
         # internally by create_deep_agent(); including them here would cause a
@@ -1576,10 +1497,6 @@ class Agent:
             logger.exception("DB tools unavailable; continuing without DB tools")
 
         memory_sources = _deepagents_memory_sources()
-        # If a persistent store is enabled, include the durable /memories/AGENTS.md source
-        # (served from Postgres via StoreBackend) as the first memory file.
-        if store is not None and "/memories/AGENTS.md" not in memory_sources:
-            memory_sources = ["/memories/AGENTS.md", *memory_sources]
 
         self._deep_agent = create_deep_agent(
             model=_deepagents_model(),
@@ -1591,7 +1508,7 @@ class Agent:
             memory=memory_sources,
             skills=_deepagents_skills_sources(),
             interrupt_on=_deepagents_interrupt_on(),
-            store=store,
+            store=None,
         )
         logger.info("DeepAgents initialized (model=%s)", _deepagents_model())
 
@@ -1605,7 +1522,6 @@ class Agent:
             get_backend=policy_backend,
             qa_enabled=_deepagents_qa_enabled(),
             checkpointer=self._deep_controller_checkpointer,
-            store=store,
         )
         logger.info(
             "DeepAgents controller initialized (qa_enabled=%s)",

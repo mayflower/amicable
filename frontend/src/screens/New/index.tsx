@@ -196,9 +196,11 @@ const NewScreen: React.FC = () => {
             loading="eager"
             decoding="async"
           />
-          <h1 className="text-2xl font-bold">Your projects</h1>
-          <p className="text-lg font-normal">
-            Continue an existing project, or create a new one via chat.
+          <h1 className="text-2xl font-bold">Ship internal tools without skipping controls.</h1>
+          <p className="text-lg font-normal text-center max-w-[60ch]">
+            Amicable helps non-engineers and teams build real apps on sanctioned stacks. Choose a
+            template, write a short prompt, and get a sandboxed project that can plug into your
+            org’s QA, security, and observability practices.
           </p>
         </div>
 

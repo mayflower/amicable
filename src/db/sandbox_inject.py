@@ -113,12 +113,12 @@ def ensure_nuxt_config_includes_db_script(nuxt_config_ts: str) -> str:
     # Prefer inserting inside defineNuxtConfig({...}).
     m = re.search(r"defineNuxtConfig\\(\\s*\\{", nuxt_config_ts)
     if not m:
-        return nuxt_config_ts + '\n\nexport default defineNuxtConfig({ app: { head: { script: [{ src: \"/amicable-db.js\" }] } } });\n'
+        return nuxt_config_ts + '\n\nexport default defineNuxtConfig({ app: { head: { script: [{ src: "/amicable-db.js" }] } } });\n'
 
     insert = (
         "\n  app: {\n"
         "    head: {\n"
-        "      script: [{ src: \"/amicable-db.js\" }],\n"
+        '      script: [{ src: "/amicable-db.js" }],\n'
         "    },\n"
         "  },"
     )

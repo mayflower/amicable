@@ -10,10 +10,10 @@ from typing import Any, Literal, TypedDict
 from src.deepagents_backend.qa import (
     QaCommandResult,
     effective_qa_commands,
-    qa_timeout_s,
-    qa_run_tests_enabled,
     python_project_present,
     python_qa_commands,
+    qa_run_tests_enabled,
+    qa_timeout_s,
     read_package_json,
     run_qa,
     self_heal_max_rounds,

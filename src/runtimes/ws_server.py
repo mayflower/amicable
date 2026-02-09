@@ -525,18 +525,9 @@ async def api_sandbox_ls(project_id: str, request: Request, path: str = "/"):
 
     from src.sandbox_files.policy import normalize_public_path
     from src.sandbox_files.sandbox_fs import SandboxFs
-    from src.sandbox_files.store_fs import StoreFs
 
     p = normalize_public_path(path)
-    if p == "/memories" or p.startswith("/memories/"):
-        store = agent._get_langgraph_store()
-        if store is None:
-            return JSONResponse({"error": "memories_not_configured"}, status_code=503)
-        fs = StoreFs(store=store, namespace=(project_id, "filesystem"))
-        entries = fs.ls(p)
-        return JSONResponse({"path": p, "entries": entries}, status_code=200)
 
-    # Sandbox filesystem
     assert agent._session_manager is not None
     backend = agent._session_manager.get_backend(project_id)
     fs = SandboxFs(backend)
@@ -556,27 +547,8 @@ async def api_sandbox_read(project_id: str, path: str, request: Request):
 
     from src.sandbox_files.policy import normalize_public_path
     from src.sandbox_files.sandbox_fs import SandboxFs
-    from src.sandbox_files.store_fs import StoreFs
 
     p = normalize_public_path(path)
-    if p == "/memories" or p.startswith("/memories/"):
-        store = agent._get_langgraph_store()
-        if store is None:
-            return JSONResponse({"error": "memories_not_configured"}, status_code=503)
-        fs = StoreFs(store=store, namespace=(project_id, "filesystem"))
-        try:
-            r = fs.read(p)
-        except FileNotFoundError:
-            return JSONResponse({"error": "not_found"}, status_code=404)
-        return JSONResponse(
-            {
-                "path": r.path,
-                "content": r.content,
-                "sha256": r.sha256,
-                "is_binary": bool(r.is_binary),
-            },
-            status_code=200,
-        )
 
     assert agent._session_manager is not None
     backend = agent._session_manager.get_backend(project_id)
@@ -621,25 +593,8 @@ async def api_sandbox_write(project_id: str, request: Request) -> JSONResponse:
 
     from src.sandbox_files.policy import normalize_public_path
     from src.sandbox_files.sandbox_fs import SandboxFs
-    from src.sandbox_files.store_fs import StoreFs
 
     p = normalize_public_path(path)
-    if p == "/memories" or p.startswith("/memories/"):
-        store = agent._get_langgraph_store()
-        if store is None:
-            return JSONResponse({"error": "memories_not_configured"}, status_code=503)
-        fs = StoreFs(store=store, namespace=(project_id, "filesystem"))
-        try:
-            sha = fs.write(path=p, content=content, expected_sha256=expected_sha)
-        except FileNotFoundError:
-            return JSONResponse({"error": "not_found"}, status_code=404)
-        except RuntimeError as e:
-            if str(e) == "conflict":
-                return JSONResponse({"error": "conflict"}, status_code=409)
-            raise
-        except PermissionError:
-            return JSONResponse({"error": "permission_denied"}, status_code=403)
-        return JSONResponse({"path": p, "sha256": sha}, status_code=200)
 
     assert agent._session_manager is not None
     backend = agent._session_manager.get_backend(project_id)
@@ -679,19 +634,8 @@ async def api_sandbox_mkdir(project_id: str, request: Request) -> JSONResponse:
 
     from src.sandbox_files.policy import normalize_public_path
     from src.sandbox_files.sandbox_fs import SandboxFs
-    from src.sandbox_files.store_fs import StoreFs
 
     p = normalize_public_path(path)
-    if p == "/memories" or p.startswith("/memories/"):
-        store = agent._get_langgraph_store()
-        if store is None:
-            return JSONResponse({"error": "memories_not_configured"}, status_code=503)
-        fs = StoreFs(store=store, namespace=(project_id, "filesystem"))
-        try:
-            fs.mkdir(p)
-        except PermissionError:
-            return JSONResponse({"error": "permission_denied"}, status_code=403)
-        return JSONResponse({"path": p}, status_code=200)
 
     assert agent._session_manager is not None
     backend = agent._session_manager.get_backend(project_id)
@@ -727,25 +671,10 @@ async def api_sandbox_create(project_id: str, request: Request) -> JSONResponse:
 
     from src.sandbox_files.policy import normalize_public_path
     from src.sandbox_files.sandbox_fs import SandboxFs
-    from src.sandbox_files.store_fs import StoreFs
 
     p = normalize_public_path(path)
     if kind not in ("file", "dir"):
         return JSONResponse({"error": "invalid_kind"}, status_code=400)
-
-    if p == "/memories" or p.startswith("/memories/"):
-        store = agent._get_langgraph_store()
-        if store is None:
-            return JSONResponse({"error": "memories_not_configured"}, status_code=503)
-        fs = StoreFs(store=store, namespace=(project_id, "filesystem"))
-        try:
-            if kind == "dir":
-                fs.mkdir(p)
-                return JSONResponse({"path": p}, status_code=200)
-            sha = fs.create_file(path=p, content=content)
-            return JSONResponse({"path": p, "sha256": sha}, status_code=200)
-        except PermissionError:
-            return JSONResponse({"error": "permission_denied"}, status_code=403)
 
     assert agent._session_manager is not None
     backend = agent._session_manager.get_backend(project_id)
@@ -784,24 +713,9 @@ async def api_sandbox_rename(project_id: str, request: Request) -> JSONResponse:
 
     from src.sandbox_files.policy import normalize_public_path
     from src.sandbox_files.sandbox_fs import SandboxFs
-    from src.sandbox_files.store_fs import StoreFs
 
     s = normalize_public_path(src)
     d = normalize_public_path(dst)
-    if s == "/memories" or s.startswith("/memories/") or d == "/memories" or d.startswith(
-        "/memories/"
-    ):
-        store = agent._get_langgraph_store()
-        if store is None:
-            return JSONResponse({"error": "memories_not_configured"}, status_code=503)
-        fs = StoreFs(store=store, namespace=(project_id, "filesystem"))
-        try:
-            fs.rename(src=s, dst=d)
-        except FileNotFoundError:
-            return JSONResponse({"error": "not_found"}, status_code=404)
-        except PermissionError:
-            return JSONResponse({"error": "permission_denied"}, status_code=403)
-        return JSONResponse({"from": s, "to": d}, status_code=200)
 
     assert agent._session_manager is not None
     backend = agent._session_manager.get_backend(project_id)
@@ -827,21 +741,9 @@ async def api_sandbox_rm(
 
     from src.sandbox_files.policy import normalize_public_path
     from src.sandbox_files.sandbox_fs import SandboxFs
-    from src.sandbox_files.store_fs import StoreFs
 
     p = normalize_public_path(path)
     rec = bool(int(recursive or 0))
-
-    if p == "/memories" or p.startswith("/memories/"):
-        store = agent._get_langgraph_store()
-        if store is None:
-            return JSONResponse({"error": "memories_not_configured"}, status_code=503)
-        fs = StoreFs(store=store, namespace=(project_id, "filesystem"))
-        try:
-            fs.rm(path=p, recursive=rec)
-        except PermissionError:
-            return JSONResponse({"error": "permission_denied"}, status_code=403)
-        return JSONResponse({"path": p}, status_code=200)
 
     assert agent._session_manager is not None
     backend = agent._session_manager.get_backend(project_id)
