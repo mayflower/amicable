@@ -56,11 +56,14 @@ async def _generate_project_name(prompt: str) -> str:
         return ""
     try:
         msg = await _naming_llm.ainvoke(
-            "Generate a short project name (2-4 words, no quotes) for this prompt. "
+            "Generate a short project name (2-4 words, no quotes, no leading articles like 'The', 'A', or 'An') "
+            "for this prompt. "
             "Return ONLY the name, nothing else.\n\n"
             f"{prompt[:500]}"
         )
         text = (getattr(msg, "content", "") or "").strip().strip("\"'")
+        # Model output frequently starts with "The ..."; avoid turning that into slugs like "the-...".
+        text = re.sub(r"^(?:the|a|an)\\s+", "", text, flags=re.IGNORECASE).strip()
         return text[:80] if text else ""
     except Exception:
         return ""
