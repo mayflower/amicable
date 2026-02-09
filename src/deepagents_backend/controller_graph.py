@@ -263,7 +263,11 @@ def build_controller_graph(
             if not isinstance(repo_http_url, str) or not repo_http_url:
                 if required:
                     raise RuntimeError("git repo url missing")
-                return {"git_pushed": False, "git_last_commit": None, "git_error": "git repo url missing"}
+                return {
+                    "git_pushed": False,
+                    "git_last_commit": None,
+                    "git_error": "git repo url missing",
+                }
 
             backend = get_backend(thread_id)
 
@@ -289,6 +293,18 @@ def build_controller_graph(
                         user_request = content.strip()
                         break
 
+            agent_summary = ""
+            for m in reversed(messages):
+                mtype = getattr(m, "type", None)
+                content = getattr(m, "content", None)
+                if (
+                    mtype in ("ai", "assistant")
+                    and isinstance(content, str)
+                    and content.strip()
+                ):
+                    agent_summary = content.strip()
+                    break
+
             qa_passed = _state.get("qa_passed")
             qa_results = _state.get("qa_results") or []
             qa_last_output = ""
@@ -302,6 +318,7 @@ def build_controller_graph(
             def _commit_message(diff_stat: str, name_status: str) -> str:
                 return generate_agent_commit_message_llm(
                     user_request=user_request,
+                    agent_summary=agent_summary,
                     project_slug=str(project_slug),
                     qa_passed=bool(qa_passed) if qa_passed is not None else None,
                     qa_last_output=qa_last_output,
@@ -317,7 +334,11 @@ def build_controller_graph(
                 project_slug=str(project_slug),
                 commit_message_fn=_commit_message,
             )
-            return {"git_pushed": bool(pushed), "git_last_commit": sha, "git_error": None}
+            return {
+                "git_pushed": bool(pushed),
+                "git_last_commit": sha,
+                "git_error": None,
+            }
         except Exception as e:
             logger.exception("git_sync failed")
             # In required mode, bubble up so the user sees a hard error.
@@ -344,19 +365,30 @@ def build_controller_graph(
     g.add_node("deepagents_edit", agent_node)
     g.add_node(
         "qa_validate",
-        RunnableLambda(func=lambda st, cfg=None: _run_coro_sync(qa_validate(st, cfg)), afunc=qa_validate),
+        RunnableLambda(
+            func=lambda st, cfg=None: _run_coro_sync(qa_validate(st, cfg)),
+            afunc=qa_validate,
+        ),
     )
     g.add_node(
         "self_heal_message",
-        RunnableLambda(func=lambda st, cfg=None: _run_coro_sync(self_heal_message(st, cfg)), afunc=self_heal_message),
+        RunnableLambda(
+            func=lambda st, cfg=None: _run_coro_sync(self_heal_message(st, cfg)),
+            afunc=self_heal_message,
+        ),
     )
     g.add_node(
         "qa_fail_summary",
-        RunnableLambda(func=lambda st, cfg=None: _run_coro_sync(qa_fail_summary(st, cfg)), afunc=qa_fail_summary),
+        RunnableLambda(
+            func=lambda st, cfg=None: _run_coro_sync(qa_fail_summary(st, cfg)),
+            afunc=qa_fail_summary,
+        ),
     )
     g.add_node(
         "git_sync",
-        RunnableLambda(func=lambda st, cfg=None: _run_coro_sync(git_sync(st, cfg)), afunc=git_sync),
+        RunnableLambda(
+            func=lambda st, cfg=None: _run_coro_sync(git_sync(st, cfg)), afunc=git_sync
+        ),
     )
 
     g.add_edge(START, "deepagents_edit")

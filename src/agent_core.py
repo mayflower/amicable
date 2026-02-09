@@ -306,7 +306,6 @@ class Agent:
         logger.info("LangGraph AsyncPostgresSaver initialized for checkpointing")
         return self._lg_checkpointer
 
-
     def has_pending_hitl(self, session_id: str) -> bool:
         return session_id in self._hitl_pending
 
@@ -334,7 +333,11 @@ class Agent:
         return exists
 
     async def _ensure_app_environment(
-        self, session_id: str, *, template_id: str | None = None, slug: str | None = None
+        self,
+        session_id: str,
+        *,
+        template_id: str | None = None,
+        slug: str | None = None,
     ) -> bool:
         if session_id in self.session_data:
             return True
@@ -370,7 +373,9 @@ class Agent:
                 from src.projects.store import get_project_template_id_any_owner
 
                 client = hasura_client_from_env()
-                stored = get_project_template_id_any_owner(client, project_id=session_id)
+                stored = get_project_template_id_any_owner(
+                    client, project_id=session_id
+                )
                 effective_template_id = parse_template_id(stored)
             except Exception:
                 effective_template_id = None
@@ -1063,12 +1068,16 @@ class Agent:
 
                 if git_sync_enabled() and (controller_failed or not saw_git_sync):
                     from src.gitlab.commit_message import (
-                        deterministic_agent_commit_message,
+                        generate_agent_commit_message_llm,
                     )
                     from src.gitlab.sync import sync_sandbox_tree_to_repo
 
-                    repo_http_url = config.get("configurable", {}).get("git_repo_http_url")
-                    project_slug = config.get("configurable", {}).get("project_slug") or session_id
+                    repo_http_url = config.get("configurable", {}).get(
+                        "git_repo_http_url"
+                    )
+                    project_slug = (
+                        config.get("configurable", {}).get("project_slug") or session_id
+                    )
                     if not (isinstance(repo_http_url, str) and repo_http_url):
                         yield Message.new(
                             MessageType.ERROR,
@@ -1086,11 +1095,18 @@ class Agent:
                         backend = self._session_manager.get_backend(session_id)
 
                         def _msg(diff_stat: str, name_status: str) -> str:
-                            return deterministic_agent_commit_message(
+                            agent_summary = (
+                                buffer.strip() or (final_from_end or "")
+                            ).strip()
+                            return generate_agent_commit_message_llm(
+                                user_request=user_text,
+                                agent_summary=agent_summary,
                                 project_slug=str(project_slug),
                                 qa_passed=None,
+                                qa_last_output="",
                                 diff_stat=diff_stat,
                                 name_status=name_status,
+                                tool_journal_summary=None,
                             )
 
                         await asyncio.to_thread(
@@ -1611,12 +1627,16 @@ class Agent:
 
                 if git_sync_enabled() and (controller_failed or not saw_git_sync):
                     from src.gitlab.commit_message import (
-                        deterministic_agent_commit_message,
+                        generate_agent_commit_message_llm,
                     )
                     from src.gitlab.sync import sync_sandbox_tree_to_repo
 
-                    repo_http_url = config.get("configurable", {}).get("git_repo_http_url")
-                    project_slug = config.get("configurable", {}).get("project_slug") or session_id
+                    repo_http_url = config.get("configurable", {}).get(
+                        "git_repo_http_url"
+                    )
+                    project_slug = (
+                        config.get("configurable", {}).get("project_slug") or session_id
+                    )
                     if not (isinstance(repo_http_url, str) and repo_http_url):
                         yield Message.new(
                             MessageType.ERROR,
@@ -1634,11 +1654,18 @@ class Agent:
                         backend = self._session_manager.get_backend(session_id)
 
                         def _msg(diff_stat: str, name_status: str) -> str:
-                            return deterministic_agent_commit_message(
+                            agent_summary = (
+                                buffer.strip() or (final_from_end or "")
+                            ).strip()
+                            return generate_agent_commit_message_llm(
+                                user_request="(resumed after approval)",
+                                agent_summary=agent_summary,
                                 project_slug=str(project_slug),
                                 qa_passed=None,
+                                qa_last_output="",
                                 diff_stat=diff_stat,
                                 name_status=name_status,
+                                tool_journal_summary=None,
                             )
 
                         await asyncio.to_thread(

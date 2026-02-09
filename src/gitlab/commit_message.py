@@ -85,6 +85,7 @@ def deterministic_bootstrap_commit_message(
 def generate_agent_commit_message_llm(
     *,
     user_request: str,
+    agent_summary: str,
     project_slug: str,
     qa_passed: bool | None,
     qa_last_output: str,
@@ -92,27 +93,22 @@ def generate_agent_commit_message_llm(
     name_status: str,
     tool_journal_summary: dict[str, Any] | None,
 ) -> str:
-    """Best-effort LLM commit message generator.
+    """LLM git commit message generator.
 
-    Must always return a usable commit message (falls back deterministically).
+    Commit messages are project history. If LLM generation fails, we fail the git
+    sync rather than silently producing low-signal commits.
     """
-    fallback = deterministic_agent_commit_message(
-        project_slug=project_slug,
-        qa_passed=qa_passed,
-        diff_stat=diff_stat,
-        name_status=name_status,
-    )
 
     try:
         from langchain.chat_models import init_chat_model  # type: ignore
-    except Exception:
-        return fallback
+    except Exception as e:  # pragma: no cover
+        raise RuntimeError("langchain init_chat_model unavailable") from e
 
     model_name = _commit_model()
     try:
         llm = init_chat_model(model_name)
-    except Exception:
-        return fallback
+    except Exception as e:  # pragma: no cover
+        raise RuntimeError(f"failed to init commit-message model: {model_name}") from e
 
     qa = "unknown" if qa_passed is None else ("passed" if qa_passed else "failed")
     journal = tool_journal_summary or {}
@@ -125,14 +121,17 @@ def generate_agent_commit_message_llm(
         "- Include a 'Changes:' section listing the key files/areas touched\n"
         "- Do NOT include raw file contents\n"
         "- Do NOT include secrets\n\n"
+        "- Do NOT include timestamps\n"
+        "- Prefer imperative mood in the subject (e.g. 'Add ...', 'Fix ...')\n\n"
         f"Project: {project_slug}\n"
         f"User request: {_truncate(user_request.strip(), 1200)}\n"
+        f"Agent summary (truncated): {_truncate(agent_summary.strip(), 1500)}\n"
         f"QA: {qa}\n"
         f"QA last output (truncated): {_truncate(qa_last_output.strip(), 1500)}\n\n"
-        "Staged diffstat:\n"
-        f"{_truncate(diff_stat.strip(), 2500)}\n\n"
         "Staged name-status:\n"
         f"{_truncate(name_status.strip(), 2500)}\n\n"
+        "Staged diffstat:\n"
+        f"{_truncate(diff_stat.strip(), 2500)}\n\n"
         "Tool journal summary (JSON-ish):\n"
         f"{_truncate(str(journal), 1500)}\n"
     )
@@ -141,9 +140,10 @@ def generate_agent_commit_message_llm(
         msg = llm.invoke(prompt)
         text = getattr(msg, "content", "") if msg is not None else ""
         if not isinstance(text, str):
-            return fallback
+            raise RuntimeError("commit-message model returned non-text content")
         out = _sanitize_commit_message(text)
-        return out + ("\n" if not out.endswith("\n") else "") if out else fallback
-    except Exception:
-        return fallback
-
+        if not out:
+            raise RuntimeError("commit-message model returned empty message")
+        return out + ("\n" if not out.endswith("\n") else "")
+    except Exception as e:  # pragma: no cover
+        raise RuntimeError("commit-message model invocation failed") from e
