@@ -1,5 +1,5 @@
 export type TemplateId =
-  | "lovable_vite"
+  | "vite"
   | "nextjs15"
   | "fastapi"
   | "hono"
@@ -14,7 +14,7 @@ export const TEMPLATES: Array<{
   description: string;
 }> = [
   {
-    id: "lovable_vite",
+    id: "vite",
     title: "Single-Page App",
     description: "Best for landing pages, dashboards, and client-side apps. React + Vite + Tailwind + shadcn/ui.",
   },
@@ -56,6 +56,7 @@ export const TEMPLATES: Array<{
 ];
 
 export const templateLabel = (id: string | null | undefined): string => {
-  const found = TEMPLATES.find((t) => t.id === id);
+  const normalized = id === "lovable_vite" ? "vite" : id;
+  const found = TEMPLATES.find((t) => t.id === normalized);
   return found ? found.title : "Single-Page App";
 };

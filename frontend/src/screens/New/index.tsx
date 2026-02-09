@@ -29,7 +29,7 @@ const NewScreen: React.FC = () => {
 
   const [prompt, setPrompt] = useState("");
   const [name, setName] = useState("");
-  const [templateId, setTemplateId] = useState<TemplateId>("lovable_vite");
+  const [templateId, setTemplateId] = useState<TemplateId>("vite");
   const [projects, setProjects] = useState<Project[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [error, setError] = useState<string | null>(null);

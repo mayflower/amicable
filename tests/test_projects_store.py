@@ -225,10 +225,10 @@ def test_create_list_get_rename_delete() -> None:
     c = FakeHasuraClient()
     owner = ProjectOwner(sub="u1", email="u1@example.com")
 
-    p1 = create_project(c, owner=owner, name="Todo App", template_id="lovable_vite")
+    p1 = create_project(c, owner=owner, name="Todo App", template_id="vite")
     p2 = create_project(c, owner=owner, name="Todo App")
     assert p1.slug != p2.slug
-    assert p1.template_id == "lovable_vite"
+    assert p1.template_id == "vite"
     assert p2.template_id is None
 
     got = get_project_by_slug(c, owner=owner, slug=p1.slug)

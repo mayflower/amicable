@@ -112,7 +112,7 @@ Templates are defined in two places and must stay in sync:
 
 Backend template ids (and default):
 
-- `lovable_vite` (default)
+- `vite` (default; renamed from `lovable_vite`)
 - `nextjs15`
 - `fastapi`
 - `hono`
@@ -121,7 +121,7 @@ Backend template ids (and default):
 - `sveltekit`
 - `laravel`
 
-The backend default is `DEFAULT_TEMPLATE_ID = "lovable_vite"` in `src/templates/registry.py`.
+The backend default is `DEFAULT_TEMPLATE_ID = "vite"` in `src/templates/registry.py`.
 
 ### Mapping template id -> SandboxTemplate name
 
@@ -131,10 +131,12 @@ Backend mapping is implemented by `k8s_template_name_for(template_id)` in `src/t
 - You can override mappings without code changes via:
 
 ```bash
-export AMICABLE_TEMPLATE_K8S_TEMPLATE_MAP_JSON='{"lovable_vite":"my-sandbox-template-name"}'
+export AMICABLE_TEMPLATE_K8S_TEMPLATE_MAP_JSON='{"vite":"my-sandbox-template-name"}'
 ```
 
 This is useful if you want to swap the underlying sandbox image for an existing template id.
+
+Note: the backend still accepts `lovable_vite` as an alias for `vite` for backwards compatibility with existing stored projects and older clients.
 
 ### DB injection kind (template behavior)
 
