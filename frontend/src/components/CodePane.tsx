@@ -1,9 +1,20 @@
 import Editor from "@monaco-editor/react";
-import { FilePlus2, FolderPlus, RefreshCcw, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileCode2,
+  FilePlus2,
+  FileText,
+  Folder,
+  FolderPlus,
+  RefreshCcw,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Tree, type NodeApi, type NodeRendererProps } from "react-arborist";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   sandboxCreate,
   sandboxLs,
@@ -43,6 +54,22 @@ const inferLanguage = (path: string): string => {
   if (p.endsWith(".md")) return "markdown";
   if (p.endsWith(".yml") || p.endsWith(".yaml")) return "yaml";
   return "plaintext";
+};
+
+const fileIconForPath = (path: string) => {
+  const p = path.toLowerCase();
+  if (
+    p.endsWith(".ts") ||
+    p.endsWith(".tsx") ||
+    p.endsWith(".js") ||
+    p.endsWith(".jsx") ||
+    p.endsWith(".json") ||
+    p.endsWith(".css") ||
+    p.endsWith(".html")
+  ) {
+    return FileCode2;
+  }
+  return FileText;
 };
 
 const useElementHeight = () => {
@@ -266,6 +293,10 @@ export const CodePane = ({
   const Node = ({ node, style }: NodeRendererProps<FileNode>) => {
     const data = node.data;
     const isDir = !!data.isDir;
+    // react-arborist provides indentation via style.paddingLeft; don't clobber it.
+    const basePadding =
+      typeof style.paddingLeft === "number" ? style.paddingLeft : 0;
+    const FileIcon = fileIconForPath(data.id);
     return (
       <div
         style={{
@@ -273,11 +304,14 @@ export const CodePane = ({
           display: "flex",
           alignItems: "center",
           gap: 6,
-          paddingLeft: 6,
-          cursor: "default",
-          userSelect: "none",
-          fontSize: 12,
+          paddingLeft: basePadding + 8,
         }}
+        className={cn(
+          "h-6 pr-2 text-xs select-none rounded-sm",
+          "flex items-center",
+          "cursor-default",
+          node.isSelected ? "bg-muted text-foreground" : "hover:bg-muted/60"
+        )}
         onClick={async () => {
           node.select();
           if (isDir) {
@@ -299,8 +333,19 @@ export const CodePane = ({
         }}
         title={data.id}
       >
-        <span style={{ width: 14, opacity: 0.8 }}>
-          {isDir ? (node.isOpen ? "▾" : "▸") : "•"}
+        <span className="w-4 flex items-center justify-center opacity-80">
+          {isDir ? (
+            node.isOpen ? (
+              <ChevronDown size={14} />
+            ) : (
+              <ChevronRight size={14} />
+            )
+          ) : (
+            <span className="inline-block w-3" />
+          )}
+        </span>
+        <span className="w-4 flex items-center justify-center opacity-80">
+          {isDir ? <Folder size={14} /> : <FileIcon size={14} />}
         </span>
         <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {data.name}
@@ -318,7 +363,7 @@ export const CodePane = ({
   }, [selectedPath, treeData]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <div className="flex flex-col h-full min-h-0">
       <div
         className="border-b"
         style={{
@@ -431,14 +476,10 @@ export const CodePane = ({
         </div>
       ) : null}
 
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+      <div className="flex flex-1 min-h-0">
         <div
           ref={treeWrapRef}
-          style={{
-            width: 260,
-            borderRight: "1px solid rgba(255,255,255,0.08)",
-            minHeight: 0,
-          }}
+          className="w-[260px] border-r min-h-0 bg-background"
         >
           <Tree<FileNode>
             data={treeData}
@@ -459,7 +500,7 @@ export const CodePane = ({
           </Tree>
         </div>
 
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="flex-1 min-w-0">
           {!selectedPath ? (
             <div style={{ padding: 12, fontSize: 12, opacity: 0.8 }}>
               Select a file to edit.
