@@ -2,6 +2,8 @@
 
 This guide installs Amicable on Kubernetes using the **kubernetes-sigs/agent-sandbox** CRDs.
 
+For a kind-based local development setup, see `docs/local_kind.md`.
+
 At a high level:
 - The **editor UI** is a static React app (built from `frontend/`) served by `amicable-editor`.
 - The **agent** is a FastAPI WebSocket server (`src/runtimes/ws_server.py`) that the editor connects to.
