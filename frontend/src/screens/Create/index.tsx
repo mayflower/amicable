@@ -155,6 +155,12 @@ const Create = () => {
   const [resolvedSessionId, setResolvedSessionId] = useState<string | null>(
     querySessionId || routeState?.project_id || null
   );
+  const [slugResolutionStatus, setSlugResolutionStatus] = useState<
+    "idle" | "loading" | "resolved" | "not_found" | "error"
+  >("idle");
+  const [slugResolutionError, setSlugResolutionError] = useState<string | null>(
+    null
+  );
   const [projectInfo, setProjectInfo] = useState<{
     project_id: string;
     name: string;
@@ -1094,14 +1100,29 @@ const Create = () => {
   useEffect(() => {
     const run = async () => {
       if (!slug) return;
+      setSlugResolutionStatus("loading");
+      setSlugResolutionError(null);
       try {
         const url = new URL(`/api/projects/by-slug/${encodeURIComponent(slug)}`, AGENT_CONFIG.HTTP_URL).toString();
         const res = await fetch(url, { credentials: "include" });
         const data = (await res.json()) as unknown;
         const d = asObj(data);
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (res.status === 404) {
+            setSlugResolutionStatus("not_found");
+            return;
+          }
+          const detail =
+            d && typeof d.error === "string"
+              ? d.error
+              : `failed to resolve project (${res.status})`;
+          setSlugResolutionStatus("error");
+          setSlugResolutionError(detail);
+          return;
+        }
         if (d && typeof d.project_id === "string") {
           setResolvedSessionId(d.project_id);
+          setSlugResolutionStatus("resolved");
         }
         if (
           d &&
@@ -1112,7 +1133,8 @@ const Create = () => {
           setProjectInfo({ project_id: d.project_id, name: d.name, slug: d.slug });
         }
       } catch {
-        // ignore
+        setSlugResolutionStatus("error");
+        setSlugResolutionError("failed to resolve project (network error)");
       }
     };
     run();
@@ -1719,12 +1741,40 @@ const Create = () => {
               loading="lazy"
               decoding="async"
             />
-            <div
-              className="text-[18px] font-medium text-muted-foreground"
-              style={{ marginTop: "24px" }}
-            >
-              Connect to start building
-            </div>
+            {slug && !resolvedSessionId && slugResolutionStatus === "loading" ? (
+              <div
+                className="text-[18px] font-medium text-muted-foreground animate-pulse"
+                style={{ marginTop: "24px" }}
+              >
+                Loading project...
+              </div>
+            ) : slug && !resolvedSessionId && slugResolutionStatus === "not_found" ? (
+              <div style={{ marginTop: "24px", textAlign: "center" }}>
+                <div className="text-[18px] font-medium text-gray-700">Project not found</div>
+                <div className="text-sm text-muted-foreground" style={{ marginTop: "12px" }}>
+                  No project exists for slug <span className="font-mono">{slug}</span>.
+                </div>
+                <Button
+                  onClick={() => navigate("/", { replace: true })}
+                  style={{ marginTop: "16px" }}
+                >
+                  Go to Home
+                </Button>
+              </div>
+            ) : (
+              <div
+                className="text-[18px] font-medium text-muted-foreground"
+                style={{ marginTop: "24px" }}
+              >
+                Connect to start building
+              </div>
+            )}
+
+            {slugResolutionError && (
+              <div className="border border-red-400 rounded-md p-3 mt-4 text-destructive">
+                <div className="text-sm">Error: {slugResolutionError}</div>
+              </div>
+            )}
 
             {error && (
               <div className="border border-red-400 rounded-md p-3 mt-4 text-destructive">
@@ -1732,15 +1782,17 @@ const Create = () => {
               </div>
             )}
 
-            <Button
-              onClick={() => {
-                connect().catch((e) => console.error("Connect failed:", e));
-              }}
-              disabled={!resolvedSessionId || isConnecting}
-              style={{ marginTop: "16px" }}
-            >
-              {isConnecting ? "Connecting..." : "Connect"}
-            </Button>
+            {!(slug && !resolvedSessionId && slugResolutionStatus === "not_found") && (
+              <Button
+                onClick={() => {
+                  connect().catch((e) => console.error("Connect failed:", e));
+                }}
+                disabled={!resolvedSessionId || isConnecting}
+                style={{ marginTop: "16px" }}
+              >
+                {isConnecting ? "Connecting..." : "Connect"}
+              </Button>
+            )}
 
             <div className="flex flex-col gap-4 mt-12">
               <div className="flex flex-row items-center gap-3">

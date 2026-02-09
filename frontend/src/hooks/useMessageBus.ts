@@ -42,6 +42,28 @@ export const useMessageBus = ({
   const webSocketRef = useRef<WebSocketBus | null>(null);
   const handlersRef = useRef(handlers);
   const isConnectingRef = useRef(false);
+  const lastConnectParamsRef = useRef<{
+    wsUrl: string;
+    token?: string;
+    sessionId?: string;
+  } | null>(null);
+
+  // Keep latest callbacks without forcing MessageBus recreation.
+  const onConnectRef = useRef(onConnect);
+  const onDisconnectRef = useRef(onDisconnect);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onConnectRef.current = onConnect;
+  }, [onConnect]);
+
+  useEffect(() => {
+    onDisconnectRef.current = onDisconnect;
+  }, [onDisconnect]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
 
   // Update handlers ref when handlers change
   useEffect(() => {
@@ -61,7 +83,7 @@ export const useMessageBus = ({
             handler(message);
           } catch (error) {
             console.error(`Error in handler for ${message.type}:`, error);
-            onError?.(`Handler error for ${message.type}: ${error}`);
+            onErrorRef.current?.(`Handler error for ${message.type}: ${error}`);
           }
         } else {
           // Default handling for unhandled message types
@@ -73,7 +95,7 @@ export const useMessageBus = ({
       onError: (errorMsg) => {
         console.error("MessageBus error:", errorMsg);
         setError(errorMsg);
-        onError?.(errorMsg);
+        onErrorRef.current?.(errorMsg);
       },
       onConnect: () => {
         console.log("MessageBus connected");
@@ -81,21 +103,21 @@ export const useMessageBus = ({
         setIsConnecting(false);
         isConnectingRef.current = false;
         setError(null);
-        onConnect?.();
+        onConnectRef.current?.();
       },
       onDisconnect: () => {
         console.log("MessageBus disconnected");
         setIsConnected(false);
         setIsConnecting(false);
         isConnectingRef.current = false;
-        onDisconnect?.();
+        onDisconnectRef.current?.();
       },
     });
 
     return () => {
       messageBusRef.current?.clear();
     };
-  }, [onConnect, onDisconnect, onError]);
+  }, []);
 
   const connect = useCallback(async () => {
     if (!messageBusRef.current) {
@@ -103,8 +125,21 @@ export const useMessageBus = ({
     }
 
     // Prevent multiple simultaneous connection attempts
-    if (isConnectingRef.current || isConnected) {
-      console.log("Connection already in progress or established, skipping...");
+    if (isConnectingRef.current) {
+      console.log("Connection already in progress, skipping...");
+      return;
+    }
+
+    const nextParams = { wsUrl, token, sessionId };
+    const prevParams = lastConnectParamsRef.current;
+    const sameParams =
+      prevParams &&
+      prevParams.wsUrl === nextParams.wsUrl &&
+      prevParams.token === nextParams.token &&
+      prevParams.sessionId === nextParams.sessionId;
+
+    if (isConnected && webSocketRef.current && sameParams) {
+      console.log("Already connected with same parameters, skipping...");
       return;
     }
 
@@ -130,6 +165,7 @@ export const useMessageBus = ({
         messageBusRef.current,
         sessionId
       );
+      lastConnectParamsRef.current = nextParams;
       await webSocketRef.current.connect();
     } catch (err) {
       console.error("Failed to connect:", err);
@@ -185,14 +221,12 @@ export const useMessageBus = ({
     };
   }, []);
 
-  // Reconnect when connection parameters change (but only if we were previously connected)
+  // Reconnect when connection parameters change (but only if we were previously connected).
   useEffect(() => {
-    if (isConnected && webSocketRef.current && sessionId) {
-      console.log("Connection parameters changed, reconnecting...");
-      // Don't set hasConnectedRef here as it's managed by the component
-      connect();
-    }
-  }, [wsUrl, token]); // Only reconnect on URL/token changes, not sessionId
+    if (!isConnected || !webSocketRef.current) return;
+    console.log("Connection parameters changed, reconnecting...");
+    connect().catch((e) => console.error("Reconnect failed:", e));
+  }, [wsUrl, token, sessionId, isConnected, connect]);
 
   return {
     isConnecting,

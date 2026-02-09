@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -33,6 +35,7 @@ load_dotenv()
 
 app = FastAPI()
 _agent: Agent | None = None
+logger = logging.getLogger(__name__)
 
 _bootstrap_lock_by_project: dict[str, asyncio.Lock] = {}
 
@@ -319,10 +322,8 @@ async def api_create_project(request: Request) -> JSONResponse:
         p, _git = ensure_gitlab_repo_for_project(client, owner=owner, project=p)
     except Exception as e:
         # Roll back the project row if GitLab provisioning fails; Amicable requires GitLab.
-        try:
+        with contextlib.suppress(Exception):
             hard_delete_project_row(client, owner=owner, project_id=p.project_id)
-        except Exception:
-            pass
         detail = str(e)
         status = 503 if ("GITLAB_TOKEN" in detail or "required" in detail) else 502
         return JSONResponse({"error": "gitlab_error", "detail": detail}, status_code=status)
@@ -1028,7 +1029,11 @@ def _require_auth(ws: WebSocket) -> None:
 async def _handle_ws(ws: WebSocket) -> None:
     try:
         _require_auth(ws)
-    except PermissionError:
+    except PermissionError as e:
+        # Pre-accept auth failures otherwise look like unexplained open/close loops.
+        client = getattr(ws, "client", None)
+        path = getattr(getattr(ws, "url", None), "path", None)
+        logger.warning("WS auth rejected: %s (client=%s path=%s)", e, client, path)
         await ws.close(code=1008)
         return
 
@@ -1078,10 +1083,23 @@ async def _handle_ws(ws: WebSocket) -> None:
                     project, git = ensure_gitlab_repo_for_project(
                         client, owner=owner, project=project
                     )
-                except PermissionError:
+                except PermissionError as e:
+                    # Most common cause: user mismatch between cookie/session and session_id.
+                    logger.warning(
+                        "WS INIT permission denied: %s (session_id=%s client=%s sub=%s)",
+                        e,
+                        session_id,
+                        getattr(ws, "client", None),
+                        sub if "sub" in locals() else None,
+                    )
                     await ws.close(code=1008)
                     return
                 except Exception as e:
+                    logger.exception(
+                        "WS INIT failed (session_id=%s client=%s)",
+                        session_id,
+                        getattr(ws, "client", None),
+                    )
                     await ws.send_json(
                         Message.new(
                             MessageType.ERROR,
@@ -1135,6 +1153,12 @@ async def _handle_ws(ws: WebSocket) -> None:
                                 commit_message=msg,
                             )
             except Exception as e:
+                logger.warning(
+                    "WS git bootstrap failed (session_id=%s): %s",
+                    session_id,
+                    e,
+                    exc_info=True,
+                )
                 # In required mode, treat as init failure; otherwise best-effort.
                 try:
                     from src.gitlab.config import (
@@ -1152,7 +1176,10 @@ async def _handle_ws(ws: WebSocket) -> None:
                         await ws.close(code=1011)
                         return
                 except Exception:
-                    pass
+                    logger.exception(
+                        "WS git bootstrap: failed to evaluate git_sync_required() (session_id=%s)",
+                        session_id,
+                    )
             pending = agent.get_pending_hitl(session_id)
             if pending:
                 init_data["hitl_pending"] = pending
