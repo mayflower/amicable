@@ -368,6 +368,8 @@ class Agent:
             session_id, template_name=sandbox_template_name, slug=slug
         )
 
+        backend = None
+
         # Ensure the conventional memories directory exists inside the sandbox workspace.
         # (This is sandbox-local, not store-backed.)
         try:
@@ -384,6 +386,68 @@ class Agent:
             "template_id": effective_template_id,
             "k8s_template_name": sandbox_template_name,
         }
+
+        # Platform scaffolding: Backstage + SonarQube + TechDocs (+ optional CI).
+        # Non-destructive (create-only) and best-effort.
+        try:
+            from src.platform_scaffold.scaffold import (
+                ensure_platform_scaffold,
+                scaffold_on_existing_enabled,
+            )
+
+            should_scaffold = (not bool(sess.exists)) or scaffold_on_existing_enabled()
+            if should_scaffold:
+                if backend is None:
+                    backend = self._session_manager.get_backend(session_id)
+
+                project_name = None
+                project_slug = slug
+                repo_web_url = None
+
+                # Best-effort project metadata from Hasura (no ownership enforcement).
+                if db_enabled_from_env():
+                    try:
+                        from src.projects.store import get_project_any_owner
+
+                        client = hasura_client_from_env()
+                        p = get_project_any_owner(client, project_id=session_id)
+                        if p is not None:
+                            project_name = p.name
+                            project_slug = p.slug
+                            repo_web_url = p.gitlab_web_url
+                    except Exception:
+                        pass
+
+                # GitLab context for source-location/repo_url fallback.
+                try:
+                    from src.gitlab.config import (
+                        git_sync_branch,
+                        gitlab_base_url,
+                        gitlab_group_path,
+                    )
+
+                    branch = git_sync_branch()
+                    base = gitlab_base_url()
+                    group = gitlab_group_path()
+                except Exception:
+                    branch = "main"
+                    base = None
+                    group = None
+
+                ensure_platform_scaffold(
+                    backend,
+                    project_id=session_id,
+                    template_id=str(effective_template_id),
+                    project_name=project_name,
+                    project_slug=project_slug,
+                    repo_web_url=repo_web_url,
+                    branch=str(branch or "main"),
+                    gitlab_base_url=base,
+                    gitlab_group_path=group,
+                    create_ci=True,
+                )
+        except Exception:
+            logger.exception("platform scaffolding failed (continuing)")
 
         # DB provisioning + sandbox injection (optional if not configured).
         if db_enabled_from_env():

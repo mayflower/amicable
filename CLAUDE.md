@@ -104,6 +104,11 @@ SandboxClaim names are deterministic: `amicable-<sha256(session_id)[:8]>`. Previ
 - `AMICABLE_TRACE_NARRATOR_ENABLED` (default `false`) — enable short tool explanations (sidecar)
 - `AMICABLE_TRACE_NARRATOR_MODEL` (default `anthropic:claude-haiku-4-5`)
 - `AMICABLE_TRACE_NARRATOR_MAX_CHARS` (default `280`)
+- `AMICABLE_BACKSTAGE_OWNER` (default `group:platform`) — default `spec.owner` for generated `catalog-info.yaml`
+- `AMICABLE_BACKSTAGE_SYSTEM` (optional) — default `spec.system` for generated `catalog-info.yaml`
+- `AMICABLE_BACKSTAGE_LIFECYCLE` (default `experimental`) — default `spec.lifecycle` for generated `catalog-info.yaml`
+- `AMICABLE_SONAR_PROJECTKEY_PREFIX` (default: derived from `GITLAB_GROUP_PATH`) — prefix for generated `sonar.projectKey`
+- `AMICABLE_PLATFORM_SCAFFOLD_ON_EXISTING` (default `false`) — if enabled, backfill missing scaffold files for existing sandboxes too
 - `AMICABLE_LANGGRAPH_DATABASE_URL` — Postgres DSN for LangGraph `PostgresStore` (DeepAgents long-term memory via `/memories/`). Falls back to `LANGGRAPH_DATABASE_URL` or `DATABASE_URL`.
   - Also used for LangGraph Postgres checkpointing (HITL resume across agent restarts) when `langgraph-checkpoint-postgres` is installed.
 

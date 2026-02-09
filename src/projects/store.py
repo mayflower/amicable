@@ -137,6 +137,15 @@ def _get_project_by_id_any_owner(client: HasuraClient, *, project_id: str) -> Pr
     )
 
 
+def get_project_any_owner(client: HasuraClient, *, project_id: str) -> Project | None:
+    """Return project metadata without enforcing ownership.
+
+    This is used by internal services (agent/runtime) after authentication and
+    authorization have already been enforced upstream.
+    """
+    return _get_project_by_id_any_owner(client, project_id=project_id)
+
+
 def get_project_template_id_any_owner(
     client: HasuraClient, *, project_id: str
 ) -> str | None:
