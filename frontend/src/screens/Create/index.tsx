@@ -1103,7 +1103,7 @@ const Create = () => {
         <Loader2 size={64} />
       </div>
       <div
-        className="text-[18px] font-medium text-gray-700 animate-pulse"
+        className="text-[18px] font-medium text-muted-foreground animate-pulse"
         style={{ marginTop: "24px" }}
       >
         Connecting to Workspace...
@@ -1120,7 +1120,7 @@ const Create = () => {
         <Loader2 size={64} />
       </div>
       <div
-        className="text-[18px] font-medium text-gray-700 animate-pulse"
+        className="text-[18px] font-medium text-muted-foreground animate-pulse"
         style={{ marginTop: "24px" }}
       >
         Updating Workspace...
@@ -1783,8 +1783,8 @@ const Create = () => {
                       <p
                         style={{
                           whiteSpace: "pre-wrap",
-                          color: isUser ? "white" : "#111827",
                         }}
+                        className={isUser ? "text-white" : "text-foreground"}
                       >
                         {String(msg.data.text || "")}
                       </p>
