@@ -57,6 +57,7 @@ def ensure_projects_schema(client: HasuraClient) -> None:
               owner_email text NOT NULL,
               name text NOT NULL,
               slug text NOT NULL UNIQUE,
+              sandbox_id text NULL,
               template_id text NULL,
               gitlab_project_id bigint NULL,
               gitlab_path text NULL,
@@ -65,6 +66,8 @@ def ensure_projects_schema(client: HasuraClient) -> None:
               updated_at timestamptz NOT NULL DEFAULT now(),
               deleted_at timestamptz NULL
             );
+            ALTER TABLE amicable_meta.projects
+              ADD COLUMN IF NOT EXISTS sandbox_id text NULL;
             ALTER TABLE amicable_meta.projects
               ADD COLUMN IF NOT EXISTS template_id text NULL;
             ALTER TABLE amicable_meta.projects
@@ -91,6 +94,7 @@ class Project:
     owner_email: str
     name: str
     slug: str
+    sandbox_id: str | None = None
     template_id: str | None = None
     gitlab_project_id: int | None = None
     gitlab_path: str | None = None
@@ -124,7 +128,7 @@ def _get_project_by_id_any_owner(client: HasuraClient, *, project_id: str) -> Pr
     ensure_projects_schema(client)
     res = client.run_sql(
         f"""
-        SELECT project_id, owner_sub, owner_email, name, slug, template_id,
+        SELECT project_id, owner_sub, owner_email, name, slug, sandbox_id, template_id,
                gitlab_project_id, gitlab_path, gitlab_web_url,
                created_at, updated_at
         FROM amicable_meta.projects
@@ -143,6 +147,7 @@ def _get_project_by_id_any_owner(client: HasuraClient, *, project_id: str) -> Pr
         owner_email=str(r["owner_email"]),
         name=str(r["name"]),
         slug=str(r["slug"]),
+        sandbox_id=str(r.get("sandbox_id")) if r.get("sandbox_id") is not None else None,
         template_id=str(r.get("template_id")) if r.get("template_id") is not None else None,
         gitlab_project_id=int(r["gitlab_project_id"]) if r.get("gitlab_project_id") is not None else None,
         gitlab_path=str(r.get("gitlab_path")) if r.get("gitlab_path") is not None else None,
@@ -199,7 +204,7 @@ def get_project_by_slug(client: HasuraClient, *, owner: ProjectOwner, slug: str)
     ensure_projects_schema(client)
     res = client.run_sql(
         f"""
-        SELECT project_id, owner_sub, owner_email, name, slug, template_id,
+        SELECT project_id, owner_sub, owner_email, name, slug, sandbox_id, template_id,
                gitlab_project_id, gitlab_path, gitlab_web_url,
                created_at, updated_at
         FROM amicable_meta.projects
@@ -220,6 +225,7 @@ def get_project_by_slug(client: HasuraClient, *, owner: ProjectOwner, slug: str)
         owner_email=str(r["owner_email"]),
         name=str(r["name"]),
         slug=str(r["slug"]),
+        sandbox_id=str(r.get("sandbox_id")) if r.get("sandbox_id") is not None else None,
         template_id=str(r.get("template_id")) if r.get("template_id") is not None else None,
         gitlab_project_id=int(r["gitlab_project_id"]) if r.get("gitlab_project_id") is not None else None,
         gitlab_path=str(r.get("gitlab_path")) if r.get("gitlab_path") is not None else None,
@@ -229,11 +235,62 @@ def get_project_by_slug(client: HasuraClient, *, owner: ProjectOwner, slug: str)
     )
 
 
+def get_project_by_slug_any_owner(client: HasuraClient, *, slug: str) -> Project | None:
+    """Return a project by slug without enforcing ownership.
+
+    This is intended for internal services (e.g. preview routing) where access
+    control is handled elsewhere (ingress/network policies).
+    """
+    ensure_projects_schema(client)
+    res = client.run_sql(
+        f"""
+        SELECT project_id, owner_sub, owner_email, name, slug, sandbox_id, template_id,
+               gitlab_project_id, gitlab_path, gitlab_web_url,
+               created_at, updated_at
+        FROM amicable_meta.projects
+        WHERE slug = {_sql_str(slug)} AND deleted_at IS NULL
+        LIMIT 1;
+        """.strip(),
+        read_only=True,
+    )
+    rows = _tuples_to_dicts(res)
+    if not rows:
+        return None
+    r = rows[0]
+    return Project(
+        project_id=str(r["project_id"]),
+        owner_sub=str(r["owner_sub"]),
+        owner_email=str(r["owner_email"]),
+        name=str(r["name"]),
+        slug=str(r["slug"]),
+        sandbox_id=str(r.get("sandbox_id")) if r.get("sandbox_id") is not None else None,
+        template_id=str(r.get("template_id")) if r.get("template_id") is not None else None,
+        gitlab_project_id=int(r["gitlab_project_id"]) if r.get("gitlab_project_id") is not None else None,
+        gitlab_path=str(r.get("gitlab_path")) if r.get("gitlab_path") is not None else None,
+        gitlab_web_url=str(r.get("gitlab_web_url")) if r.get("gitlab_web_url") is not None else None,
+        created_at=str(r.get("created_at")) if r.get("created_at") is not None else None,
+        updated_at=str(r.get("updated_at")) if r.get("updated_at") is not None else None,
+    )
+
+
+def set_project_sandbox_id_any_owner(
+    client: HasuraClient, *, project_id: str, sandbox_id: str
+) -> None:
+    ensure_projects_schema(client)
+    client.run_sql(
+        f"""
+        UPDATE amicable_meta.projects
+        SET sandbox_id = {_sql_str(sandbox_id)}, updated_at = now()
+        WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL;
+        """.strip()
+    )
+
+
 def list_projects(client: HasuraClient, *, owner: ProjectOwner) -> list[Project]:
     ensure_projects_schema(client)
     res = client.run_sql(
         f"""
-        SELECT project_id, owner_sub, owner_email, name, slug, template_id,
+        SELECT project_id, owner_sub, owner_email, name, slug, sandbox_id, template_id,
                gitlab_project_id, gitlab_path, gitlab_web_url,
                created_at, updated_at
         FROM amicable_meta.projects
@@ -251,6 +308,7 @@ def list_projects(client: HasuraClient, *, owner: ProjectOwner) -> list[Project]
                 owner_email=str(r["owner_email"]),
                 name=str(r["name"]),
                 slug=str(r["slug"]),
+                sandbox_id=str(r.get("sandbox_id")) if r.get("sandbox_id") is not None else None,
                 template_id=str(r.get("template_id")) if r.get("template_id") is not None else None,
                 gitlab_project_id=int(r["gitlab_project_id"]) if r.get("gitlab_project_id") is not None else None,
                 gitlab_path=str(r.get("gitlab_path")) if r.get("gitlab_path") is not None else None,

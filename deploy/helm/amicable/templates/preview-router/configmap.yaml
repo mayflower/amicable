@@ -19,11 +19,14 @@ data:
         '' close;
       }
 
-      # Extract sandbox id from: <sandbox-id>.{{ .Values.agent.env.previewBaseDomain }}
+      # Cache for slug -> sandbox_id resolution.
+      proxy_cache_path /tmp/nginx-cache levels=1:2 keys_zone=resolve_cache:10m max_size=100m inactive=10m use_temp_path=off;
+
+      # Extract slug (first DNS label) from: <slug>.{{ .Values.agent.env.previewBaseDomain }}
       #
       # We intentionally do this via `map` so we can use `server_name _;` (no regex).
       # This avoids nginx config parse pitfalls around regex server_name syntax across builds.
-      map $host $sandbox_id {
+      map $host $slug {
         default "";
         # Use `*` quantifier instead of `{m,n}` to avoid nginx parse issues in some builds.
         ~^([a-z0-9]([-a-z0-9]*[a-z0-9])?)\.{{ .Values.agent.env.previewBaseDomain | replace "." "\\." }}$ $1;
@@ -33,9 +36,32 @@ data:
         listen 80;
         server_name _;
 
-        if ($sandbox_id = "") { return 404; }
+        if ($slug = "") { return 404; }
+
+        # Internal resolver call (to the agent) used by auth_request.
+        location = /__resolve_sandbox {
+          internal;
+
+          proxy_cache resolve_cache;
+          proxy_cache_key $host;
+          proxy_cache_valid 200 10m;
+          proxy_cache_valid 404 30s;
+          proxy_cache_valid 500 5s;
+          proxy_cache_valid 502 5s;
+          proxy_cache_valid 503 5s;
+
+          proxy_http_version 1.1;
+          proxy_set_header Connection "";
+
+          proxy_set_header X-Amicable-Preview-Token {{ (index .Values.agent.env.extra "PREVIEW_RESOLVER_TOKEN") | default "" | quote }};
+          proxy_pass http://amicable-agent.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.agent.service.port }}/internal/preview/resolve?host=$host;
+        }
 
         location / {
+          auth_request /__resolve_sandbox;
+          auth_request_set $sandbox_id $upstream_http_x_amicable_sandbox_id;
+          if ($sandbox_id = "") { return 404; }
+
           proxy_http_version 1.1;
           proxy_set_header Upgrade $http_upgrade;
           proxy_set_header Connection $connection_upgrade;
@@ -51,4 +77,3 @@ data:
         }
       }
     }
-

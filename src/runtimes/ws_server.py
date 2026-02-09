@@ -248,6 +248,102 @@ async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _preview_resolver_token() -> str:
+    return (os.environ.get("PREVIEW_RESOLVER_TOKEN") or "").strip()
+
+
+@app.get("/internal/preview/resolve")
+async def internal_preview_resolve(request: Request, host: str | None = None) -> Response:
+    """Resolve a slug-based preview hostname to the concrete sandbox_id.
+
+    This endpoint is intended to be called by the in-cluster preview-router.
+    It is protected by a shared token header when PREVIEW_RESOLVER_TOKEN is set.
+
+    Response:
+    - 200 with header `X-Amicable-Sandbox-Id: <sandbox_id>`
+    - 404 if no project/sandbox mapping is available
+    """
+    expected = _preview_resolver_token()
+    if expected:
+        got = (request.headers.get("x-amicable-preview-token") or "").strip()
+        if got != expected:
+            return Response(status_code=403)
+
+    raw_host = (host or request.headers.get("host") or "").strip().lower()
+    if not raw_host:
+        return Response(status_code=400)
+
+    # Extract the first DNS label (slug) from "<label>.<base-domain>".
+    label = raw_host.split(".", 1)[0].strip()
+    if not label:
+        return Response(status_code=404)
+    if not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?", label):
+        return Response(status_code=404)
+
+    # If the label isn't a project slug, it may still be a direct sandbox_id
+    # (e.g. older hashed hostnames). In that case, route directly.
+    try:
+        from src.sandbox_backends.k8s_backend import K8sAgentSandboxBackend
+
+        k8s = K8sAgentSandboxBackend()
+        if not _hasura_enabled():
+            if k8s._claim_exists(label):
+                return Response(
+                    status_code=200, headers={"X-Amicable-Sandbox-Id": label}
+                )
+            return Response(status_code=404)
+    except Exception:
+        k8s = None  # type: ignore[assignment]
+
+    from src.db.provisioning import hasura_client_from_env
+    from src.projects.store import get_project_by_slug_any_owner, set_project_sandbox_id_any_owner
+
+    client = hasura_client_from_env()
+    p = get_project_by_slug_any_owner(client, slug=label)
+    if p is None:
+        # Not a known slug; if k8s is available, allow direct sandbox ids.
+        if k8s is not None:
+            try:
+                if k8s._claim_exists(label):
+                    return Response(
+                        status_code=200, headers={"X-Amicable-Sandbox-Id": label}
+                    )
+            except Exception:
+                pass
+        return Response(status_code=404)
+
+    # Prefer the persisted sandbox_id (stable across slug changes).
+    sandbox_id = (p.sandbox_id or "").strip()
+    if not sandbox_id:
+        # Fallback: pick an existing claim name based on current conventions.
+        from src.sandbox_backends.k8s_backend import _dns_safe_claim_name, K8sAgentSandboxBackend
+
+        slug_candidate = _dns_safe_claim_name(p.project_id, slug=p.slug)
+        hash_candidate = _dns_safe_claim_name(p.project_id, slug=None)
+
+        try:
+            k8s = K8sAgentSandboxBackend()
+            if k8s._claim_exists(slug_candidate):
+                sandbox_id = slug_candidate
+            elif k8s._claim_exists(hash_candidate):
+                sandbox_id = hash_candidate
+            else:
+                sandbox_id = hash_candidate
+        except Exception:
+            # If k8s API isn't available, fall back deterministically.
+            sandbox_id = hash_candidate
+
+        # Best-effort persist for future fast-path.
+        try:
+            set_project_sandbox_id_any_owner(
+                client, project_id=p.project_id, sandbox_id=sandbox_id
+            )
+        except Exception:
+            pass
+
+    return Response(status_code=200, headers={"X-Amicable-Sandbox-Id": sandbox_id})
+
+
 @app.get("/api/projects")
 async def api_list_projects(request: Request) -> JSONResponse:
     if not _hasura_enabled():

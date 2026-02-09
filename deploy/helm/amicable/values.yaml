@@ -162,6 +162,8 @@ agent:
     # Whether Git sync is required. In production: "1". For local dev: "0".
     gitSyncRequired: "1"
     # Additional env vars passed directly to the agent container.
+    # Preview router resolver (optional but recommended):
+    #   PREVIEW_RESOLVER_TOKEN: "<shared-token>"
     # Example (Google OAuth):
     #   AUTH_MODE: "google"
     #   PUBLIC_BASE_URL: "https://amicable-agent.data.mayflower.zone"
