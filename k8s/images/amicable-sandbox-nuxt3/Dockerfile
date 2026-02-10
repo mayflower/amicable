@@ -12,12 +12,15 @@ RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 # Bake the workspace template into /app.
 WORKDIR /app
 ENV CI=1
+# nuxi init can prompt for module browsing; passing an explicit modules list
+# avoids any interactive prompt and keeps docker builds deterministic.
 RUN npx -y nuxi@latest init /app \
   --template minimal \
-  --package-manager npm \
+  --packageManager npm \
   --no-install \
-  --no-git-init \
+  --no-gitInit \
   --force \
+  --modules= \
   && npm install \
   && npm install @nuxtjs/tailwindcss
 
