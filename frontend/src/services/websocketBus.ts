@@ -15,6 +15,7 @@ export class WebSocketBus {
   private ws: WebSocket | null = null;
   private config: WebSocketBusConfig;
   private isReady = false;
+  private disposed = false;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
@@ -135,7 +136,7 @@ export class WebSocketBus {
     );
 
     setTimeout(() => {
-      if (!this.isReady) {
+      if (!this.isReady && !this.disposed) {
         this.connect().catch((error) => {
           console.error("Reconnect failed:", error);
         });
@@ -221,6 +222,7 @@ export class WebSocketBus {
   }
 
   public disconnect(): void {
+    this.disposed = true;
     if (this.ws) {
       this.ws.close(1000, "Client disconnect");
       this.ws = null;

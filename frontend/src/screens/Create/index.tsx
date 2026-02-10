@@ -284,38 +284,27 @@ const Create = () => {
       }
 
       setMessages((prev) => {
-        if (id) {
-          const existingIndex = prev.findIndex((msg) => msg.id === id);
-          if (existingIndex !== -1) {
-            // Update in place
-            return prev.map((msg, idx) =>
-              idx === existingIndex
-                ? {
-                    ...msg,
-                    timestamp: message.timestamp || msg.timestamp,
-                    data: {
-                      ...msg.data,
-                      text: "Workspace loaded! You can now make edits here.",
-                      sender: Sender.ASSISTANT,
-                    },
-                  }
-                : msg
-            );
-          }
-        }
-        // Insert new
-        return [
-          ...prev,
-          {
-            ...message,
-            timestamp: message.timestamp || Date.now(),
-            data: {
-              ...message.data,
-              text: "Workspace loaded! You can now make edits here.",
-              sender: Sender.ASSISTANT,
-            },
+        // Only show one "Workspace loaded!" message — update in place on reconnect.
+        const existingInitIndex = prev.findIndex(
+          (msg) =>
+            msg.type === MessageType.INIT ||
+            msg.data?.text === "Workspace loaded! You can now make edits here."
+        );
+        const entry = {
+          ...message,
+          timestamp: message.timestamp || Date.now(),
+          data: {
+            ...message.data,
+            text: "Workspace loaded! You can now make edits here.",
+            sender: Sender.ASSISTANT,
           },
-        ];
+        };
+        if (existingInitIndex !== -1) {
+          return prev.map((msg, idx) =>
+            idx === existingInitIndex ? { ...msg, ...entry } : msg
+          );
+        }
+        return [...prev, entry];
       });
       setInitCompleted(true);
 
