@@ -853,22 +853,40 @@ const Create = () => {
   }, [isChatResizing, chatWidth]);
 
   const handleSendMessage = () => {
-    if (inputValue.trim()) {
-      send(MessageType.USER, { text: inputValue });
-      setInputValue("");
-      setMessages((prev) => [
-        ...prev,
-        {
-          type: MessageType.USER,
-          timestamp: Date.now(),
-          data: {
-            text: inputValue,
-            sender: Sender.USER,
-          },
-          session_id: resolvedSessionId || undefined,
+    if (!inputValue.trim()) return;
+    const text = inputValue;
+    send(MessageType.USER, { text });
+    setInputValue("");
+    setMessages((prev) => [
+      ...prev,
+      {
+        type: MessageType.USER,
+        timestamp: Date.now(),
+        data: {
+          text,
+          sender: Sender.USER,
         },
-      ]);
-    }
+        session_id: resolvedSessionId || undefined,
+      },
+    ]);
+  };
+
+  const sendUserMessage = (text: string) => {
+    const t = (text || "").trim();
+    if (!t) return;
+    send(MessageType.USER, { text: t });
+    setMessages((prev) => [
+      ...prev,
+      {
+        type: MessageType.USER,
+        timestamp: Date.now(),
+        data: {
+          text: t,
+          sender: Sender.USER,
+        },
+        session_id: resolvedSessionId || undefined,
+      },
+    ]);
   };
 
   const renderUiBlocks = (blocks: JsonObject[] | undefined) => {
@@ -1584,6 +1602,7 @@ const Create = () => {
               <CodePane
                 projectId={resolvedSessionId}
                 agentTouchedPath={agentTouchedPath}
+                onSendUserMessage={sendUserMessage}
               />
             ) : (
               <div style={{ padding: 16 }}>Loading project...</div>

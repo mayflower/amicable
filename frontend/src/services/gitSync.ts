@@ -19,6 +19,25 @@ export type GitSyncResponse = {
   detail?: string;
 };
 
+export type GitStatusResponse = {
+  remote_sha: string | null;
+  local_sha: string | null;
+  ahead: boolean;
+  baseline_present: boolean;
+  conflicts_pending: boolean;
+  error?: string;
+  detail?: string;
+};
+
+export type GitPullResponse = {
+  updated: boolean;
+  remote_sha: string | null;
+  applied: { added: string[]; modified: string[]; deleted: string[] };
+  conflicts: { path: string; remote_shadow_path: string; remote_sha: string }[];
+  error?: string;
+  detail?: string;
+};
+
 export const projectGitSync = async (
   projectId: string,
   args?: { commit_message?: string }
@@ -36,3 +55,31 @@ export const projectGitSync = async (
   return data as GitSyncResponse;
 };
 
+export const projectGitStatus = async (
+  projectId: string
+): Promise<GitStatusResponse> => {
+  const url = agentUrl(
+    `/api/projects/${encodeURIComponent(projectId)}/git/status`
+  );
+  const res = await fetch(url, { credentials: "include" });
+  const data = await readJson(res);
+  if (!res.ok)
+    throw Object.assign(new Error("git_status_failed"), { status: res.status, data });
+  return data as GitStatusResponse;
+};
+
+export const projectGitPull = async (
+  projectId: string
+): Promise<GitPullResponse> => {
+  const url = agentUrl(`/api/projects/${encodeURIComponent(projectId)}/git/pull`);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({}),
+  });
+  const data = await readJson(res);
+  if (!res.ok)
+    throw Object.assign(new Error("git_pull_failed"), { status: res.status, data });
+  return data as GitPullResponse;
+};

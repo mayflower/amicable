@@ -15,7 +15,13 @@ import { Tree, type NodeApi, type NodeRendererProps } from "react-arborist";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { projectGitSync } from "@/services/gitSync";
+import {
+  projectGitPull,
+  projectGitStatus,
+  projectGitSync,
+  type GitPullResponse,
+  type GitStatusResponse,
+} from "@/services/gitSync";
 import {
   sandboxCreate,
   sandboxLs,
@@ -117,10 +123,12 @@ export const CodePane = ({
   projectId,
   onOpenFile,
   agentTouchedPath,
+  onSendUserMessage,
 }: {
   projectId: string;
   onOpenFile?: (path: string) => void;
   agentTouchedPath?: string | null;
+  onSendUserMessage?: (text: string) => void;
 }) => {
   const [treeData, setTreeData] = useState<FileNode[]>([]);
   const [treeSelectedPath, setTreeSelectedPath] = useState<string | null>(null);
@@ -142,6 +150,12 @@ export const CodePane = ({
   const [dirty, setDirty] = useState<boolean>(false);
   const [saveStatus, setSaveStatus] = useState<string>("");
   const [gitStatus, setGitStatus] = useState<string>("");
+  const [gitRemoteSha, setGitRemoteSha] = useState<string | null>(null);
+  const [gitLocalSha, setGitLocalSha] = useState<string | null>(null);
+  const [gitAhead, setGitAhead] = useState<boolean>(false);
+  const [gitBaselinePresent, setGitBaselinePresent] = useState<boolean>(false);
+  const [gitConflictsPending, setGitConflictsPending] = useState<boolean>(false);
+  const [gitPullResult, setGitPullResult] = useState<GitPullResponse | null>(null);
   const [conflict, setConflict] = useState<boolean>(false);
 
   const { ref: treeWrapRef, height: treeHeight } = useElementHeight();
@@ -242,7 +256,33 @@ export const CodePane = ({
     syncPendingRef.current = false;
     syncPendingCommitMsgRef.current = null;
     setGitStatus("");
+    setGitRemoteSha(null);
+    setGitLocalSha(null);
+    setGitAhead(false);
+    setGitBaselinePresent(false);
+    setGitConflictsPending(false);
+    setGitPullResult(null);
   }, [projectId]);
+
+  const gitStatusReqIdRef = useRef(0);
+  const refreshGitStatus = useCallback(async () => {
+    const reqId = ++gitStatusReqIdRef.current;
+    try {
+      const r: GitStatusResponse = await projectGitStatus(projectId);
+      if (reqId !== gitStatusReqIdRef.current) return;
+      setGitRemoteSha(typeof r.remote_sha === "string" ? r.remote_sha : null);
+      setGitLocalSha(typeof r.local_sha === "string" ? r.local_sha : null);
+      setGitAhead(!!r.ahead);
+      setGitBaselinePresent(!!r.baseline_present);
+      setGitConflictsPending(!!r.conflicts_pending);
+    } catch {
+      // Best-effort only; status endpoint may be unavailable in dev setups.
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    void refreshGitStatus();
+  }, [refreshGitStatus]);
 
   const startGitSync = useCallback(async (commitMessage?: string) => {
     if (syncRunningRef.current) {
@@ -262,6 +302,7 @@ export const CodePane = ({
           : null;
       setGitStatus(shaShort ? `Synced (${shaShort})` : "Synced");
       setTimeout(() => setGitStatus(""), 2500);
+      void refreshGitStatus();
     } catch (e: unknown) {
       const status = asErrorWithStatus(e).status;
       setGitStatus(
@@ -276,7 +317,48 @@ export const CodePane = ({
         void startGitSync(msg);
       }
     }
-  }, [projectId]);
+  }, [projectId, refreshGitStatus]);
+
+  const softRefreshTree = useCallback(() => {
+    // Keep editor state; only reset the lazy-loaded tree so users see new files.
+    setTreeData(rootNodes);
+  }, [rootNodes]);
+
+  const updateFromGit = useCallback(async () => {
+    setGitPullResult(null);
+    setGitStatus("Updating from Git...");
+    try {
+      const r = await projectGitPull(projectId);
+      setGitPullResult(r);
+      const shaShort =
+        typeof r.remote_sha === "string" && r.remote_sha
+          ? r.remote_sha.slice(0, 8)
+          : null;
+      if (!r.updated) {
+        setGitStatus("Already up to date");
+        setTimeout(() => setGitStatus(""), 2000);
+      } else {
+        setGitStatus(shaShort ? `Updated (${shaShort})` : "Updated");
+        setTimeout(() => setGitStatus(""), 2500);
+      }
+      softRefreshTree();
+
+      // If the active file was updated from git and the user has no local edits,
+      // reload it so they see the new version.
+      const modified = r?.applied?.modified || [];
+      if (!dirty && activePath && modified.includes(activePath)) {
+        await openFile(activePath);
+      }
+      void refreshGitStatus();
+    } catch (e: unknown) {
+      const status = asErrorWithStatus(e).status;
+      if (status === 409) {
+        setGitStatus("Cannot update yet: baseline missing. Sync to Git once first.");
+        return;
+      }
+      setGitStatus(`Git update failed${status ? ` (HTTP ${status})` : ""}`);
+    }
+  }, [projectId, softRefreshTree, dirty, activePath, openFile, refreshGitStatus]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -484,6 +566,26 @@ export const CodePane = ({
           <Button
             size="sm"
             variant="outline"
+            onClick={() => void updateFromGit()}
+            title={
+              [
+                gitBaselinePresent
+                  ? gitAhead
+                    ? "Remote has new commits"
+                    : "Up to date"
+                  : "Baseline missing (sync to Git once first)",
+                gitRemoteSha ? `remote: ${gitRemoteSha.slice(0, 8)}` : null,
+                gitLocalSha ? `local: ${gitLocalSha.slice(0, 8)}` : null,
+              ]
+                .filter(Boolean)
+                .join(" • ")
+            }
+          >
+            Update from Git{gitAhead ? " *" : ""}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
             onClick={() => createInDir(selectedDirForCreate, "file")}
             title="New file"
           >
@@ -523,6 +625,70 @@ export const CodePane = ({
           {gitStatus}
         </div>
       </div>
+
+      {gitConflictsPending || (gitPullResult?.conflicts?.length ?? 0) > 0 ? (
+        <div
+          className="border-b"
+          style={{
+            padding: "8px 10px",
+            display: "flex",
+            gap: 10,
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: "rgba(255, 165, 0, 0.08)",
+          }}
+        >
+          <div style={{ fontSize: 12, overflow: "hidden" }}>
+            Git conflicts pending
+            {(gitPullResult?.remote_sha && typeof gitPullResult.remote_sha === "string")
+              ? ` (remote ${gitPullResult.remote_sha.slice(0, 8)})`
+              : ""}
+            :{" "}
+            {(gitPullResult?.conflicts || [])
+              .slice(0, 3)
+              .map((c) => c.path)
+              .join(", ")}
+            {(gitPullResult?.conflicts || []).length > 3 ? "…" : ""}
+          </div>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                const conflicts = gitPullResult?.conflicts || [];
+                const remoteSha = gitPullResult?.remote_sha || gitRemoteSha;
+                if (!remoteSha || !conflicts.length) {
+                  setGitStatus("No conflict details available yet. Click Update from Git.");
+                  return;
+                }
+                const lines = conflicts
+                  .map(
+                    (c) =>
+                      `- ${c.path} (remote: ${c.remote_shadow_path})`
+                  )
+                  .join("\n");
+                const prompt = [
+                  `I pulled commit ${remoteSha} from Git, but these files conflict with local sandbox changes.`,
+                  "",
+                  "For each path, compare the current sandbox file with the remote shadow file and merge:",
+                  lines,
+                  "",
+                  "Write the merged result back to the original path, then sync to Git.",
+                ].join("\n");
+                onSendUserMessage?.(prompt);
+              }}
+              disabled={!onSendUserMessage}
+              title={
+                onSendUserMessage
+                  ? "Ask the agent to merge the conflicted files"
+                  : "Unavailable (missing chat callback)"
+              }
+            >
+              Ask agent to merge conflicts
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       {conflict && activePath ? (
         <div

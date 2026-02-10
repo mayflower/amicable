@@ -69,6 +69,8 @@ _DEFAULT_EXCLUDES = [
     # PHP/Laravel dependencies are large and should not be committed.
     "vendor/",
     ".git/",
+    # Sandbox-local state (not part of the repo).
+    ".amicable/",
     "dist/",
     "build/",
     ".vite/",
@@ -88,7 +90,12 @@ def git_sync_excludes() -> list[str]:
     if not raw:
         return list(_DEFAULT_EXCLUDES)
     parts = [p.strip() for p in raw.split(",") if p.strip()]
-    return parts or list(_DEFAULT_EXCLUDES)
+    out = parts or list(_DEFAULT_EXCLUDES)
+
+    # Always exclude sandbox-local state even if AMICABLE_GIT_SYNC_EXCLUDES is set.
+    if not any(p.rstrip("/").lstrip("/") == ".amicable" for p in out):
+        out.append(".amicable/")
+    return out
 
 
 def git_commit_author_name() -> str:

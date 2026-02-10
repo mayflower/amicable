@@ -95,6 +95,8 @@ def test_sync_tree_excludes_and_writes_files(monkeypatch, tmp_path):
     subprocess.run(
         ["git", "clone", str(bare), str(work)], check=True, capture_output=True
     )
+    _git(["checkout", "main"], cwd=str(work))
+    assert sha == _git(["rev-parse", "HEAD"], cwd=str(work))
     assert (work / "README.md").read_bytes() == b"hello\n"
     assert not (work / ".env").exists()
     assert not (work / "node_modules").exists()

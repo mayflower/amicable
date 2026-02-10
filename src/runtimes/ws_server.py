@@ -39,6 +39,7 @@ _agent: Agent | None = None
 logger = logging.getLogger(__name__)
 
 _bootstrap_lock_by_project: dict[str, asyncio.Lock] = {}
+_git_pull_lock_by_project: dict[str, asyncio.Lock] = {}
 
 _naming_llm: Any = None
 
@@ -671,6 +672,159 @@ async def api_git_sync_project(project_id: str, request: Request) -> JSONRespons
             },
             status_code=200,
         )
+
+
+@app.get("/api/projects/{project_id}/git/status")
+async def api_git_status_project(project_id: str, request: Request) -> JSONResponse:
+    if not _hasura_enabled():
+        return JSONResponse({"error": "hasura_not_configured"}, status_code=400)
+    try:
+        sub, email = _get_owner_from_request(request)
+    except PermissionError:
+        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+
+    from src.gitlab.config import git_sync_branch, git_sync_enabled
+
+    if not git_sync_enabled():
+        return JSONResponse({"error": "git_sync_disabled"}, status_code=409)
+
+    from src.db.provisioning import hasura_client_from_env
+    from src.gitlab.integration import ensure_gitlab_repo_for_project
+    from src.projects.store import ProjectOwner, get_project_by_id
+
+    client = hasura_client_from_env()
+    owner = ProjectOwner(sub=sub, email=email)
+    project = get_project_by_id(client, owner=owner, project_id=str(project_id))
+    if not project:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+
+    try:
+        project, git = ensure_gitlab_repo_for_project(
+            client, owner=owner, project=project
+        )
+    except Exception as e:
+        return JSONResponse({"error": "gitlab_error", "detail": str(e)}, status_code=502)
+
+    repo_url = None
+    if isinstance(git, dict):
+        repo_url = git.get("http_url_to_repo") or git.get("repo_http_url")
+    if not isinstance(repo_url, str) or not repo_url.strip():
+        return JSONResponse({"error": "missing_repo_url"}, status_code=400)
+
+    branch = git_sync_branch()
+    try:
+        from src.gitlab.sync import get_remote_head_sha
+
+        remote_sha = await asyncio.to_thread(
+            get_remote_head_sha, repo_http_url=str(repo_url), branch=str(branch)
+        )
+    except Exception as e:
+        return JSONResponse({"error": "git_remote_status_failed", "detail": str(e)}, status_code=502)
+
+    agent = _get_agent()
+    await agent.init(
+        session_id=str(project_id),
+        template_id=getattr(project, "template_id", None),
+        slug=getattr(project, "slug", None),
+    )
+    assert agent._session_manager is not None
+    backend = agent._session_manager.get_backend(str(project_id))
+
+    from src.gitlab.sync import _read_git_state
+
+    state = await asyncio.to_thread(_read_git_state, backend)
+    local_sha = None
+    conflicts_pending = False
+    if isinstance(state, dict):
+        v = state.get("remote_head_sha")
+        if isinstance(v, str) and v.strip():
+            local_sha = v.strip()
+        conflicts = state.get("conflicts")
+        if isinstance(conflicts, list) and conflicts:
+            conflicts_pending = True
+
+    baseline_present = bool(local_sha)
+    ahead = bool(baseline_present and remote_sha and (remote_sha != local_sha))
+    return JSONResponse(
+        {
+            "remote_sha": remote_sha,
+            "local_sha": local_sha,
+            "ahead": ahead,
+            "baseline_present": baseline_present,
+            "conflicts_pending": bool(conflicts_pending),
+        },
+        status_code=200,
+    )
+
+
+@app.post("/api/projects/{project_id}/git/pull")
+async def api_git_pull_project(project_id: str, request: Request) -> JSONResponse:
+    if not _hasura_enabled():
+        return JSONResponse({"error": "hasura_not_configured"}, status_code=400)
+    try:
+        sub, email = _get_owner_from_request(request)
+    except PermissionError:
+        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+
+    from src.gitlab.config import git_sync_enabled
+
+    if not git_sync_enabled():
+        return JSONResponse({"error": "git_sync_disabled"}, status_code=409)
+
+    from src.db.provisioning import hasura_client_from_env
+    from src.gitlab.integration import ensure_gitlab_repo_for_project
+    from src.projects.store import ProjectOwner, get_project_by_id
+
+    client = hasura_client_from_env()
+    owner = ProjectOwner(sub=sub, email=email)
+    project = get_project_by_id(client, owner=owner, project_id=str(project_id))
+    if not project:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+
+    try:
+        project, git = ensure_gitlab_repo_for_project(
+            client, owner=owner, project=project
+        )
+    except Exception as e:
+        return JSONResponse({"error": "gitlab_error", "detail": str(e)}, status_code=502)
+
+    repo_url = None
+    if isinstance(git, dict):
+        repo_url = git.get("http_url_to_repo") or git.get("repo_http_url")
+    if not isinstance(repo_url, str) or not repo_url.strip():
+        return JSONResponse({"error": "missing_repo_url"}, status_code=400)
+
+    agent = _get_agent()
+    await agent.init(
+        session_id=str(project_id),
+        template_id=getattr(project, "template_id", None),
+        slug=getattr(project, "slug", None),
+    )
+    assert agent._session_manager is not None
+    backend = agent._session_manager.get_backend(str(project_id))
+
+    lock = _git_pull_lock_by_project.get(str(project_id))
+    if lock is None:
+        lock = asyncio.Lock()
+        _git_pull_lock_by_project[str(project_id)] = lock
+
+    from src.gitlab.sync import sync_repo_tree_to_sandbox
+
+    async with lock:
+        result = await asyncio.to_thread(
+            sync_repo_tree_to_sandbox,
+            backend,
+            repo_http_url=str(repo_url),
+            project_slug=(str(getattr(project, "slug", "") or "")).strip() or str(project_id),
+        )
+
+    if isinstance(result, dict) and result.get("error") == "git_pull_no_baseline":
+        return JSONResponse(
+            {"error": "git_pull_no_baseline", "remote_sha": result.get("remote_sha")},
+            status_code=409,
+        )
+
+    return JSONResponse(result if isinstance(result, dict) else {}, status_code=200)
 
 
 @app.delete("/api/projects/{project_id}")
