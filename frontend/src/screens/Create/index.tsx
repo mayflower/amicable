@@ -135,6 +135,8 @@ const Create = () => {
   const [iframeError, setIframeError] = useState(false);
   const [iframeReady, setIframeReady] = useState(false);
   const [isUpdateInProgress, setIsUpdateInProgress] = useState(false);
+  // Small bottom status line: driven by UPDATE_FILE messages.
+  const [agentStatusText, setAgentStatusText] = useState<string>("");
   const [initCompleted, setInitCompleted] = useState(false);
   const [sandboxExists, setSandboxExists] = useState(false);
   const [pendingHitl, setPendingHitl] = useState<{
@@ -421,6 +423,7 @@ const Create = () => {
 
     [MessageType.UPDATE_IN_PROGRESS]: (message: Message) => {
       setIsUpdateInProgress(true);
+      setAgentStatusText("");
 
       const id = message.id;
 
@@ -465,6 +468,8 @@ const Create = () => {
         console.warn("UPDATE_FILE message missing id, ignoring:", message);
         return;
       }
+      const t = typeof message.data?.text === "string" ? message.data.text : "";
+      if (t.trim()) setAgentStatusText(t);
       setMessages((prev) => {
         const existingIndex = prev.findIndex((msg) => msg.id === id);
         if (existingIndex !== -1) {
@@ -502,6 +507,7 @@ const Create = () => {
 
     [MessageType.UPDATE_COMPLETED]: (message: Message) => {
       setIsUpdateInProgress(false);
+      setAgentStatusText("");
       const id = message.id;
       setMessages((prev) => {
         const filtered = prev;
@@ -751,7 +757,7 @@ const Create = () => {
       if (!assistantMsgId || haveIds.has(assistantMsgId)) continue;
 
       // Find earliest trace timestamp for this assistant id.
-      let ts = Date.now();
+      let ts = Number.POSITIVE_INFINITY;
       for (const m of messages) {
         if (m.type !== MessageType.TRACE_EVENT) continue;
         const a =
@@ -760,6 +766,7 @@ const Create = () => {
         const mts = typeof m.timestamp === "number" ? m.timestamp : ts;
         ts = Math.min(ts, mts);
       }
+      if (!Number.isFinite(ts)) ts = 0;
 
       placeholders.push({
         type: MessageType.AGENT_PARTIAL,
@@ -1977,6 +1984,24 @@ const Create = () => {
           {pendingHitl ? (
             <div style={{ marginBottom: 12 }}>
               <HitlPanel />
+            </div>
+          ) : null}
+          {agentStatusText.trim() ? (
+            <div
+              className="w-full border rounded-md"
+              style={{
+                padding: "10px 12px",
+                marginBottom: 12,
+                background: "rgba(255,255,255,0.06)",
+                borderColor: "rgba(255,255,255,0.12)",
+              }}
+            >
+              <div className="text-xs text-muted-foreground" style={{ fontWeight: 600 }}>
+                Agent status
+              </div>
+              <div className="text-sm" style={{ marginTop: 4, whiteSpace: "pre-wrap" }}>
+                {agentStatusText}
+              </div>
             </div>
           ) : null}
           <Input
