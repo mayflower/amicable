@@ -62,6 +62,8 @@ def git_sync_cache_dir() -> str:
 
 _DEFAULT_EXCLUDES = [
     "node_modules/",
+    # PHP/Laravel dependencies are large and should not be committed.
+    "vendor/",
     ".git/",
     "dist/",
     "build/",
@@ -69,6 +71,9 @@ _DEFAULT_EXCLUDES = [
     ".cache/",
     ".turbo/",
     "coverage/",
+    # Laravel runtime artifacts (logs, caches, uploaded files).
+    "storage/",
+    "bootstrap/cache/",
     ".env",
     ".env.*",
 ]

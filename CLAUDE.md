@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md / CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents (Claude Code/Codex) when working with code in this repository.
 
 ## Project Summary
 
@@ -29,7 +29,12 @@ npm run lint                        # ESLint
 ```
 
 ### Docker images (CI builds via GitHub Actions)
-Three images: `amicable-agent`, `amicable-sandbox`, `amicable-editor`. Dockerfiles are in `k8s/images/`. CI workflow: `.github/workflows/build-images.yml`.
+Images (built/published via GitHub Actions) live under `k8s/images/`:
+- Agent: `amicable-agent`
+- Editor: `amicable-editor`
+- Sandbox runtimes/templates: `amicable-sandbox`, `amicable-sandbox-lovable-vite`, `amicable-sandbox-nextjs15`, `amicable-sandbox-remix`, `amicable-sandbox-nuxt3`, `amicable-sandbox-sveltekit`, `amicable-sandbox-fastapi`, `amicable-sandbox-hono`, `amicable-sandbox-laravel`
+
+CI workflow: `.github/workflows/build-images.yml`.
 
 ## Architecture
 
@@ -38,9 +43,11 @@ Browser (Editor SPA)
     ↓ WebSocket
 Agent (FastAPI/Uvicorn)
     ↓ HTTP (cluster DNS)
+Preview Router (nginx, optional; wildcard subdomain)
+    ↓ HTTP (cluster DNS)
 Sandbox Pod (K8s SandboxClaim)
     ├─ Runtime API :8888 (file I/O + shell exec)
-    └─ Vite Dev Server :3000 (live preview)
+    └─ Preview Server :3000 (live preview)
 ```
 
 ### Key source paths
@@ -53,8 +60,11 @@ Sandbox Pod (K8s SandboxClaim)
 - `src/deepagents_backend/policy.py` — deny-list security wrapper (path + command filtering, audit logs)
 - `src/deepagents_backend/dangerous_ops_hitl.py` — HITL for destructive shell deletes
 - `src/deepagents_backend/dangerous_db_hitl.py` — HITL for destructive DB operations (drop/truncate)
+- `src/deepagents_backend/tool_journal.py` — lightweight tool audit log (used for Git commit messages and UI tool-run timelines)
 - `src/sandbox_backends/k8s_backend.py` — K8s SandboxClaim lifecycle (create/wait/URL)
-- `k8s/images/amicable-sandbox/runtime.py` — sandbox runtime API (POST /exec, POST /write_b64, GET /download)
+- `k8s/images/amicable-sandbox/runtime.py` — sandbox runtime API (`/exec`, `/execute`, `/write_b64`, `/download`, `/download_many`, `/list`, `/manifest`)
+- `src/projects/store.py` — project metadata (Hasura-backed), slugging, sandbox_id/template_id persistence
+- `src/templates/registry.py` — template registry (`template_id` → K8s SandboxTemplate name, DB injection strategy)
 - `frontend/src/screens/Create/index.tsx` — main editor screen
 - `frontend/src/hooks/useMessageBus.ts` — WebSocket connection management
 - `frontend/src/services/websocketBus.ts` — WebSocket transport
@@ -71,18 +81,21 @@ The outer LangGraph in `controller_graph.py` orchestrates:
 1. `deepagents_edit` — runs DeepAgents to implement changes
 2. `qa_validate` — reads `/app/package.json` from sandbox, runs available npm scripts (`lint`, `typecheck`, `build`)
 3. On failure: `self_heal_message` injects QA output as a new prompt, loops back to step 1
-4. Exits after max rounds with failure summary
+4. `git_sync` — exports sandbox tree, commits, and (optionally) pushes to GitLab; can be required in production (`AMICABLE_GIT_SYNC_REQUIRED=1`)
+5. Exits after max rounds with failure summary (and still attempts `git_sync` so failures are persisted for debugging)
 
 ### WebSocket message protocol
 
 Messages are JSON: `{ "type": "<type>", "data": {...}, "id": "...", "session_id": "..." }`.
-Key types: `init`, `user`, `agent_partial`, `agent_final`, `update_file`, `update_in_progress`, `update_completed`, `load_code`, `ping`.
-Trace types: `trace_event` (tool start/end/error, optional tool explanations, and a sidecar reasoning summary).
+Key types: `init`, `user`, `agent_partial`, `agent_final`, `update_file`, `update_in_progress`, `update_completed`, `load_code`, `ping`, `error`.
+Trace types: `trace_event` (tool start/end/error, optional tool explanations, and an optional `assistant_msg_id` to associate tool runs with a specific assistant message).
 HITL types: `hitl_request`, `hitl_response`.
 
 ### Sandbox naming
 
-SandboxClaim names are deterministic: `amicable-<sha256(session_id)[:8]>`. Preview URLs: `https://<claim>.<PREVIEW_BASE_DOMAIN>/`.
+SandboxClaim names prefer a human-readable project slug when available (K8s DNS label rules enforced), otherwise fall back to a deterministic hash: `amicable-<sha256(session_id)[:8]>`.
+
+Preview URLs are generally `https://<sandbox_id>.<PREVIEW_BASE_DOMAIN>/`. In cluster installs, an optional preview-router can front the wildcard domain and resolve `<slug>.<PREVIEW_BASE_DOMAIN>` to a concrete `sandbox_id` via the agent endpoint `GET /internal/preview/resolve`.
 
 ## Configuration
 
@@ -94,6 +107,8 @@ SandboxClaim names are deterministic: `amicable-<sha256(session_id)[:8]>`. Previ
 - `CORS_ALLOW_ORIGINS`, `AUTH_REDIRECT_ALLOW_ORIGINS` — allowlists
 - `K8S_SANDBOX_NAMESPACE`, `K8S_SANDBOX_TEMPLATE_NAME`
 - `PREVIEW_BASE_DOMAIN`, `PREVIEW_SCHEME`
+- `PREVIEW_RESOLVER_TOKEN` — optional shared token for the in-cluster preview-router → agent resolver (`/internal/preview/resolve`)
+- `AMICABLE_TEMPLATE_K8S_TEMPLATE_MAP_JSON` — optional JSON map of `template_id` → K8s SandboxTemplate name (override defaults)
 - `DEEPAGENTS_QA`, `DEEPAGENTS_QA_TIMEOUT_S`, `DEEPAGENTS_QA_COMMANDS`, `DEEPAGENTS_QA_RUN_TESTS`
 - `DEEPAGENTS_SELF_HEAL_MAX_ROUNDS` (default 2)
 - `DEEPAGENTS_MEMORY_SOURCES` (default `"/AGENTS.md,/.deepagents/AGENTS.md"`)
@@ -122,6 +137,7 @@ SandboxClaim names are deterministic: `amicable-<sha256(session_id)[:8]>`. Previ
 
 ### Frontend env vars
 - `VITE_AGENT_WS_URL` — agent WebSocket URL
+- `VITE_AGENT_HTTP_URL` (optional; derived from WS URL if unset)
 - `VITE_AGENT_TOKEN` — auth token (optional; not needed with Google OAuth)
 - Runtime override via `window.__AMICABLE_CONFIG__` in `frontend/public/config.js`
 
@@ -130,6 +146,7 @@ SandboxClaim names are deterministic: `amicable-<sha256(session_id)[:8]>`. Previ
 - `GITLAB_GROUP_PATH` (default `amicable`)
 - `GITLAB_TOKEN` (required)
 - `AMICABLE_GIT_SYNC_ENABLED` (default: enabled iff `GITLAB_TOKEN` is set)
+- `AMICABLE_GIT_SYNC_REQUIRED` (default `true`) — if enabled, missing/disabled Git sync is a hard error
 - `AMICABLE_GIT_SYNC_BRANCH` (default `main`)
 - `AMICABLE_GIT_SYNC_CACHE_DIR` (default `/tmp/amicable-git-cache`)
 - `AMICABLE_GIT_SYNC_EXCLUDES` (CSV override; defaults include `node_modules/`, `.env*`, build caches)

@@ -261,9 +261,9 @@ def rename_gitlab_repo_to_match_project_slug(
 
 
 def delete_gitlab_repo_for_project(
-    client,
+    _client,
     *,
-    owner: projects_store.ProjectOwner,
+    _owner: projects_store.ProjectOwner,
     project: projects_store.Project,
 ) -> None:
     """Delete the GitLab repo for a project.

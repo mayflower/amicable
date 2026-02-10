@@ -296,7 +296,10 @@ async def internal_preview_resolve(request: Request, host: str | None = None) ->
         k8s = None  # type: ignore[assignment]
 
     from src.db.provisioning import hasura_client_from_env
-    from src.projects.store import get_project_by_slug_any_owner, set_project_sandbox_id_any_owner
+    from src.projects.store import (
+        get_project_by_slug_any_owner,
+        set_project_sandbox_id_any_owner,
+    )
 
     client = hasura_client_from_env()
     p = get_project_by_slug_any_owner(client, slug=label)
@@ -316,7 +319,10 @@ async def internal_preview_resolve(request: Request, host: str | None = None) ->
     sandbox_id = (p.sandbox_id or "").strip()
     if not sandbox_id:
         # Fallback: pick an existing claim name based on current conventions.
-        from src.sandbox_backends.k8s_backend import _dns_safe_claim_name, K8sAgentSandboxBackend
+        from src.sandbox_backends.k8s_backend import (
+            K8sAgentSandboxBackend,
+            _dns_safe_claim_name,
+        )
 
         slug_candidate = _dns_safe_claim_name(p.project_id, slug=p.slug)
         hash_candidate = _dns_safe_claim_name(p.project_id, slug=None)
@@ -334,12 +340,10 @@ async def internal_preview_resolve(request: Request, host: str | None = None) ->
             sandbox_id = hash_candidate
 
         # Best-effort persist for future fast-path.
-        try:
+        with contextlib.suppress(Exception):
             set_project_sandbox_id_any_owner(
                 client, project_id=p.project_id, sandbox_id=sandbox_id
             )
-        except Exception:
-            pass
 
     return Response(status_code=200, headers={"X-Amicable-Sandbox-Id": sandbox_id})
 

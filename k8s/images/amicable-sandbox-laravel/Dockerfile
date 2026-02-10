@@ -25,6 +25,32 @@ ENV COMPOSER_ALLOW_SUPERUSER=1
 RUN composer create-project laravel/laravel /app \
   && npm install
 
+# Pre-wire Hasura DB proxy integration for the Laravel template.
+# The agent will overwrite /public/amicable-db.js with real credentials when Hasura is configured.
+RUN python3 - <<'PY'
+from pathlib import Path
+
+# Placeholder asset served at /amicable-db.js.
+db_js = Path("/app/public/amicable-db.js")
+if not db_js.exists():
+    db_js.write_text(
+        "window.__AMICABLE_DB__ = window.__AMICABLE_DB__ || null;\n",
+        encoding="utf-8",
+    )
+
+# Ensure the default welcome page includes the script tag (idempotent).
+welcome = Path("/app/resources/views/welcome.blade.php")
+if welcome.exists():
+    text = welcome.read_text(encoding="utf-8", errors="replace")
+    if "/amicable-db.js" not in text:
+        tag = '    <script src="/amicable-db.js"></script>\n'
+        if "</head>" in text:
+            text = text.replace("</head>", tag + "</head>", 1)
+        else:
+            text = text + "\n" + tag
+        welcome.write_text(text, encoding="utf-8")
+PY
+
 # Default DeepAgents memory/skills locations.
 COPY k8s/images/amicable-sandbox-laravel/AGENTS.md /app/AGENTS.md
 COPY k8s/images/amicable-sandbox-laravel/.deepagents/AGENTS.md /app/.deepagents/AGENTS.md

@@ -126,6 +126,7 @@ def _tuples_to_dicts(res: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _get_project_by_id_any_owner(client: HasuraClient, *, project_id: str) -> Project | None:
     ensure_projects_schema(client)
+    # Note: this helper intentionally filters out soft-deleted projects.
     res = client.run_sql(
         f"""
         SELECT project_id, owner_sub, owner_email, name, slug, sandbox_id, template_id,
@@ -155,6 +156,24 @@ def _get_project_by_id_any_owner(client: HasuraClient, *, project_id: str) -> Pr
         created_at=str(r.get("created_at")) if r.get("created_at") is not None else None,
         updated_at=str(r.get("updated_at")) if r.get("updated_at") is not None else None,
     )
+
+
+def _project_row_by_id_including_deleted(
+    client: HasuraClient, *, project_id: str
+) -> dict[str, Any] | None:
+    """Return raw project row (including deleted rows) for internal recovery logic."""
+    ensure_projects_schema(client)
+    res = client.run_sql(
+        f"""
+        SELECT project_id, owner_sub, owner_email, name, slug, deleted_at
+        FROM amicable_meta.projects
+        WHERE project_id = {_sql_str(project_id)}
+        LIMIT 1;
+        """.strip(),
+        read_only=True,
+    )
+    rows = _tuples_to_dicts(res)
+    return rows[0] if rows else None
 
 
 def get_project_any_owner(client: HasuraClient, *, project_id: str) -> Project | None:
@@ -434,6 +453,21 @@ def ensure_project_for_id(
         if existing.owner_sub != owner.sub:
             raise PermissionError("project belongs to a different user")
         return existing
+
+    # If a project row exists but was soft-deleted, resurrect it instead of failing
+    # with a misleading "failed to auto-create project" error.
+    row = _project_row_by_id_including_deleted(client, project_id=project_id)
+    if row and str(row.get("owner_sub") or "") == owner.sub and row.get("deleted_at") is not None:
+        client.run_sql(
+            f"""
+            UPDATE amicable_meta.projects
+            SET deleted_at = NULL, updated_at = now()
+            WHERE project_id = {_sql_str(project_id)} AND owner_sub = {_sql_str(owner.sub)};
+            """.strip()
+        )
+        revived = _get_project_by_id_any_owner(client, project_id=project_id)
+        if revived:
+            return revived
 
     short = project_id.replace("-", "")[:8]
     name = f"Untitled {short}"
