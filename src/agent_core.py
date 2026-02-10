@@ -392,10 +392,27 @@ class Agent:
 
         backend = None
 
+        # Poll the sandbox runtime API until it accepts connections. The K8s
+        # readiness probe should handle this, but a short retry here avoids
+        # races when the probe hasn't caught up yet.
+        try:
+            import time as _time
+
+            backend = self._session_manager.get_backend(session_id)
+            for _attempt in range(15):
+                try:
+                    backend.execute("true")
+                    break
+                except Exception:
+                    _time.sleep(1)
+        except Exception:
+            pass
+
         # Ensure the conventional memories directory exists inside the sandbox workspace.
         # (This is sandbox-local, not store-backed.)
         try:
-            backend = self._session_manager.get_backend(session_id)
+            if backend is None:
+                backend = self._session_manager.get_backend(session_id)
             backend.execute("cd /app && mkdir -p memories")
         except Exception:
             pass

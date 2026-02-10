@@ -28,6 +28,13 @@ spec:
             - name: preview
               containerPort: 3000
               protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8888
+            initialDelaySeconds: 1
+            periodSeconds: 2
+            failureThreshold: 15
           env:
             - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
               value: {{ ($t.additionalAllowedHosts | default $.Values.sandboxTemplate.additionalAllowedHosts) | quote }}
@@ -68,6 +75,13 @@ spec:
             - name: preview
               containerPort: 3000
               protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8888
+            initialDelaySeconds: 1
+            periodSeconds: 2
+            failureThreshold: 15
           env:
             - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
               value: {{ .Values.sandboxTemplate.additionalAllowedHosts | quote }}
