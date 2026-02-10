@@ -1,0 +1,15 @@
+{{- $agent := (index .Values "agent" | default dict) }}
+{{- $ingress := (index $agent "ingress" | default dict) }}
+{{- $traefik := (index $ingress "traefik" | default dict) }}
+{{- $forceHttp1 := (index $traefik "forceHttp1" | default dict) }}
+{{- if and .Values.agent.ingress.enabled (index $forceHttp1 "enabled" | default false) }}
+apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: {{ (index $forceHttp1 "tlsOptionName" | default "amicable-agent-http1") | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  # Disable HTTP/2 ALPN on this host so browser WebSockets can negotiate HTTP/1.1.
+  alpnProtocols:
+    - http/1.1
+{{- end }}

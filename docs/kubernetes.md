@@ -48,6 +48,10 @@ You need an ingress controller that supports:
 `ingress-nginx` works well.
 Traefik also works well (and is used in Mayflower `data-cluster`).
 
+Note (Traefik + TLS + browser WebSockets):
+If your Traefik TLS config negotiates **h2-only** via ALPN for the agent host, browser `new WebSocket(wss://...)`
+can fail before reaching the agent. Ensure `http/1.1` is offered (or force it per-host with a `TLSOption`).
+
 ### DNS + TLS
 You need DNS records pointing to your ingress load balancer:
 - `editor.<DOMAIN>` (or any chosen host) -> ingress
@@ -394,6 +398,16 @@ Common optional env vars:
 ### Agent websocket connects but INIT fails
 - Check agent logs: `kubectl logs deploy/amicable-agent`
 - RBAC errors mean `k8s/agent/rbac.yaml` wasn’t applied or namespace mismatch.
+
+### Agent websocket never reaches the agent (Traefik + h2-only)
+Symptom: `new WebSocket("wss://<agent-host>/")` hangs and times out (e.g. code `1006`), and the agent pod logs show
+no `WebSocket / [accepted]` entries during the attempt.
+
+Fix (Traefik): force `http/1.1` ALPN on the agent host.
+
+- Helm: set `agent.ingress.traefik.forceHttp1.enabled=true` (creates a `TLSOption` and annotates the agent `Ingress`).
+- Raw YAML: create a `TLSOption` with `spec.alpnProtocols: ["http/1.1"]` and set
+  `traefik.ingress.kubernetes.io/router.tls.options: "<tlsoption-name>@kubernetescrd"` on the agent ingress.
 
 ### SandboxClaim exists but sandbox never becomes Ready
 - Check resources:

@@ -154,6 +154,13 @@ agent:
     tls:
       enabled: true
       secretName: amicable-agent-tls
+    traefik:
+      forceHttp1:
+        # If enabled, render a Traefik TLSOption with ALPN "http/1.1" only and
+        # attach it to the agent Ingress. This is necessary for browser WebSockets
+        # if the host would otherwise negotiate h2-only via ALPN.
+        enabled: false
+        tlsOptionName: amicable-agent-http1
   env:
     previewBaseDomain: amicable-preview.data.mayflower.zone
     previewScheme: https

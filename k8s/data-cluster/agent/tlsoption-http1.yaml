@@ -1,0 +1,9 @@
+apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: amicable-agent-http1
+  namespace: amicable
+spec:
+  alpnProtocols:
+    - http/1.1
+

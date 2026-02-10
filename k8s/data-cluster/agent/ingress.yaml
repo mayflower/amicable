@@ -5,6 +5,9 @@ metadata:
   namespace: amicable
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    # Force ALPN http/1.1 for this host so browser WebSockets (HTTP/1.1 Upgrade)
+    # can connect even when Traefik would otherwise negotiate h2-only.
+    traefik.ingress.kubernetes.io/router.tls.options: "amicable-agent-http1@kubernetescrd"
     cert-manager.io/cluster-issuer: letsencrypt-intern-dns
 spec:
   ingressClassName: traefik
