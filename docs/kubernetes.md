@@ -407,7 +407,7 @@ Fix (Traefik): force `http/1.1` ALPN on the agent host.
 
 - Helm: set `agent.ingress.traefik.forceHttp1.enabled=true` (creates a `TLSOption` and annotates the agent `Ingress`).
 - Raw YAML: create a `TLSOption` with `spec.alpnProtocols: ["http/1.1"]` and set
-  `traefik.ingress.kubernetes.io/router.tls.options: "<tlsoption-name>@kubernetescrd"` on the agent ingress.
+  `traefik.ingress.kubernetes.io/router.tls.options: "<namespace>-<tlsoption-name>@kubernetescrd"` on the agent ingress.
 
 ### SandboxClaim exists but sandbox never becomes Ready
 - Check resources:

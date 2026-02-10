@@ -14,7 +14,7 @@ metadata:
     # Browsers' WebSocket API uses the HTTP/1.1 Upgrade handshake (not RFC 8441),
     # so if ALPN negotiates h2-only, WebSockets will fail before reaching the agent.
     {{- $tlsOptionName := (index $forceHttp1 "tlsOptionName" | default "amicable-agent-http1") }}
-    traefik.ingress.kubernetes.io/router.tls.options: {{ printf "%s@kubernetescrd" $tlsOptionName | quote }}
+    traefik.ingress.kubernetes.io/router.tls.options: {{ printf "%s-%s@kubernetescrd" .Release.Namespace $tlsOptionName | quote }}
     {{- end }}
     cert-manager.io/cluster-issuer: {{ .Values.agent.ingress.certIssuer | quote }}
 spec:
