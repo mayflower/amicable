@@ -129,4 +129,8 @@ def k8s_template_name_for(template_id: str | None) -> str:
         return spec.k8s_sandbox_template_name
 
     v = overrides.get(spec.template_id)
-    return str(v).strip() if isinstance(v, str) and v.strip() else spec.k8s_sandbox_template_name
+    return (
+        str(v).strip()
+        if isinstance(v, str) and v.strip()
+        else spec.k8s_sandbox_template_name
+    )

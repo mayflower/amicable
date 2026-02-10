@@ -198,7 +198,9 @@ def rename_gitlab_repo_to_match_project_slug(
     if not git_sync_enabled():
         return project, None
 
-    project, git_dto = ensure_gitlab_repo_for_project(client, owner=owner, project=project)
+    project, git_dto = ensure_gitlab_repo_for_project(
+        client, owner=owner, project=project
+    )
 
     gitlab_id = project.gitlab_project_id
     if not isinstance(gitlab_id, int):
@@ -221,7 +223,11 @@ def rename_gitlab_repo_to_match_project_slug(
 
     # Attempt rename; if path taken, update DB slug to fallback and retry.
     for attempt in range(0, 20):
-        candidate = desired if attempt == 0 else _fallback_slug(project.project_id, base, attempt)
+        candidate = (
+            desired
+            if attempt == 0
+            else _fallback_slug(project.project_id, base, attempt)
+        )
         if attempt > 0:
             try:
                 project = projects_store.set_project_slug(

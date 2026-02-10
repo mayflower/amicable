@@ -124,7 +124,9 @@ def _tuples_to_dicts(res: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _get_project_by_id_any_owner(client: HasuraClient, *, project_id: str) -> Project | None:
+def _get_project_by_id_any_owner(
+    client: HasuraClient, *, project_id: str
+) -> Project | None:
     ensure_projects_schema(client)
     # Note: this helper intentionally filters out soft-deleted projects.
     res = client.run_sql(
@@ -148,13 +150,27 @@ def _get_project_by_id_any_owner(client: HasuraClient, *, project_id: str) -> Pr
         owner_email=str(r["owner_email"]),
         name=str(r["name"]),
         slug=str(r["slug"]),
-        sandbox_id=str(r.get("sandbox_id")) if r.get("sandbox_id") is not None else None,
-        template_id=str(r.get("template_id")) if r.get("template_id") is not None else None,
-        gitlab_project_id=int(r["gitlab_project_id"]) if r.get("gitlab_project_id") is not None else None,
-        gitlab_path=str(r.get("gitlab_path")) if r.get("gitlab_path") is not None else None,
-        gitlab_web_url=str(r.get("gitlab_web_url")) if r.get("gitlab_web_url") is not None else None,
-        created_at=str(r.get("created_at")) if r.get("created_at") is not None else None,
-        updated_at=str(r.get("updated_at")) if r.get("updated_at") is not None else None,
+        sandbox_id=str(r.get("sandbox_id"))
+        if r.get("sandbox_id") is not None
+        else None,
+        template_id=str(r.get("template_id"))
+        if r.get("template_id") is not None
+        else None,
+        gitlab_project_id=int(r["gitlab_project_id"])
+        if r.get("gitlab_project_id") is not None
+        else None,
+        gitlab_path=str(r.get("gitlab_path"))
+        if r.get("gitlab_path") is not None
+        else None,
+        gitlab_web_url=str(r.get("gitlab_web_url"))
+        if r.get("gitlab_web_url") is not None
+        else None,
+        created_at=str(r.get("created_at"))
+        if r.get("created_at") is not None
+        else None,
+        updated_at=str(r.get("updated_at"))
+        if r.get("updated_at") is not None
+        else None,
     )
 
 
@@ -210,7 +226,9 @@ def get_project_template_id_any_owner(
     return str(tid) if tid is not None else None
 
 
-def get_project_by_id(client: HasuraClient, *, owner: ProjectOwner, project_id: str) -> Project | None:
+def get_project_by_id(
+    client: HasuraClient, *, owner: ProjectOwner, project_id: str
+) -> Project | None:
     p = _get_project_by_id_any_owner(client, project_id=project_id)
     if not p:
         return None
@@ -219,7 +237,9 @@ def get_project_by_id(client: HasuraClient, *, owner: ProjectOwner, project_id: 
     return p
 
 
-def get_project_by_slug(client: HasuraClient, *, owner: ProjectOwner, slug: str) -> Project | None:
+def get_project_by_slug(
+    client: HasuraClient, *, owner: ProjectOwner, slug: str
+) -> Project | None:
     ensure_projects_schema(client)
     res = client.run_sql(
         f"""
@@ -244,13 +264,27 @@ def get_project_by_slug(client: HasuraClient, *, owner: ProjectOwner, slug: str)
         owner_email=str(r["owner_email"]),
         name=str(r["name"]),
         slug=str(r["slug"]),
-        sandbox_id=str(r.get("sandbox_id")) if r.get("sandbox_id") is not None else None,
-        template_id=str(r.get("template_id")) if r.get("template_id") is not None else None,
-        gitlab_project_id=int(r["gitlab_project_id"]) if r.get("gitlab_project_id") is not None else None,
-        gitlab_path=str(r.get("gitlab_path")) if r.get("gitlab_path") is not None else None,
-        gitlab_web_url=str(r.get("gitlab_web_url")) if r.get("gitlab_web_url") is not None else None,
-        created_at=str(r.get("created_at")) if r.get("created_at") is not None else None,
-        updated_at=str(r.get("updated_at")) if r.get("updated_at") is not None else None,
+        sandbox_id=str(r.get("sandbox_id"))
+        if r.get("sandbox_id") is not None
+        else None,
+        template_id=str(r.get("template_id"))
+        if r.get("template_id") is not None
+        else None,
+        gitlab_project_id=int(r["gitlab_project_id"])
+        if r.get("gitlab_project_id") is not None
+        else None,
+        gitlab_path=str(r.get("gitlab_path"))
+        if r.get("gitlab_path") is not None
+        else None,
+        gitlab_web_url=str(r.get("gitlab_web_url"))
+        if r.get("gitlab_web_url") is not None
+        else None,
+        created_at=str(r.get("created_at"))
+        if r.get("created_at") is not None
+        else None,
+        updated_at=str(r.get("updated_at"))
+        if r.get("updated_at") is not None
+        else None,
     )
 
 
@@ -282,13 +316,27 @@ def get_project_by_slug_any_owner(client: HasuraClient, *, slug: str) -> Project
         owner_email=str(r["owner_email"]),
         name=str(r["name"]),
         slug=str(r["slug"]),
-        sandbox_id=str(r.get("sandbox_id")) if r.get("sandbox_id") is not None else None,
-        template_id=str(r.get("template_id")) if r.get("template_id") is not None else None,
-        gitlab_project_id=int(r["gitlab_project_id"]) if r.get("gitlab_project_id") is not None else None,
-        gitlab_path=str(r.get("gitlab_path")) if r.get("gitlab_path") is not None else None,
-        gitlab_web_url=str(r.get("gitlab_web_url")) if r.get("gitlab_web_url") is not None else None,
-        created_at=str(r.get("created_at")) if r.get("created_at") is not None else None,
-        updated_at=str(r.get("updated_at")) if r.get("updated_at") is not None else None,
+        sandbox_id=str(r.get("sandbox_id"))
+        if r.get("sandbox_id") is not None
+        else None,
+        template_id=str(r.get("template_id"))
+        if r.get("template_id") is not None
+        else None,
+        gitlab_project_id=int(r["gitlab_project_id"])
+        if r.get("gitlab_project_id") is not None
+        else None,
+        gitlab_path=str(r.get("gitlab_path"))
+        if r.get("gitlab_path") is not None
+        else None,
+        gitlab_web_url=str(r.get("gitlab_web_url"))
+        if r.get("gitlab_web_url") is not None
+        else None,
+        created_at=str(r.get("created_at"))
+        if r.get("created_at") is not None
+        else None,
+        updated_at=str(r.get("updated_at"))
+        if r.get("updated_at") is not None
+        else None,
     )
 
 
@@ -327,11 +375,21 @@ def list_projects(client: HasuraClient, *, owner: ProjectOwner) -> list[Project]
                 owner_email=str(r["owner_email"]),
                 name=str(r["name"]),
                 slug=str(r["slug"]),
-                sandbox_id=str(r.get("sandbox_id")) if r.get("sandbox_id") is not None else None,
-                template_id=str(r.get("template_id")) if r.get("template_id") is not None else None,
-                gitlab_project_id=int(r["gitlab_project_id"]) if r.get("gitlab_project_id") is not None else None,
-                gitlab_path=str(r.get("gitlab_path")) if r.get("gitlab_path") is not None else None,
-                gitlab_web_url=str(r.get("gitlab_web_url")) if r.get("gitlab_web_url") is not None else None,
+                sandbox_id=str(r.get("sandbox_id"))
+                if r.get("sandbox_id") is not None
+                else None,
+                template_id=str(r.get("template_id"))
+                if r.get("template_id") is not None
+                else None,
+                gitlab_project_id=int(r["gitlab_project_id"])
+                if r.get("gitlab_project_id") is not None
+                else None,
+                gitlab_path=str(r.get("gitlab_path"))
+                if r.get("gitlab_path") is not None
+                else None,
+                gitlab_web_url=str(r.get("gitlab_web_url"))
+                if r.get("gitlab_web_url") is not None
+                else None,
                 created_at=str(r.get("created_at"))
                 if r.get("created_at") is not None
                 else None,
@@ -377,9 +435,9 @@ def set_gitlab_metadata(
     client.run_sql(
         f"""
         UPDATE amicable_meta.projects
-        SET gitlab_project_id = {str(int(gitlab_project_id)) if gitlab_project_id is not None else 'NULL'},
-            gitlab_path = {_sql_str(gitlab_path) if gitlab_path is not None else 'NULL'},
-            gitlab_web_url = {_sql_str(gitlab_web_url) if gitlab_web_url is not None else 'NULL'},
+        SET gitlab_project_id = {str(int(gitlab_project_id)) if gitlab_project_id is not None else "NULL"},
+            gitlab_path = {_sql_str(gitlab_path) if gitlab_path is not None else "NULL"},
+            gitlab_web_url = {_sql_str(gitlab_web_url) if gitlab_web_url is not None else "NULL"},
             updated_at = now()
         WHERE project_id = {_sql_str(project_id)} AND owner_sub = {_sql_str(owner.sub)} AND deleted_at IS NULL;
         """.strip()
@@ -424,7 +482,9 @@ def create_project(
     base = slugify(name)
 
     for attempt in range(20):
-        suffix = None if attempt == 0 else project_id.replace("-", "")[: (4 + attempt // 3)]
+        suffix = (
+            None if attempt == 0 else project_id.replace("-", "")[: (4 + attempt // 3)]
+        )
         slug = _candidate_slug(base, suffix=suffix)
         if not _slug_available(client, slug=slug):
             continue
@@ -432,7 +492,7 @@ def create_project(
         client.run_sql(
             f"""
             INSERT INTO amicable_meta.projects (project_id, owner_sub, owner_email, name, slug, template_id)
-            VALUES ({_sql_str(project_id)}, {_sql_str(owner.sub)}, {_sql_str(owner.email)}, {_sql_str(name)}, {_sql_str(slug)}, {_sql_str(template_id) if template_id is not None else 'NULL'})
+            VALUES ({_sql_str(project_id)}, {_sql_str(owner.sub)}, {_sql_str(owner.email)}, {_sql_str(name)}, {_sql_str(slug)}, {_sql_str(template_id) if template_id is not None else "NULL"})
             ON CONFLICT DO NOTHING;
             """.strip()
         )
@@ -457,7 +517,11 @@ def ensure_project_for_id(
     # If a project row exists but was soft-deleted, resurrect it instead of failing
     # with a misleading "failed to auto-create project" error.
     row = _project_row_by_id_including_deleted(client, project_id=project_id)
-    if row and str(row.get("owner_sub") or "") == owner.sub and row.get("deleted_at") is not None:
+    if (
+        row
+        and str(row.get("owner_sub") or "") == owner.sub
+        and row.get("deleted_at") is not None
+    ):
         client.run_sql(
             f"""
             UPDATE amicable_meta.projects
@@ -505,7 +569,9 @@ def rename_project(
         raise PermissionError("project not found")
 
     for attempt in range(20):
-        suffix = None if attempt == 0 else project_id.replace("-", "")[: (4 + attempt // 3)]
+        suffix = (
+            None if attempt == 0 else project_id.replace("-", "")[: (4 + attempt // 3)]
+        )
         slug = _candidate_slug(base, suffix=suffix)
         if slug != existing.slug and not _slug_available(client, slug=slug):
             continue
@@ -523,7 +589,9 @@ def rename_project(
     raise RuntimeError("failed to allocate unique project slug for rename")
 
 
-def mark_project_deleted(client: HasuraClient, *, owner: ProjectOwner, project_id: str) -> None:
+def mark_project_deleted(
+    client: HasuraClient, *, owner: ProjectOwner, project_id: str
+) -> None:
     ensure_projects_schema(client)
     # Mark deleted first so it disappears from lists immediately.
     client.run_sql(
@@ -535,7 +603,9 @@ def mark_project_deleted(client: HasuraClient, *, owner: ProjectOwner, project_i
     )
 
 
-def hard_delete_project_row(client: HasuraClient, *, owner: ProjectOwner, project_id: str) -> None:
+def hard_delete_project_row(
+    client: HasuraClient, *, owner: ProjectOwner, project_id: str
+) -> None:
     ensure_projects_schema(client)
     client.run_sql(
         f"""

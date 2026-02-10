@@ -33,7 +33,9 @@ class _Backend:
 
 
 def _git(args: list[str], *, cwd: str) -> str:
-    cp = subprocess.run(["git", *args], cwd=cwd, text=True, capture_output=True, check=True)
+    cp = subprocess.run(
+        ["git", *args], cwd=cwd, text=True, capture_output=True, check=True
+    )
     return (cp.stdout or "").strip()
 
 
@@ -54,7 +56,9 @@ def test_sync_tree_excludes_and_writes_files(monkeypatch, tmp_path):
     monkeypatch.setenv("GITLAB_TOKEN", "dummy")
 
     bare = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "--bare", str(bare)], check=True, capture_output=True
+    )
 
     entries = [
         {"path": "README.md", "kind": "file", "mode": 0o644},
@@ -88,7 +92,9 @@ def test_sync_tree_excludes_and_writes_files(monkeypatch, tmp_path):
 
     # Clone and validate results.
     work = tmp_path / "work"
-    subprocess.run(["git", "clone", str(bare), str(work)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "clone", str(bare), str(work)], check=True, capture_output=True
+    )
     assert (work / "README.md").read_bytes() == b"hello\n"
     assert not (work / ".env").exists()
     assert not (work / "node_modules").exists()
@@ -103,7 +109,9 @@ def test_bootstrap_repo_if_empty_noops_on_existing_branch(monkeypatch, tmp_path)
     monkeypatch.setenv("GITLAB_TOKEN", "dummy")
 
     bare = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "--bare", str(bare)], check=True, capture_output=True
+    )
 
     b = _Backend(
         entries=[{"path": "a.txt", "kind": "file", "mode": 0o644}],
@@ -135,7 +143,9 @@ def test_sync_tree_deletes_removed_files(monkeypatch, tmp_path):
     monkeypatch.setenv("GITLAB_TOKEN", "dummy")
 
     bare = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "--bare", str(bare)], check=True, capture_output=True
+    )
 
     cache = str(tmp_path / "cache")
     b1 = _Backend(
@@ -166,9 +176,10 @@ def test_sync_tree_deletes_removed_files(monkeypatch, tmp_path):
     )
 
     work = tmp_path / "work"
-    subprocess.run(["git", "clone", str(bare), str(work)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "clone", str(bare), str(work)], check=True, capture_output=True
+    )
     # default branch may not be checked out depending on git version; force main.
     _git(["checkout", "main"], cwd=str(work))
     assert (work / "a.txt").read_bytes() == b"a2"
     assert not (work / "b.txt").exists()
-

@@ -41,7 +41,9 @@ def clear(thread_id: str) -> None:
         _EVENTS_BY_THREAD.pop(tid, None)
 
 
-def append(thread_id: str, operation: str, target: str, metadata: dict[str, Any] | None = None) -> None:
+def append(
+    thread_id: str, operation: str, target: str, metadata: dict[str, Any] | None = None
+) -> None:
     tid = (thread_id or "").strip() or "default-thread"
     op = (operation or "").strip()
     tgt = _redact((target or "").strip())
@@ -58,7 +60,9 @@ def drain(thread_id: str) -> list[dict[str, Any]]:
     return list(evts)
 
 
-def summarize(events: list[dict[str, Any]], *, max_paths: int = 40, max_cmds: int = 30) -> dict[str, Any]:
+def summarize(
+    events: list[dict[str, Any]], *, max_paths: int = 40, max_cmds: int = 30
+) -> dict[str, Any]:
     ops = Counter()
     paths = Counter()
     cmds = Counter()
@@ -84,4 +88,3 @@ def summarize(events: list[dict[str, Any]], *, max_paths: int = 40, max_cmds: in
         "commands": top_cmds,
         "event_count": int(sum(ops.values())),
     }
-

@@ -27,4 +27,3 @@ def test_require_mutation_denies_main_tsx() -> None:
 def test_require_mutation_denies_node_modules() -> None:
     with pytest.raises(PermissionError):
         require_mutation_allowed("/node_modules/x.js")
-

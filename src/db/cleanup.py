@@ -62,7 +62,11 @@ def cleanup_app_db(client: HasuraClient, *, app_id: str) -> None:
         """.strip(),
         read_only=True,
     )
-    tables = [str(r.get("table_name")) for r in _tuples_to_dicts(tables_res) if r.get("table_name")]
+    tables = [
+        str(r.get("table_name"))
+        for r in _tuples_to_dicts(tables_res)
+        if r.get("table_name")
+    ]
 
     # Untrack each table (ignore if not tracked).
     for t in tables:
@@ -83,7 +87,4 @@ def cleanup_app_db(client: HasuraClient, *, app_id: str) -> None:
 
     # Drop schema and meta row.
     client.run_sql(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
-    client.run_sql(
-        f"DELETE FROM amicable_meta.apps WHERE app_id = {_sql_str(app_id)};"
-    )
-
+    client.run_sql(f"DELETE FROM amicable_meta.apps WHERE app_id = {_sql_str(app_id)};")

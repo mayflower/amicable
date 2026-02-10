@@ -346,7 +346,9 @@ class K8sSandboxRuntimeBackend(SandboxBackendProtocol):
             ]
 
         try:
-            batch_map = self._download_many([rel for _p, rel in normalized if rel is not None])
+            batch_map = self._download_many(
+                [rel for _p, rel in normalized if rel is not None]
+            )
         except Exception:
             batch_map = None
 
@@ -354,26 +356,46 @@ class K8sSandboxRuntimeBackend(SandboxBackendProtocol):
             out: list[FileDownloadResponse] = []
             for public_path, rel in normalized:
                 if rel is None:
-                    out.append(FileDownloadResponse(path=public_path, content=None, error="invalid_path"))
+                    out.append(
+                        FileDownloadResponse(
+                            path=public_path, content=None, error="invalid_path"
+                        )
+                    )
                     continue
                 item = batch_map.get(rel)
                 if not isinstance(item, dict):
-                    out.append(FileDownloadResponse(path=public_path, content=None, error="file_not_found"))
+                    out.append(
+                        FileDownloadResponse(
+                            path=public_path, content=None, error="file_not_found"
+                        )
+                    )
                     continue
                 err = item.get("error")
                 if isinstance(err, str) and err:
-                    out.append(FileDownloadResponse(path=public_path, content=None, error=err))
+                    out.append(
+                        FileDownloadResponse(path=public_path, content=None, error=err)
+                    )
                     continue
                 b64 = item.get("content_b64")
                 if not isinstance(b64, str):
-                    out.append(FileDownloadResponse(path=public_path, content=None, error="file_not_found"))
+                    out.append(
+                        FileDownloadResponse(
+                            path=public_path, content=None, error="file_not_found"
+                        )
+                    )
                     continue
                 try:
                     content = base64.b64decode(b64.encode("ascii"), validate=True)
                 except Exception:
-                    out.append(FileDownloadResponse(path=public_path, content=None, error="file_not_found"))
+                    out.append(
+                        FileDownloadResponse(
+                            path=public_path, content=None, error="file_not_found"
+                        )
+                    )
                     continue
-                out.append(FileDownloadResponse(path=public_path, content=content, error=None))
+                out.append(
+                    FileDownloadResponse(path=public_path, content=content, error=None)
+                )
             return out
 
         # Fallback: original behavior (per-file state check + GET /download).
@@ -456,7 +478,9 @@ class K8sSandboxRuntimeBackend(SandboxBackendProtocol):
         resp = self._request("GET", f"download/{rel}")
         return resp.content
 
-    def _download_many(self, rel_paths: list[str]) -> dict[str, dict[str, object]] | None:
+    def _download_many(
+        self, rel_paths: list[str]
+    ) -> dict[str, dict[str, object]] | None:
         # Newer sandbox images provide POST /download_many. If the endpoint is missing,
         # allow callers to fall back to per-file downloads.
         rels = [p.lstrip("/") for p in rel_paths if isinstance(p, str) and p.strip()]

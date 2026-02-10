@@ -16,8 +16,10 @@ def _env_bool(name: str, *, default: bool) -> bool:
 
 
 def gitlab_base_url() -> str:
-    return (os.environ.get("GITLAB_BASE_URL") or "https://git.mayflower.de").strip().rstrip(
-        "/"
+    return (
+        (os.environ.get("GITLAB_BASE_URL") or "https://git.mayflower.de")
+        .strip()
+        .rstrip("/")
     )
 
 
@@ -57,7 +59,9 @@ def git_sync_branch() -> str:
 
 
 def git_sync_cache_dir() -> str:
-    return (os.environ.get("AMICABLE_GIT_SYNC_CACHE_DIR") or "/tmp/amicable-git-cache").strip() or "/tmp/amicable-git-cache"
+    return (
+        os.environ.get("AMICABLE_GIT_SYNC_CACHE_DIR") or "/tmp/amicable-git-cache"
+    ).strip() or "/tmp/amicable-git-cache"
 
 
 _DEFAULT_EXCLUDES = [
@@ -88,17 +92,22 @@ def git_sync_excludes() -> list[str]:
 
 
 def git_commit_author_name() -> str:
-    return (os.environ.get("AMICABLE_GIT_COMMIT_AUTHOR_NAME") or "amicable-bot").strip() or "amicable-bot"
+    return (
+        os.environ.get("AMICABLE_GIT_COMMIT_AUTHOR_NAME") or "amicable-bot"
+    ).strip() or "amicable-bot"
 
 
 def git_commit_author_email() -> str:
     return (
-        os.environ.get("AMICABLE_GIT_COMMIT_AUTHOR_EMAIL")
-        or "amicable@mayflower.de"
+        os.environ.get("AMICABLE_GIT_COMMIT_AUTHOR_EMAIL") or "amicable@mayflower.de"
     ).strip() or "amicable@mayflower.de"
 
 
 def gitlab_repo_visibility() -> str:
     # GitLab values: private/internal/public
-    v = (os.environ.get("AMICABLE_GITLAB_REPO_VISIBILITY") or "internal").strip().lower()
+    v = (
+        (os.environ.get("AMICABLE_GITLAB_REPO_VISIBILITY") or "internal")
+        .strip()
+        .lower()
+    )
     return v if v in ("private", "internal", "public") else "internal"

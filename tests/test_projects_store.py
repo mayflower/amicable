@@ -33,7 +33,9 @@ class FakeHasuraClient:
         sql_l = sql.lower()
 
         # Schema creation: ignore.
-        if sql.lower().startswith("create schema") or sql.lower().startswith("create table"):
+        if sql.lower().startswith("create schema") or sql.lower().startswith(
+            "create table"
+        ):
             return {"result_type": "CommandOk", "result": []}
 
         # SELECT by project_id.
@@ -42,7 +44,12 @@ class FakeHasuraClient:
             pid = m.group(1)
             row = self.projects.get(pid)
             if not row or row.get("deleted_at"):
-                return {"result_type": "TuplesOk", "result": [["project_id"],]}
+                return {
+                    "result_type": "TuplesOk",
+                    "result": [
+                        ["project_id"],
+                    ],
+                }
             header = [
                 "project_id",
                 "owner_sub",
@@ -78,7 +85,12 @@ class FakeHasuraClient:
                 None,
             )
             if not row:
-                return {"result_type": "TuplesOk", "result": [["project_id"],]}
+                return {
+                    "result_type": "TuplesOk",
+                    "result": [
+                        ["project_id"],
+                    ],
+                }
             if sql_l.startswith("select 1"):
                 return {"result_type": "TuplesOk", "result": [["1"], [1]]}
             header = [
@@ -148,7 +160,9 @@ class FakeHasuraClient:
             owner_email = parts[2].strip("'")
             name = parts[3].strip("'")
             slug = parts[4].strip("'")
-            template_id = parts[5].strip("'") if len(parts) > 5 and parts[5] != "NULL" else None
+            template_id = (
+                parts[5].strip("'") if len(parts) > 5 and parts[5] != "NULL" else None
+            )
             # Enforce uniqueness on slug unless deleted.
             if any(
                 (r.get("slug") == slug and not r.get("deleted_at"))
@@ -172,7 +186,9 @@ class FakeHasuraClient:
 
         # UPDATE rename.
         if sql_l.startswith("update amicable_meta.projects") and "set name" in sql_l:
-            pid = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I).group(1)  # type: ignore[union-attr]
+            pid = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I).group(
+                1
+            )  # type: ignore[union-attr]
             sub = re.search(r"and owner_sub\s*=\s*'([^']+)'", sql, flags=re.I).group(1)  # type: ignore[union-attr]
             name = re.search(r"set name\s*=\s*'([^']*)'", sql, flags=re.I).group(1)  # type: ignore[union-attr]
             slug = re.search(r"slug\s*=\s*'([^']*)'", sql, flags=re.I).group(1)  # type: ignore[union-attr]
@@ -180,7 +196,11 @@ class FakeHasuraClient:
             if row and row["owner_sub"] == sub and not row.get("deleted_at"):
                 # enforce slug uniqueness
                 if any(
-                    (r.get("slug") == slug and r.get("project_id") != pid and not r.get("deleted_at"))
+                    (
+                        r.get("slug") == slug
+                        and r.get("project_id") != pid
+                        and not r.get("deleted_at")
+                    )
                     for r in self.projects.values()
                 ):
                     return {"result_type": "CommandOk", "result": []}
@@ -190,8 +210,13 @@ class FakeHasuraClient:
             return {"result_type": "CommandOk", "result": []}
 
         # UPDATE mark deleted.
-        if sql_l.startswith("update amicable_meta.projects") and "set deleted_at" in sql_l:
-            pid = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I).group(1)  # type: ignore[union-attr]
+        if (
+            sql_l.startswith("update amicable_meta.projects")
+            and "set deleted_at" in sql_l
+        ):
+            pid = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I).group(
+                1
+            )  # type: ignore[union-attr]
             sub = re.search(r"and owner_sub\s*=\s*'([^']+)'", sql, flags=re.I).group(1)  # type: ignore[union-attr]
             row = self.projects.get(pid)
             if row and row["owner_sub"] == sub and not row.get("deleted_at"):
@@ -201,7 +226,9 @@ class FakeHasuraClient:
 
         # DELETE.
         if sql_l.startswith("delete from amicable_meta.projects"):
-            pid = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I).group(1)  # type: ignore[union-attr]
+            pid = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I).group(
+                1
+            )  # type: ignore[union-attr]
             sub = re.search(r"and owner_sub\s*=\s*'([^']+)'", sql, flags=re.I).group(1)  # type: ignore[union-attr]
             row = self.projects.get(pid)
             if row and row["owner_sub"] == sub:
@@ -237,7 +264,9 @@ def test_create_list_get_rename_delete() -> None:
     lst = list_projects(c, owner=owner)
     assert {p.project_id for p in lst} == {p1.project_id, p2.project_id}
 
-    renamed = rename_project(c, owner=owner, project_id=p1.project_id, new_name="New Name")
+    renamed = rename_project(
+        c, owner=owner, project_id=p1.project_id, new_name="New Name"
+    )
     assert renamed.name == "New Name"
     assert renamed.slug.startswith("new-name")
 

@@ -3,8 +3,13 @@ import unittest
 
 import pytest
 
-if importlib.util.find_spec("deepagents") is None or importlib.util.find_spec("requests") is None:
-    pytest.skip("deepagents/requests not installed in this environment", allow_module_level=True)
+if (
+    importlib.util.find_spec("deepagents") is None
+    or importlib.util.find_spec("requests") is None
+):
+    pytest.skip(
+        "deepagents/requests not installed in this environment", allow_module_level=True
+    )
 
 from src.deepagents_backend.k8s_runtime_backend import K8sSandboxRuntimeBackend
 

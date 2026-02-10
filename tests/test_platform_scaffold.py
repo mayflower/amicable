@@ -26,7 +26,10 @@ class TestPlatformScaffold(unittest.TestCase):
         ctx = self._ctx("vite")
         text = render_catalog_info(ctx)
         self.assertIn("backstage.io/techdocs-ref: dir:.", text)
-        self.assertIn("backstage.io/source-location: url:https://git.example.com/group/my-project/tree/main/", text)
+        self.assertIn(
+            "backstage.io/source-location: url:https://git.example.com/group/my-project/tree/main/",
+            text,
+        )
         self.assertIn("sonarqube.org/project-key:", text)
 
     def test_sonar_project_key_format_is_stable(self):
@@ -82,4 +85,3 @@ class TestPlatformScaffold(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

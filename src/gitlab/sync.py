@@ -287,12 +287,24 @@ def sync_sandbox_tree_to_repo(
         # Fetch and checkout branch.
         r.run(["git", "fetch", "origin"], cwd=repo_dir, env=env, check=True)
 
-        heads = r.run(["git", "ls-remote", "--heads", "origin", br], cwd=repo_dir, env=env, check=True)
+        heads = r.run(
+            ["git", "ls-remote", "--heads", "origin", br],
+            cwd=repo_dir,
+            env=env,
+            check=True,
+        )
         if (heads.stdout or "").strip():
-            r.run(["git", "checkout", "-B", br, f"origin/{br}"], cwd=repo_dir, env=env, check=True)
+            r.run(
+                ["git", "checkout", "-B", br, f"origin/{br}"],
+                cwd=repo_dir,
+                env=env,
+                check=True,
+            )
         else:
             # New/empty repo: create orphan branch.
-            r.run(["git", "checkout", "--orphan", br], cwd=repo_dir, env=env, check=True)
+            r.run(
+                ["git", "checkout", "--orphan", br], cwd=repo_dir, env=env, check=True
+            )
             # Clear index and working tree (except .git).
             r.run(["git", "rm", "-rf", "."], cwd=repo_dir, env=env, check=False)
 
@@ -344,7 +356,9 @@ def sync_sandbox_tree_to_repo(
                 meta = meta_by_path.get(rel_path) or {}
                 mode = meta.get("mode")
                 out_path = os.path.join(repo_dir, rel_path)
-                _write_file(out_path, payload, mode=int(mode) if isinstance(mode, int) else None)
+                _write_file(
+                    out_path, payload, mode=int(mode) if isinstance(mode, int) else None
+                )
             chunk = []
 
         for e in file_entries:
@@ -369,15 +383,38 @@ def sync_sandbox_tree_to_repo(
         _remove_excluded_paths(repo_dir, excludes=ex)
 
         # Configure author.
-        r.run(["git", "config", "user.name", git_commit_author_name()], cwd=repo_dir, env=env, check=True)
-        r.run(["git", "config", "user.email", git_commit_author_email()], cwd=repo_dir, env=env, check=True)
+        r.run(
+            ["git", "config", "user.name", git_commit_author_name()],
+            cwd=repo_dir,
+            env=env,
+            check=True,
+        )
+        r.run(
+            ["git", "config", "user.email", git_commit_author_email()],
+            cwd=repo_dir,
+            env=env,
+            check=True,
+        )
 
         if not _git_dirty(r, repo_dir, env=env):
             return False, None, "", ""
 
         r.run(["git", "add", "-A"], cwd=repo_dir, env=env, check=True)
-        diff_stat = r.run(["git", "diff", "--cached", "--stat"], cwd=repo_dir, env=env, check=True).stdout or ""
-        name_status = r.run(["git", "diff", "--cached", "--name-status"], cwd=repo_dir, env=env, check=True).stdout or ""
+        diff_stat = (
+            r.run(
+                ["git", "diff", "--cached", "--stat"], cwd=repo_dir, env=env, check=True
+            ).stdout
+            or ""
+        )
+        name_status = (
+            r.run(
+                ["git", "diff", "--cached", "--name-status"],
+                cwd=repo_dir,
+                env=env,
+                check=True,
+            ).stdout
+            or ""
+        )
 
         msg = None
         if commit_message_fn is not None and callable(commit_message_fn):
@@ -395,15 +432,27 @@ def sync_sandbox_tree_to_repo(
 
         r.run(["git", "commit", "-m", msg], cwd=repo_dir, env=env, check=True)
 
-        sha = r.run(["git", "rev-parse", "HEAD"], cwd=repo_dir, env=env, check=True).stdout.strip() or None
+        sha = (
+            r.run(
+                ["git", "rev-parse", "HEAD"], cwd=repo_dir, env=env, check=True
+            ).stdout.strip()
+            or None
+        )
 
         # Push with simple rebase retry.
         for _attempt in range(3):
-            cp = r.run(["git", "push", "origin", br], cwd=repo_dir, env=env, check=False)
+            cp = r.run(
+                ["git", "push", "origin", br], cwd=repo_dir, env=env, check=False
+            )
             if cp.returncode == 0:
                 return True, sha, diff_stat, name_status
             # Best-effort rebase then retry.
-            r.run(["git", "pull", "--rebase", "origin", br], cwd=repo_dir, env=env, check=False)
+            r.run(
+                ["git", "pull", "--rebase", "origin", br],
+                cwd=repo_dir,
+                env=env,
+                check=False,
+            )
 
         raise RuntimeError(f"git push failed: {cp.stderr or cp.stdout}")
 
@@ -431,7 +480,9 @@ def bootstrap_repo_if_empty(
     br = (branch or git_sync_branch()).strip() or "main"
 
     with _git_auth_env(token=token) as env:
-        heads = r.run(["git", "ls-remote", "--heads", repo_http_url, br], env=env, check=True)
+        heads = r.run(
+            ["git", "ls-remote", "--heads", repo_http_url, br], env=env, check=True
+        )
         if (heads.stdout or "").strip():
             return False, None
 

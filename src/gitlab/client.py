@@ -10,7 +10,9 @@ from src.gitlab.config import gitlab_base_url, gitlab_token
 
 
 class GitLabError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int | None = None, payload: Any = None):
+    def __init__(
+        self, message: str, *, status_code: int | None = None, payload: Any = None
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.payload = payload
@@ -27,7 +29,9 @@ class GitLabProject:
 
 
 class GitLabClient:
-    def __init__(self, *, base_url: str, token: str, session: requests.Session | None = None) -> None:
+    def __init__(
+        self, *, base_url: str, token: str, session: requests.Session | None = None
+    ) -> None:
         self._base = base_url.rstrip("/")
         self._token = token
         self._http = session or requests.Session()

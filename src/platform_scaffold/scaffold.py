@@ -132,11 +132,15 @@ def build_scaffold_context(
     system = _env_str("AMICABLE_BACKSTAGE_SYSTEM") or ""
     lifecycle = _env_str("AMICABLE_BACKSTAGE_LIFECYCLE") or "experimental"
 
-    sonar_prefix = _env_str("AMICABLE_SONAR_PROJECTKEY_PREFIX") or (gitlab_group_path or "")
+    sonar_prefix = _env_str("AMICABLE_SONAR_PROJECTKEY_PREFIX") or (
+        gitlab_group_path or ""
+    )
     sonar_prefix = _normalize_sonar_key(str(sonar_prefix))
     sonar_slug = _normalize_sonar_key(slug)
     sonar_pid = _normalize_sonar_key(pid)
-    sonar_project_key = "_".join([p for p in (sonar_prefix, sonar_slug, sonar_pid) if p])
+    sonar_project_key = "_".join(
+        [p for p in (sonar_prefix, sonar_slug, sonar_pid) if p]
+    )
     if not sonar_project_key:
         sonar_project_key = _normalize_sonar_key(pid) or "amicable_project"
 
@@ -187,16 +191,12 @@ def render_catalog_info(ctx: ScaffoldContext) -> str:
         f"  name: {ctx.project_slug}\n"
         f"  title: {ctx.project_name}\n"
         "  description: Amicable project\n"
-        "  annotations:\n"
-        + "\n".join(annotations)
-        + "\n"
+        "  annotations:\n" + "\n".join(annotations) + "\n"
         "  tags:\n"
         + (tags + "\n" if tags else "    - amicable\n")
         + "  links:\n"
         + (
-            f"    - url: {ctx.repo_url}\n"
-            "      title: Repository\n"
-            "      icon: git\n"
+            f"    - url: {ctx.repo_url}\n      title: Repository\n      icon: git\n"
             if ctx.repo_url
             else ""
         )
@@ -325,9 +325,7 @@ def render_docs_index(ctx: ScaffoldContext) -> str:
         "\n"
         "This is the TechDocs documentation site for this Amicable project.\n"
         "\n"
-        "## Links\n"
-        + repo_line
-        + "\n"
+        "## Links\n" + repo_line + "\n"
         "## Quick Start\n"
         "See the Development Guide for local and sandbox workflows.\n"
     )
@@ -339,14 +337,10 @@ def render_docs_development(ctx: ScaffoldContext) -> str:
         "# Development Guide\n"
         "\n"
         "## Run Locally\n"
-        "```bash\n"
-        + run_cmds
-        + "\n```\n"
+        "```bash\n" + run_cmds + "\n```\n"
         "\n"
         "## QA\n"
-        "```bash\n"
-        + qa_cmds
-        + "\n```\n"
+        "```bash\n" + qa_cmds + "\n```\n"
         "\n"
         "## TechDocs (Local)\n"
         "```bash\n"

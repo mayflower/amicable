@@ -235,7 +235,9 @@ class TraceNarrator:
         did_files = ("write_file" in lower) or ("edit_file" in lower)
         did_cmds = "execute" in lower
         did_db = "db_" in lower or "database" in lower or "hasura" in lower_req
-        did_qa = "qa" in lower or "lint" in lower or "typecheck" in lower or "build" in lower
+        did_qa = (
+            "qa" in lower or "lint" in lower or "typecheck" in lower or "build" in lower
+        )
 
         parts: list[str] = []
         if did_files:
@@ -249,7 +251,10 @@ class TraceNarrator:
             parts.append("I reviewed the project and planned the next steps")
 
         if status == "paused_for_approval":
-            return (" ".join(parts) + ", but paused to request your approval before continuing.").strip()
+            return (
+                " ".join(parts)
+                + ", but paused to request your approval before continuing."
+            ).strip()
 
         if status == "completed":
             return (" ".join(parts) + " to move your request forward.").strip()
