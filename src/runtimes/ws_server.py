@@ -593,13 +593,12 @@ async def api_git_sync_project(project_id: str, request: Request) -> JSONRespons
 
     from src.db.provisioning import hasura_client_from_env
     from src.gitlab.integration import ensure_gitlab_repo_for_project
-    from src.projects.store import ProjectOwner, ensure_project_for_id
+    from src.projects.store import ProjectOwner, get_project_by_id
 
     client = hasura_client_from_env()
     owner = ProjectOwner(sub=sub, email=email)
-    try:
-        project = ensure_project_for_id(client, owner=owner, project_id=str(project_id))
-    except PermissionError:
+    project = get_project_by_id(client, owner=owner, project_id=str(project_id))
+    if not project:
         return JSONResponse({"error": "not_found"}, status_code=404)
 
     try:
@@ -732,16 +731,24 @@ async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
     return JSONResponse({"status": "deleting"}, status_code=202, background=bg)
 
 
-def _ensure_project_access(request: Request, *, project_id: str) -> None:
-    """Raise PermissionError if request is not allowed to access project_id."""
+def _ensure_project_access(request: Request, *, project_id: str):
+    """Return the project if the request is allowed to access it, else raise PermissionError."""
     _require_hasura()
-    sub, email = _get_owner_from_request(request)
+    try:
+        sub, email = _get_owner_from_request(request)
+    except PermissionError:
+        raise PermissionError("not_authenticated") from None
+
     from src.db.provisioning import hasura_client_from_env
-    from src.projects.store import ProjectOwner, ensure_project_for_id
+    from src.projects.store import ProjectOwner, get_project_by_id
 
     client = hasura_client_from_env()
     owner = ProjectOwner(sub=sub, email=email)
-    ensure_project_for_id(client, owner=owner, project_id=str(project_id))
+    p = get_project_by_id(client, owner=owner, project_id=str(project_id))
+    if not p:
+        # Treat missing or чужой project as not-found to avoid leaking existence.
+        raise PermissionError("not_found")
+    return p
 
 
 def _get_agent() -> Agent:
@@ -754,12 +761,17 @@ def _get_agent() -> Agent:
 @app.get("/api/sandbox/{project_id}/ls")
 async def api_sandbox_ls(project_id: str, request: Request, path: str = "/"):
     try:
-        _ensure_project_access(request, project_id=project_id)
-    except PermissionError:
-        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+        proj = _ensure_project_access(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
 
     agent = _get_agent()
-    await agent.init(session_id=project_id)
+    await agent.init(
+        session_id=project_id,
+        template_id=getattr(proj, "template_id", None),
+        slug=getattr(proj, "slug", None),
+    )
 
     from src.sandbox_files.policy import normalize_public_path
     from src.sandbox_files.sandbox_fs import SandboxFs
@@ -776,12 +788,17 @@ async def api_sandbox_ls(project_id: str, request: Request, path: str = "/"):
 @app.get("/api/sandbox/{project_id}/read")
 async def api_sandbox_read(project_id: str, path: str, request: Request):
     try:
-        _ensure_project_access(request, project_id=project_id)
-    except PermissionError:
-        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+        proj = _ensure_project_access(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
 
     agent = _get_agent()
-    await agent.init(session_id=project_id)
+    await agent.init(
+        session_id=project_id,
+        template_id=getattr(proj, "template_id", None),
+        slug=getattr(proj, "slug", None),
+    )
 
     from src.sandbox_files.policy import normalize_public_path
     from src.sandbox_files.sandbox_fs import SandboxFs
@@ -809,9 +826,10 @@ async def api_sandbox_read(project_id: str, path: str, request: Request):
 @app.put("/api/sandbox/{project_id}/write")
 async def api_sandbox_write(project_id: str, request: Request) -> JSONResponse:
     try:
-        _ensure_project_access(request, project_id=project_id)
-    except PermissionError:
-        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+        proj = _ensure_project_access(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
 
     body: Any
     try:
@@ -829,7 +847,11 @@ async def api_sandbox_write(project_id: str, request: Request) -> JSONResponse:
     )
 
     agent = _get_agent()
-    await agent.init(session_id=project_id)
+    await agent.init(
+        session_id=project_id,
+        template_id=getattr(proj, "template_id", None),
+        slug=getattr(proj, "slug", None),
+    )
 
     from src.sandbox_files.policy import normalize_public_path
     from src.sandbox_files.sandbox_fs import SandboxFs
@@ -856,9 +878,10 @@ async def api_sandbox_write(project_id: str, request: Request) -> JSONResponse:
 @app.post("/api/sandbox/{project_id}/mkdir")
 async def api_sandbox_mkdir(project_id: str, request: Request) -> JSONResponse:
     try:
-        _ensure_project_access(request, project_id=project_id)
-    except PermissionError:
-        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+        proj = _ensure_project_access(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
 
     body: Any
     try:
@@ -870,7 +893,11 @@ async def api_sandbox_mkdir(project_id: str, request: Request) -> JSONResponse:
     path = str(body.get("path") or "")
 
     agent = _get_agent()
-    await agent.init(session_id=project_id)
+    await agent.init(
+        session_id=project_id,
+        template_id=getattr(proj, "template_id", None),
+        slug=getattr(proj, "slug", None),
+    )
 
     from src.sandbox_files.policy import normalize_public_path
     from src.sandbox_files.sandbox_fs import SandboxFs
@@ -890,9 +917,10 @@ async def api_sandbox_mkdir(project_id: str, request: Request) -> JSONResponse:
 @app.post("/api/sandbox/{project_id}/create")
 async def api_sandbox_create(project_id: str, request: Request) -> JSONResponse:
     try:
-        _ensure_project_access(request, project_id=project_id)
-    except PermissionError:
-        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+        proj = _ensure_project_access(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
 
     body: Any
     try:
@@ -907,7 +935,11 @@ async def api_sandbox_create(project_id: str, request: Request) -> JSONResponse:
     content = str(body.get("content") or "")
 
     agent = _get_agent()
-    await agent.init(session_id=project_id)
+    await agent.init(
+        session_id=project_id,
+        template_id=getattr(proj, "template_id", None),
+        slug=getattr(proj, "slug", None),
+    )
 
     from src.sandbox_files.policy import normalize_public_path
     from src.sandbox_files.sandbox_fs import SandboxFs
@@ -934,9 +966,10 @@ async def api_sandbox_create(project_id: str, request: Request) -> JSONResponse:
 @app.post("/api/sandbox/{project_id}/rename")
 async def api_sandbox_rename(project_id: str, request: Request) -> JSONResponse:
     try:
-        _ensure_project_access(request, project_id=project_id)
-    except PermissionError:
-        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+        proj = _ensure_project_access(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
 
     body: Any
     try:
@@ -949,7 +982,11 @@ async def api_sandbox_rename(project_id: str, request: Request) -> JSONResponse:
     dst = str(body.get("to") or "")
 
     agent = _get_agent()
-    await agent.init(session_id=project_id)
+    await agent.init(
+        session_id=project_id,
+        template_id=getattr(proj, "template_id", None),
+        slug=getattr(proj, "slug", None),
+    )
 
     from src.sandbox_files.policy import normalize_public_path
     from src.sandbox_files.sandbox_fs import SandboxFs
@@ -972,12 +1009,17 @@ async def api_sandbox_rm(
     project_id: str, request: Request, path: str, recursive: int = 0
 ) -> JSONResponse:
     try:
-        _ensure_project_access(request, project_id=project_id)
-    except PermissionError:
-        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+        proj = _ensure_project_access(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
 
     agent = _get_agent()
-    await agent.init(session_id=project_id)
+    await agent.init(
+        session_id=project_id,
+        template_id=getattr(proj, "template_id", None),
+        slug=getattr(proj, "slug", None),
+    )
 
     from src.sandbox_files.policy import normalize_public_path
     from src.sandbox_files.sandbox_fs import SandboxFs
@@ -1279,10 +1321,15 @@ async def _handle_ws(ws: WebSocket) -> None:
         if mtype == MessageType.INIT.value:
             session_id = data.get("session_id")
             if not session_id:
-                # Keep behavior: server-side session id if missing.
-                session_id = Message.new(
-                    MessageType.INIT, {}, session_id=None
-                ).session_id
+                await ws.send_json(
+                    Message.new(
+                        MessageType.ERROR,
+                        {"error": "missing_session_id"},
+                        session_id="",
+                    ).to_dict()
+                )
+                await ws.close(code=1008)
+                return
 
             project = None
             git = None
@@ -1291,13 +1338,15 @@ async def _handle_ws(ws: WebSocket) -> None:
                 sub, email = _get_owner_from_ws(ws)
                 from src.db.provisioning import hasura_client_from_env
                 from src.gitlab.integration import ensure_gitlab_repo_for_project
-                from src.projects.store import ProjectOwner, ensure_project_for_id
+                from src.projects.store import ProjectOwner, get_project_by_id
 
                 client = hasura_client_from_env()
                 owner = ProjectOwner(sub=sub, email=email)
-                project = ensure_project_for_id(
+                project = get_project_by_id(
                     client, owner=owner, project_id=str(session_id)
                 )
+                if not project:
+                    raise PermissionError("not_found")
 
                 project, git = ensure_gitlab_repo_for_project(
                     client, owner=owner, project=project
@@ -1438,17 +1487,23 @@ async def _handle_ws(ws: WebSocket) -> None:
                 sub, email = _get_owner_from_ws(ws)
                 from src.db.provisioning import hasura_client_from_env
                 from src.gitlab.integration import ensure_gitlab_repo_for_project
-                from src.projects.store import ProjectOwner, ensure_project_for_id
+                from src.projects.store import ProjectOwner, get_project_by_id
 
                 client = hasura_client_from_env()
                 owner = ProjectOwner(sub=sub, email=email)
-                project = ensure_project_for_id(
+                project = get_project_by_id(
                     client, owner=owner, project_id=str(session_id)
                 )
+                if not project:
+                    raise PermissionError("not_found")
 
                 # Ensure agent session exists so we can attach project/git metadata
                 # for downstream controller graph nodes (git_sync).
-                await agent.init(session_id=session_id)
+                await agent.init(
+                    session_id=session_id,
+                    template_id=getattr(project, "template_id", None),
+                    slug=getattr(project, "slug", None),
+                )
                 project, git = ensure_gitlab_repo_for_project(
                     client, owner=owner, project=project
                 )
@@ -1513,15 +1568,21 @@ async def _handle_ws(ws: WebSocket) -> None:
                 sub, email = _get_owner_from_ws(ws)
                 from src.db.provisioning import hasura_client_from_env
                 from src.gitlab.integration import ensure_gitlab_repo_for_project
-                from src.projects.store import ProjectOwner, ensure_project_for_id
+                from src.projects.store import ProjectOwner, get_project_by_id
 
                 client = hasura_client_from_env()
                 owner = ProjectOwner(sub=sub, email=email)
-                project = ensure_project_for_id(
+                project = get_project_by_id(
                     client, owner=owner, project_id=str(session_id)
                 )
+                if not project:
+                    raise PermissionError("not_found")
 
-                await agent.init(session_id=session_id)
+                await agent.init(
+                    session_id=session_id,
+                    template_id=getattr(project, "template_id", None),
+                    slug=getattr(project, "slug", None),
+                )
                 project, git = ensure_gitlab_repo_for_project(
                     client, owner=owner, project=project
                 )
