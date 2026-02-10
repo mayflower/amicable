@@ -14,6 +14,19 @@ WORKDIR /app
 COPY k8s/images/amicable-sandbox-fastapi/app/ /app/
 RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
+# Pre-wire Hasura DB proxy integration for the FastAPI template.
+# The agent will overwrite /amicable-db.js with real credentials when Hasura is configured.
+RUN python3 - <<'PY'
+from pathlib import Path
+
+db_js = Path("/app/amicable-db.js")
+if not db_js.exists():
+    db_js.write_text(
+        "window.__AMICABLE_DB__ = window.__AMICABLE_DB__ || null;\n",
+        encoding="utf-8",
+    )
+PY
+
 # Default DeepAgents memory/skills locations.
 COPY k8s/images/amicable-sandbox-fastapi/AGENTS.md /app/AGENTS.md
 COPY k8s/images/amicable-sandbox-fastapi/.deepagents/AGENTS.md /app/.deepagents/AGENTS.md
