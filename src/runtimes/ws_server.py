@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -40,6 +41,10 @@ logger = logging.getLogger(__name__)
 
 _bootstrap_lock_by_project: dict[str, asyncio.Lock] = {}
 _git_pull_lock_by_project: dict[str, asyncio.Lock] = {}
+_agent_run_lock_by_project: dict[str, asyncio.Lock] = {}
+
+# Best-effort in-memory limiter for runtime error auto-heal.
+_runtime_autoheal_state_by_project: dict[str, Any] = {}
 
 _naming_llm: Any = None
 
@@ -86,6 +91,44 @@ def _hasura_enabled() -> bool:
         return True
     except Exception:
         return False
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return int(default)
+    try:
+        return int(raw)
+    except Exception:
+        return int(default)
+
+
+def _runtime_auto_heal_enabled() -> bool:
+    return _env_bool("AMICABLE_RUNTIME_AUTO_HEAL", True)
+
+
+def _runtime_auto_heal_cooldown_s() -> int:
+    return max(0, _env_int("AMICABLE_RUNTIME_AUTO_HEAL_COOLDOWN_S", 30))
+
+
+def _runtime_auto_heal_max_attempts_per_fingerprint() -> int:
+    return max(0, _env_int("AMICABLE_RUNTIME_AUTO_HEAL_MAX_ATTEMPTS_PER_FINGERPRINT", 2))
+
+
+def _fingerprint_fallback(err: dict[str, Any]) -> str:
+    kind = str(err.get("kind") or "")
+    msg = str(err.get("message") or "")
+    stack = str(err.get("stack") or "")
+    url = str(err.get("url") or "")
+    base = f"{kind}|{msg}|{stack}|{url}".encode("utf-8", errors="replace")
+    return "rt_" + hashlib.sha256(base).hexdigest()[:16]
 
 
 def _get_owner_from_request(request: Request) -> tuple[str, str]:
@@ -1298,6 +1341,15 @@ async def db_graphql_proxy(app_id: str, request: Request) -> Response:
                 content=b"invalid body",
                 headers=_db_cors_headers(origin),
             )
+
+        # Hasura prefixes root fields for non-public schemas (e.g. `app_deadbeef_todos`).
+        # Our frontend clients typically query logical table names (`todos`). Rewrite
+        # top-level root fields to target this app's schema.
+        q = body.get("query")
+        if isinstance(q, str) and q.strip():
+            from src.db.graphql_rewrite import rewrite_hasura_query_for_app_schema
+
+            body["query"] = rewrite_hasura_query_for_app_schema(q, schema=app.schema_name)
         resp = client.graphql(body, bearer_jwt=bearer)
     except Exception as e:
         return Response(
@@ -1431,6 +1483,45 @@ def _require_auth(ws: WebSocket) -> None:
         return
 
     raise PermissionError(f"unknown AUTH_MODE: {mode}")
+
+
+async def _ensure_project_context_for_session(
+    *, ws: WebSocket, agent: Agent, session_id: str
+) -> None:
+    """Authorize, ensure agent session exists, and persist project/git metadata."""
+    _require_hasura()
+    sub, email = _get_owner_from_ws(ws)
+
+    from src.db.provisioning import hasura_client_from_env
+    from src.gitlab.integration import ensure_gitlab_repo_for_project
+    from src.projects.store import ProjectOwner, get_project_by_id
+
+    client = hasura_client_from_env()
+    owner = ProjectOwner(sub=sub, email=email)
+    project = get_project_by_id(client, owner=owner, project_id=str(session_id))
+    if not project:
+        raise PermissionError("not_found")
+
+    await agent.init(
+        session_id=session_id,
+        template_id=getattr(project, "template_id", None),
+        slug=getattr(project, "slug", None),
+    )
+    project, git = ensure_gitlab_repo_for_project(client, owner=owner, project=project)
+
+    init_data = agent.session_data.get(session_id) or {}
+    if isinstance(init_data, dict):
+        init_data["project"] = _project_dto(project)
+        init_data["git"] = git
+        agent.session_data[session_id] = init_data
+
+
+def _agent_run_lock(session_id: str) -> asyncio.Lock:
+    lock = _agent_run_lock_by_project.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _agent_run_lock_by_project[session_id] = lock
+    return lock
 
 
 async def _handle_ws(ws: WebSocket) -> None:
@@ -1631,37 +1722,9 @@ async def _handle_ws(ws: WebSocket) -> None:
                 continue
 
             try:
-                _require_hasura()
-                sub, email = _get_owner_from_ws(ws)
-                from src.db.provisioning import hasura_client_from_env
-                from src.gitlab.integration import ensure_gitlab_repo_for_project
-                from src.projects.store import ProjectOwner, get_project_by_id
-
-                client = hasura_client_from_env()
-                owner = ProjectOwner(sub=sub, email=email)
-                project = get_project_by_id(
-                    client, owner=owner, project_id=str(session_id)
+                await _ensure_project_context_for_session(
+                    ws=ws, agent=agent, session_id=str(session_id)
                 )
-                if not project:
-                    raise PermissionError("not_found")
-
-                # Ensure agent session exists so we can attach project/git metadata
-                # for downstream controller graph nodes (git_sync).
-                await agent.init(
-                    session_id=session_id,
-                    template_id=getattr(project, "template_id", None),
-                    slug=getattr(project, "slug", None),
-                )
-                project, git = ensure_gitlab_repo_for_project(
-                    client, owner=owner, project=project
-                )
-
-                # Persist into session_data for the controller run.
-                init_data = agent.session_data.get(session_id) or {}
-                if isinstance(init_data, dict):
-                    init_data["project"] = _project_dto(project)
-                    init_data["git"] = git
-                    agent.session_data[session_id] = init_data
             except PermissionError:
                 await ws.close(code=1008)
                 return
@@ -1689,8 +1752,192 @@ async def _handle_ws(ws: WebSocket) -> None:
                 )
                 continue
 
-            async for out in agent.send_feedback(session_id=session_id, feedback=text):
-                await ws.send_json(out)
+            lock = _agent_run_lock(str(session_id))
+            async with lock:
+                async for out in agent.send_feedback(
+                    session_id=str(session_id), feedback=text
+                ):
+                    await ws.send_json(out)
+            continue
+
+        if mtype == MessageType.RUNTIME_ERROR.value:
+            session_id = data.get("session_id")
+            err = data.get("error")
+            if not session_id or not isinstance(err, dict):
+                await ws.send_json(
+                    Message.new(
+                        MessageType.ERROR,
+                        {"error": "missing session_id or error"},
+                        session_id=session_id or "",
+                    ).to_dict()
+                )
+                continue
+
+            # Ensure ownership + session context (project/git metadata) matches USER requests.
+            try:
+                await _ensure_project_context_for_session(
+                    ws=ws, agent=agent, session_id=str(session_id)
+                )
+            except PermissionError:
+                await ws.close(code=1008)
+                return
+            except Exception as e:
+                await ws.send_json(
+                    Message.new(
+                        MessageType.ERROR,
+                        {"error": "project_init_failed", "detail": str(e)},
+                        session_id=str(session_id),
+                    ).to_dict()
+                )
+                await ws.close(code=1011)
+                return
+
+            pending = agent.get_pending_hitl(str(session_id))
+            if pending:
+                await ws.send_json(
+                    Message.new(
+                        MessageType.ERROR,
+                        {
+                            "error": "HITL approval pending. Approve/reject the pending tool call to continue."
+                        },
+                        session_id=str(session_id),
+                    ).to_dict()
+                )
+                continue
+
+            if not _runtime_auto_heal_enabled():
+                continue
+
+            lock = _agent_run_lock(str(session_id))
+
+            from src.runtime_autoheal import (
+                RuntimeAutoHealConfig,
+                RuntimeAutoHealState,
+                apply_runtime_auto_heal_decision,
+                decide_runtime_auto_heal,
+            )
+
+            fp = str(err.get("fingerprint") or "").strip() or _fingerprint_fallback(err)
+            now_ms = int(time.time() * 1000)
+            try:
+                raw_ts = err.get("ts_ms")
+                if isinstance(raw_ts, (int, float)) and raw_ts > 0:
+                    now_ms = int(raw_ts)
+            except Exception:
+                pass
+
+            st = _runtime_autoheal_state_by_project.get(str(session_id))
+            if not isinstance(st, RuntimeAutoHealState):
+                st = RuntimeAutoHealState()
+
+            cfg = RuntimeAutoHealConfig(
+                enabled=True,
+                cooldown_s=_runtime_auto_heal_cooldown_s(),
+                dedupe_window_s=600,
+                max_attempts_per_fingerprint=_runtime_auto_heal_max_attempts_per_fingerprint(),
+            )
+
+            decision = decide_runtime_auto_heal(
+                state=st, fingerprint=fp, cfg=cfg, now_ms=now_ms
+            )
+            if not decision.allowed:
+                if decision.reason == "max_attempts":
+                    await ws.send_json(
+                        Message.new(
+                            MessageType.ERROR,
+                            {
+                                "error": "runtime_auto_heal_paused",
+                                "detail": "Auto-heal paused for this repeating runtime error (max attempts reached).",
+                                "fingerprint": fp,
+                            },
+                            session_id=str(session_id),
+                        ).to_dict()
+                    )
+                continue
+
+            kind = str(err.get("kind") or "window_error")
+            message = str(err.get("message") or "")
+            url = str(err.get("url") or "")
+            stack = str(err.get("stack") or "")
+            extra = err.get("extra")
+
+            # Optionally include preview logs for load failures.
+            preview_logs = ""
+            if kind == "preview_load_failed":
+                try:
+                    if agent._session_manager is not None:
+                        backend = agent._session_manager.get_backend(str(session_id))
+                        res = await asyncio.to_thread(
+                            backend.execute, "tail -n 200 /tmp/amicable-preview.log || true"
+                        )
+                        out = getattr(res, "output", "") or ""
+                        preview_logs = str(out)
+                except Exception:
+                    preview_logs = ""
+
+            hint = ""
+            if kind == "graphql_error":
+                m = re.search(
+                    r"field\\s+'([^']+)'\\s+not\\s+found\\s+in\\s+type\\s*:\\s*'query_root'",
+                    message,
+                    flags=re.IGNORECASE,
+                )
+                if m:
+                    field = m.group(1)
+                    hint = (
+                        "\n\nHint: This usually means the Hasura table/field is missing or not tracked. "
+                        f"Consider creating/tracking the relevant table for `{field}` using `db_create_table` "
+                        "(safe) or updating the query to match the existing schema."
+                    )
+
+            # Bound potentially-large fields.
+            if len(message) > 2000:
+                message = message[:2000]
+            if len(stack) > 8000:
+                stack = stack[:8000]
+            if len(url) > 2000:
+                url = url[:2000]
+            if preview_logs and len(preview_logs) > 12000:
+                preview_logs = preview_logs[-12000:]
+
+            prompt = (
+                "Runtime error detected in the running preview. Please fix the cause so the preview runs without errors.\n\n"
+                f"Kind: {kind}\n"
+                f"Message: {message}\n"
+                + (f"URL: {url}\n" if url else "")
+                + (f"Stack:\n{stack}\n" if stack else "")
+            )
+            if extra is not None:
+                try:
+                    payload = json.dumps(extra, indent=2, sort_keys=True, default=str)
+                except Exception:
+                    payload = str(extra)
+                prompt += f"\nExtra:\n{payload}\n"
+            if preview_logs:
+                prompt += f"\nPreview logs (tail):\n{preview_logs}\n"
+            prompt += hint
+
+            try:
+                # Avoid queuing auto-heal runs behind user-initiated runs.
+                await asyncio.wait_for(lock.acquire(), timeout=0.0)
+            except TimeoutError:
+                continue
+            except Exception:
+                continue
+
+            # Mark as handled (attempt count + cooldown) once we actually start the run.
+            _runtime_autoheal_state_by_project[str(session_id)] = apply_runtime_auto_heal_decision(
+                state=st, fingerprint=fp, attempts=decision.attempts, now_ms=now_ms
+            )
+
+            try:
+                async for out in agent.send_feedback(
+                    session_id=str(session_id), feedback=prompt
+                ):
+                    await ws.send_json(out)
+            finally:
+                with contextlib.suppress(Exception):
+                    lock.release()
             continue
 
         if mtype == MessageType.HITL_RESPONSE.value:
@@ -1712,34 +1959,9 @@ async def _handle_ws(ws: WebSocket) -> None:
                 continue
 
             try:
-                _require_hasura()
-                sub, email = _get_owner_from_ws(ws)
-                from src.db.provisioning import hasura_client_from_env
-                from src.gitlab.integration import ensure_gitlab_repo_for_project
-                from src.projects.store import ProjectOwner, get_project_by_id
-
-                client = hasura_client_from_env()
-                owner = ProjectOwner(sub=sub, email=email)
-                project = get_project_by_id(
-                    client, owner=owner, project_id=str(session_id)
+                await _ensure_project_context_for_session(
+                    ws=ws, agent=agent, session_id=str(session_id)
                 )
-                if not project:
-                    raise PermissionError("not_found")
-
-                await agent.init(
-                    session_id=session_id,
-                    template_id=getattr(project, "template_id", None),
-                    slug=getattr(project, "slug", None),
-                )
-                project, git = ensure_gitlab_repo_for_project(
-                    client, owner=owner, project=project
-                )
-
-                init_data = agent.session_data.get(session_id) or {}
-                if isinstance(init_data, dict):
-                    init_data["project"] = _project_dto(project)
-                    init_data["git"] = git
-                    agent.session_data[session_id] = init_data
             except PermissionError:
                 await ws.close(code=1008)
                 return
@@ -1753,12 +1975,14 @@ async def _handle_ws(ws: WebSocket) -> None:
                 )
                 await ws.close(code=1011)
                 return
-            async for out in agent.resume_hitl(
-                session_id=session_id,
-                interrupt_id=interrupt_id,
-                response=response,
-            ):
-                await ws.send_json(out)
+            lock = _agent_run_lock(str(session_id))
+            async with lock:
+                async for out in agent.resume_hitl(
+                    session_id=str(session_id),
+                    interrupt_id=interrupt_id,
+                    response=response,
+                ):
+                    await ws.send_json(out)
             continue
 
         # Ignore unknowns (frontend can send ping)

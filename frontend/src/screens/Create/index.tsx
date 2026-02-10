@@ -132,6 +132,7 @@ const Create = () => {
   const isResizing = isChatResizing;
   const [messages, setMessages] = useState<Message[]>([]);
   const [iframeUrl, setIframeUrl] = useState("");
+  const [rawIframeUrl, setRawIframeUrl] = useState("");
   const [iframeError, setIframeError] = useState(false);
   const [iframeReady, setIframeReady] = useState(false);
   const [isUpdateInProgress, setIsUpdateInProgress] = useState(false);
@@ -269,7 +270,21 @@ const Create = () => {
       }
 
       if (typeof message.data.url === "string" && message.data.sandbox_id) {
-        setIframeUrl(message.data.url);
+        const raw = message.data.url;
+        setRawIframeUrl(raw);
+        try {
+          const u = new URL(raw, window.location.origin);
+          u.searchParams.set(
+            "amicableParentOrigin",
+            window.location.origin
+          );
+          setIframeUrl(u.toString());
+        } catch {
+          const sep = raw.includes("?") ? "&" : "?";
+          setIframeUrl(
+            `${raw}${sep}amicableParentOrigin=${encodeURIComponent(window.location.origin)}`
+          );
+        }
         setIframeError(false);
       }
       // Backfill session id for WS-generated sessions.
@@ -1196,6 +1211,86 @@ const Create = () => {
     }
   }, [iframeUrl, isConnected]);
 
+  // Forward preview runtime errors (postMessage) to the agent for auto-heal.
+  useEffect(() => {
+    if (!rawIframeUrl) return;
+
+    let allowedOrigin = "";
+    try {
+      allowedOrigin = new URL(rawIframeUrl).origin;
+    } catch {
+      allowedOrigin = "";
+    }
+
+    const recent = new Map<string, number>();
+    const MAX_RECENT = 200;
+    const WINDOW_MS = 10 * 60 * 1000;
+
+    const hash = (s: string): string => {
+      let h = 5381;
+      for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
+      return (h >>> 0).toString(16);
+    };
+
+    const trunc = (s: unknown, n: number): string => {
+      const v = typeof s === "string" ? s : String(s ?? "");
+      if (v.length <= n) return v;
+      return v.slice(0, Math.max(0, n - 3)) + "...";
+    };
+
+    const handler = (event: MessageEvent) => {
+      if (!event?.data || typeof event.data !== "object") return;
+      if (allowedOrigin && event.origin !== allowedOrigin) return;
+
+      const anyData = event.data as any;
+      if (anyData.type !== "amicable_runtime_error") return;
+      const p = anyData.payload;
+      if (!p || typeof p !== "object") return;
+
+      const kind = typeof p.kind === "string" ? p.kind : "window_error";
+      const message = trunc(p.message, 2000);
+      const stack =
+        typeof p.stack === "string" ? trunc(p.stack, 8000) : undefined;
+      const url = typeof p.url === "string" ? trunc(p.url, 2000) : undefined;
+      const tsMs = typeof p.ts_ms === "number" ? p.ts_ms : Date.now();
+
+      const base = `${kind}|${message}|${stack || ""}|${url || ""}`;
+      const fingerprint =
+        typeof p.fingerprint === "string" && p.fingerprint
+          ? p.fingerprint
+          : `rt_${hash(base)}`;
+
+      const now = Date.now();
+      const prev = recent.get(fingerprint);
+      if (typeof prev === "number" && now - prev < WINDOW_MS) return;
+      recent.set(fingerprint, now);
+      if (recent.size > MAX_RECENT) {
+        const items = [...recent.entries()].sort((a, b) => a[1] - b[1]);
+        for (let i = 0; i < items.length - MAX_RECENT; i++) {
+          recent.delete(items[i]![0]);
+        }
+      }
+
+      if (!resolvedSessionId) return;
+      if (!isConnected) return;
+      send(MessageType.RUNTIME_ERROR, {
+        session_id: resolvedSessionId,
+        error: {
+          kind,
+          message,
+          stack,
+          url,
+          ts_ms: tsMs,
+          fingerprint,
+          extra: typeof p.extra === "object" ? p.extra : undefined,
+        },
+      });
+    };
+
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [rawIframeUrl, resolvedSessionId, isConnected, send]);
+
   const handleIframeLoad = () => {
     console.log("Iframe loaded successfully:", iframeUrl);
     setIframeError(false);
@@ -1205,6 +1300,24 @@ const Create = () => {
   const handleIframeError = () => {
     console.error("Iframe failed to load:", iframeUrl);
     setIframeError(true);
+    if (resolvedSessionId && isConnected) {
+      const now = Date.now();
+      const u = rawIframeUrl || iframeUrl;
+      let h = 5381;
+      for (let i = 0; i < u.length; i++) h = ((h << 5) + h) ^ u.charCodeAt(i);
+      const fp = `preview_${(h >>> 0).toString(16)}`;
+      send(MessageType.RUNTIME_ERROR, {
+        session_id: resolvedSessionId,
+        error: {
+          kind: "preview_load_failed",
+          message: "Preview iframe failed to load",
+          url: u,
+          ts_ms: now,
+          fingerprint: fp,
+          extra: { iframe_url: u },
+        },
+      });
+    }
   };
 
   // Auto-connect when sessionId is available

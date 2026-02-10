@@ -212,6 +212,7 @@ class MessageType(Enum):
     TRACE_EVENT = "trace_event"
     HITL_REQUEST = "hitl_request"
     HITL_RESPONSE = "hitl_response"
+    RUNTIME_ERROR = "runtime_error"
     ERROR = "error"
     PING = "ping"
 
@@ -532,6 +533,8 @@ class Agent:
             parse_db_js,
             remix_db_paths,
             render_db_js,
+            render_runtime_js,
+            runtime_js_path_for_inject_kind,
             sveltekit_db_paths,
             vite_db_paths,
         )
@@ -552,6 +555,7 @@ class Agent:
         inject_kind = spec.db_inject_kind
 
         db_js_path = "/amicable-db.js"
+        runtime_js_path = "/amicable-runtime.js"
         entry_paths: tuple[str, ...] = ()
         ensure_entry = None
         if inject_kind == "vite_index_html":
@@ -574,6 +578,7 @@ class Agent:
         elif inject_kind == "laravel_blade":
             db_js_path, entry_paths = laravel_db_paths()
             ensure_entry = ensure_laravel_welcome_includes_db_script
+        runtime_js_path = runtime_js_path_for_inject_kind(inject_kind)
 
         # Determine app_key to inject:
         # - if newly created/rotated, we have plaintext app_key
@@ -613,6 +618,7 @@ class Agent:
                 app_key=app_key,
                 preview_origin=preview_origin,
             )
+            runtime_js = render_runtime_js()
 
             # Ensure the browser gets the injected db file. Optionally patch
             # the stack entrypoint to include the script tag.
@@ -631,13 +637,24 @@ class Agent:
                     backend.upload_files(
                         [
                             (db_js_path, db_js.encode("utf-8")),
+                            (runtime_js_path, runtime_js.encode("utf-8")),
                             (entry_path, updated.encode("utf-8")),
                         ]
                     )
                 else:
-                    backend.upload_files([(db_js_path, db_js.encode("utf-8"))])
+                    backend.upload_files(
+                        [
+                            (db_js_path, db_js.encode("utf-8")),
+                            (runtime_js_path, runtime_js.encode("utf-8")),
+                        ]
+                    )
             else:
-                backend.upload_files([(db_js_path, db_js.encode("utf-8"))])
+                backend.upload_files(
+                    [
+                        (db_js_path, db_js.encode("utf-8")),
+                        (runtime_js_path, runtime_js.encode("utf-8")),
+                    ]
+                )
 
         init_data["app_id"] = session_id
         init_data["db"] = {"graphql_url": graphql_url}

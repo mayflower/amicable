@@ -12,6 +12,9 @@ license: MIT
 ## How It Works
 - The agent injects a small config object into the browser at `window.__AMICABLE_DB__`.
 - Use `graphqlUrl` and `appKey` to call the proxy.
+- The proxy rewrites top-level Hasura root fields so you can query logical table names
+  like `todos` even though the underlying Postgres tables live in a per-app schema
+  (which Hasura would normally expose as `app_<hash>_todos`).
 
 ## Minimal Fetch Example
 ```ts

@@ -73,6 +73,8 @@ fastapi==0.128.5
     # via -r requirements.in
 fastmcp==2.14.5
     # via -r requirements.in
+graphql-core==3.2.7
+    # via -r requirements.in
 h11==0.16.0
     # via
     #   httpcore

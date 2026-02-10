@@ -71,7 +71,30 @@ def _start_preview() -> None:
 
     def _run() -> None:
         try:
-            subprocess.Popen(cmd, cwd=str(APP_ROOT), env=env)
+            log_path = (env.get("AMICABLE_PREVIEW_LOG_PATH") or "/tmp/amicable-preview.log").strip()
+            pid_path = (env.get("AMICABLE_PREVIEW_PID_PATH") or "/tmp/amicable-preview.pid").strip()
+            try:
+                logf = open(log_path, "a", encoding="utf-8", errors="replace")
+            except Exception:
+                logf = None
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=str(APP_ROOT),
+                    env=env,
+                    stdout=logf or subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT if logf else subprocess.DEVNULL,
+                )
+                try:
+                    Path(pid_path).write_text(str(proc.pid), encoding="utf-8")
+                except Exception:
+                    pass
+            finally:
+                try:
+                    if logf is not None:
+                        logf.close()
+                except Exception:
+                    pass
         except Exception as exc:
             print(f"Failed to start preview server: {exc}")
 

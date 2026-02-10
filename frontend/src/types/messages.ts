@@ -12,6 +12,7 @@ export enum MessageType {
   TRACE_EVENT = "trace_event",
   HITL_REQUEST = "hitl_request",
   HITL_RESPONSE = "hitl_response",
+  RUNTIME_ERROR = "runtime_error",
 }
 
 export enum Sender {
