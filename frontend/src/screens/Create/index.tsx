@@ -1360,23 +1360,6 @@ const Create = () => {
     </div>
   );
 
-  const UpdateInProgressState = () => (
-    <div className="flex flex-col items-center justify-center gap-6">
-      <div className="animate-spin flex items-center justify-center text-gray-400">
-        <Loader2 size={64} />
-      </div>
-      <div
-        className="text-[18px] font-medium text-muted-foreground animate-pulse"
-        style={{ marginTop: "24px" }}
-      >
-        Updating Workspace...
-      </div>
-      <p style={{ marginTop: "12px", textAlign: "center" }}>
-        Please wait while we apply your changes to the website.
-      </p>
-    </div>
-  );
-
   type HitlDecisionDraft = {
     type: HitlDecisionType;
     rejectMessage: string;
@@ -1658,7 +1641,7 @@ const Create = () => {
           active={activeView === "preview"}
           disabled={
             activeView === "preview" &&
-            (!iframeUrl || !iframeReady || isUpdateInProgress || !initCompleted)
+            (!iframeUrl || !iframeReady || !initCompleted)
           }
           onClick={() => setMainView("preview")}
         >
@@ -1770,7 +1753,7 @@ const Create = () => {
                 <div className="absolute inset-0 flex flex-col items-center justify-center z-[2]">
                   <LoadingState />
                 </div>
-              ) : !iframeReady || isUpdateInProgress || !initCompleted ? (
+              ) : !iframeReady || !initCompleted ? (
                 <>
                   <div className="w-full h-full overflow-auto flex items-center justify-center">
                     <iframe
@@ -1787,8 +1770,7 @@ const Create = () => {
                         isResizing && "pointer-events-none"
                       )}
                       style={{
-                        visibility:
-                          iframeReady && !isUpdateInProgress ? "visible" : "hidden",
+                        visibility: iframeReady ? "visible" : "hidden",
                         width:
                           typeof DEVICE_SPECS[selectedDevice].width === "number"
                             ? `${DEVICE_SPECS[selectedDevice].width}px`
@@ -1810,51 +1792,54 @@ const Create = () => {
                     />
                   </div>
                   <div className="absolute inset-0 flex flex-col items-center justify-center z-[2]">
-                    {isUpdateInProgress || (!iframeReady && !initCompleted) ? (
-                      <UpdateInProgressState />
-                    ) : (
-                      <LoadingState />
-                    )}
+                    <LoadingState />
                   </div>
                 </>
               ) : (
-                <div className="w-full h-full overflow-auto flex items-center justify-center">
-                  <iframe
-                    ref={iframeRef}
-                    src={iframeUrl}
-                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-                    allow="fullscreen"
-                    referrerPolicy="no-referrer"
-                    loading="lazy"
-                    onLoad={handleIframeLoad}
-                    onError={handleIframeError}
-                    className={cn(
-                      "w-full h-full max-w-full max-h-full border-0 block box-border",
-                      isResizing && "pointer-events-none"
-                    )}
-                    style={{
-                      visibility:
-                        iframeReady && !isUpdateInProgress ? "visible" : "hidden",
-                      width:
-                        typeof DEVICE_SPECS[selectedDevice].width === "number"
-                          ? `${DEVICE_SPECS[selectedDevice].width}px`
-                          : DEVICE_SPECS[selectedDevice].width,
-                      height:
-                        typeof DEVICE_SPECS[selectedDevice].height === "number"
-                          ? `${DEVICE_SPECS[selectedDevice].height}px`
-                          : DEVICE_SPECS[selectedDevice].height,
-                      margin: selectedDevice === "desktop" ? "0" : "24px auto",
-                      display: "block",
-                      borderRadius: selectedDevice === "desktop" ? 0 : 16,
-                      boxShadow:
-                        selectedDevice === "desktop"
-                          ? "none"
-                          : "0 2px 16px rgba(0,0,0,0.12)",
-                      background: "#fff",
-                      boxSizing: "border-box",
-                    }}
-                  />
-                </div>
+                <>
+                  <div className="w-full h-full overflow-auto flex items-center justify-center">
+                    <iframe
+                      ref={iframeRef}
+                      src={iframeUrl}
+                      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                      allow="fullscreen"
+                      referrerPolicy="no-referrer"
+                      loading="lazy"
+                      onLoad={handleIframeLoad}
+                      onError={handleIframeError}
+                      className={cn(
+                        "w-full h-full max-w-full max-h-full border-0 block box-border",
+                        isResizing && "pointer-events-none"
+                      )}
+                      style={{
+                        visibility: iframeReady ? "visible" : "hidden",
+                        width:
+                          typeof DEVICE_SPECS[selectedDevice].width === "number"
+                            ? `${DEVICE_SPECS[selectedDevice].width}px`
+                            : DEVICE_SPECS[selectedDevice].width,
+                        height:
+                          typeof DEVICE_SPECS[selectedDevice].height === "number"
+                            ? `${DEVICE_SPECS[selectedDevice].height}px`
+                            : DEVICE_SPECS[selectedDevice].height,
+                        margin: selectedDevice === "desktop" ? "0" : "24px auto",
+                        display: "block",
+                        borderRadius: selectedDevice === "desktop" ? 0 : 16,
+                        boxShadow:
+                          selectedDevice === "desktop"
+                            ? "none"
+                            : "0 2px 16px rgba(0,0,0,0.12)",
+                        background: "#fff",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </div>
+                  {isUpdateInProgress && (
+                    <div className="absolute top-3 right-3 z-[2] flex items-center gap-2 bg-black/70 text-white text-xs px-3 py-1.5 rounded-full backdrop-blur-sm">
+                      <Loader2 size={12} className="animate-spin" />
+                      <span>{agentStatusText || "Updating..."}</span>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
@@ -1863,36 +1848,21 @@ const Create = () => {
               <div className="flex gap-2">
                 <DeviceButton
                   active={selectedDevice === "mobile"}
-                  disabled={
-                    !iframeUrl ||
-                    !iframeReady ||
-                    isUpdateInProgress ||
-                    !initCompleted
-                  }
+                  disabled={!iframeUrl || !iframeReady || !initCompleted}
                   onClick={() => setSelectedDevice("mobile")}
                 >
                   <PhoneIcon />
                 </DeviceButton>
                 <DeviceButton
                   active={selectedDevice === "tablet"}
-                  disabled={
-                    !iframeUrl ||
-                    !iframeReady ||
-                    isUpdateInProgress ||
-                    !initCompleted
-                  }
+                  disabled={!iframeUrl || !iframeReady || !initCompleted}
                   onClick={() => setSelectedDevice("tablet")}
                 >
                   <TabletIcon />
                 </DeviceButton>
                 <DeviceButton
                   active={selectedDevice === "desktop"}
-                  disabled={
-                    !iframeUrl ||
-                    !iframeReady ||
-                    isUpdateInProgress ||
-                    !initCompleted
-                  }
+                  disabled={!iframeUrl || !iframeReady || !initCompleted}
                   onClick={() => setSelectedDevice("desktop")}
                 >
                   <ComputerIcon />
