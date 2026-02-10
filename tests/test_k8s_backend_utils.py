@@ -1,8 +1,11 @@
 import re
 import unittest
 
-from src.sandbox_backends.k8s_backend import _dns_safe_claim_name, _preview_url
-from src.sandbox_backends.k8s_backend import K8sAgentSandboxBackend
+from src.sandbox_backends.k8s_backend import (
+    K8sAgentSandboxBackend,
+    _dns_safe_claim_name,
+    _preview_url,
+)
 
 
 class TestK8sBackendUtils(unittest.TestCase):
@@ -39,11 +42,17 @@ class TestK8sBackendUtils(unittest.TestCase):
         self.assertEqual(a, b)
 
     def test_preview_url_format(self):
-        url = _preview_url(claim_name="amicable-0f3a9c2e", base_domain="preview.example.com", scheme="https")
+        url = _preview_url(
+            claim_name="amicable-0f3a9c2e",
+            base_domain="preview.example.com",
+            scheme="https",
+        )
         self.assertEqual(url, "https://amicable-0f3a9c2e.preview.example.com/")
 
     def test_preview_url_strips_dot(self):
-        url = _preview_url(claim_name="x", base_domain=".preview.example.com", scheme="https")
+        url = _preview_url(
+            claim_name="x", base_domain=".preview.example.com", scheme="https"
+        )
         self.assertEqual(url, "https://x.preview.example.com/")
 
     def test_create_app_environment_uses_template_name_override(self):

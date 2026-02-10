@@ -25,6 +25,9 @@ ENV COMPOSER_ALLOW_SUPERUSER=1
 RUN composer create-project laravel/laravel /app \
   && npm install
 
+# Pre-wire the base app with DB proxy wiring (Hasura via agent).
+COPY k8s/images/amicable-sandbox-laravel/overlay/ /app/
+
 # Pre-wire Hasura DB proxy integration for the Laravel template.
 # The agent will overwrite /public/amicable-db.js with real credentials when Hasura is configured.
 RUN python3 - <<'PY'

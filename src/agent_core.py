@@ -342,7 +342,7 @@ class Agent:
         if session_id in self.session_data:
             return True
 
-        from src.db.provisioning import db_enabled_from_env, hasura_client_from_env
+        from src.db.provisioning import hasura_client_from_env, require_hasura_from_env
         from src.deepagents_backend.session_sandbox_manager import SessionSandboxManager
         from src.templates.registry import (
             default_template_id,
@@ -350,13 +350,16 @@ class Agent:
             parse_template_id,
         )
 
+        # This deployment requires Hasura. Fail fast for clearer errors.
+        require_hasura_from_env()
+
         if self._session_manager is None:
             self._session_manager = SessionSandboxManager()
 
         # Resolve missing slug from the DB so all init paths (WS + HTTP sandbox FS)
         # can create/reuse the same sandbox and generate stable preview URLs.
         effective_slug = slug
-        if effective_slug is None and db_enabled_from_env():
+        if effective_slug is None:
             try:
                 from src.projects.store import get_project_any_owner
 
@@ -368,7 +371,7 @@ class Agent:
                 effective_slug = slug
 
         effective_template_id = parse_template_id(template_id) if template_id else None
-        if effective_template_id is None and db_enabled_from_env():
+        if effective_template_id is None:
             try:
                 from src.projects.store import get_project_template_id_any_owner
 
@@ -410,16 +413,15 @@ class Agent:
         }
 
         # Persist sandbox_id (best-effort) for preview routing and debugging.
-        if db_enabled_from_env():
-            try:
-                from src.projects.store import set_project_sandbox_id_any_owner
+        try:
+            from src.projects.store import set_project_sandbox_id_any_owner
 
-                client = hasura_client_from_env()
-                set_project_sandbox_id_any_owner(
-                    client, project_id=session_id, sandbox_id=str(sess.sandbox_id)
-                )
-            except Exception:
-                pass
+            client = hasura_client_from_env()
+            set_project_sandbox_id_any_owner(
+                client, project_id=session_id, sandbox_id=str(sess.sandbox_id)
+            )
+        except Exception:
+            pass
 
         # Now that we have both PREVIEW_BASE_DOMAIN and the slug, override the
         # init preview URL to use the slug host label if possible.
@@ -449,18 +451,17 @@ class Agent:
                 repo_web_url = None
 
                 # Best-effort project metadata from Hasura (no ownership enforcement).
-                if db_enabled_from_env():
-                    try:
-                        from src.projects.store import get_project_any_owner
+                try:
+                    from src.projects.store import get_project_any_owner
 
-                        client = hasura_client_from_env()
-                        p = get_project_any_owner(client, project_id=session_id)
-                        if p is not None:
-                            project_name = p.name
-                            project_slug = p.slug
-                            repo_web_url = p.gitlab_web_url
-                    except Exception:
-                        pass
+                    client = hasura_client_from_env()
+                    p = get_project_any_owner(client, project_id=session_id)
+                    if p is not None:
+                        project_name = p.name
+                        project_slug = p.slug
+                        repo_web_url = p.gitlab_web_url
+                except Exception:
+                    pass
 
                 # GitLab context for source-location/repo_url fallback.
                 try:
@@ -493,148 +494,134 @@ class Agent:
         except Exception:
             logger.exception("platform scaffolding failed (continuing)")
 
-        # DB provisioning + sandbox injection (optional if not configured).
-        if db_enabled_from_env():
-            try:
-                from urllib.parse import urlparse
+        # DB provisioning + sandbox injection (required).
+        from urllib.parse import urlparse
 
-                from src.db.provisioning import (
-                    ensure_app,
-                    rotate_app_key,
-                    verify_app_key,
-                )
-                from src.db.sandbox_inject import (
-                    ensure_index_includes_db_script,
-                    ensure_laravel_welcome_includes_db_script,
-                    ensure_next_layout_includes_db_script,
-                    ensure_nuxt_config_includes_db_script,
-                    ensure_remix_root_includes_db_script,
-                    ensure_sveltekit_app_html_includes_db_script,
-                    laravel_db_paths,
-                    next_db_paths,
-                    nuxt_db_paths,
-                    parse_db_js,
-                    remix_db_paths,
-                    render_db_js,
-                    sveltekit_db_paths,
-                    vite_db_paths,
-                )
-                from src.templates.registry import template_spec
+        from src.db.provisioning import ensure_app, rotate_app_key, verify_app_key
+        from src.db.sandbox_inject import (
+            ensure_index_includes_db_script,
+            ensure_laravel_welcome_includes_db_script,
+            ensure_next_layout_includes_db_script,
+            ensure_nuxt_config_includes_db_script,
+            ensure_remix_root_includes_db_script,
+            ensure_sveltekit_app_html_includes_db_script,
+            laravel_db_paths,
+            next_db_paths,
+            nuxt_db_paths,
+            parse_db_js,
+            remix_db_paths,
+            render_db_js,
+            sveltekit_db_paths,
+            vite_db_paths,
+        )
+        from src.templates.registry import template_spec
 
-                client = hasura_client_from_env()
-                app = ensure_app(client, app_id=session_id)
+        client = hasura_client_from_env()
+        app = ensure_app(client, app_id=session_id)
 
-                # Build proxy URL for the browser to call (no Hasura secrets).
-                public_base = (
-                    os.environ.get("AMICABLE_PUBLIC_BASE_URL") or ""
-                ).strip().rstrip("/") or (
-                    os.environ.get("PUBLIC_BASE_URL") or ""
-                ).strip().rstrip("/")
-                graphql_path = f"/db/apps/{session_id}/graphql"
-                graphql_url = (
-                    f"{public_base}{graphql_path}" if public_base else graphql_path
-                )
+        # Build proxy URL for the browser to call (no Hasura secrets).
+        public_base = (os.environ.get("AMICABLE_PUBLIC_BASE_URL") or "").strip().rstrip(
+            "/"
+        ) or (os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+        graphql_path = f"/db/apps/{session_id}/graphql"
+        graphql_url = f"{public_base}{graphql_path}" if public_base else graphql_path
 
-                backend = self._session_manager.get_backend(session_id)
-                spec = template_spec(effective_template_id)
-                inject_kind = spec.db_inject_kind
+        backend = self._session_manager.get_backend(session_id)
+        spec = template_spec(effective_template_id)
+        inject_kind = spec.db_inject_kind
 
-                db_js_path = "/amicable-db.js"
-                entry_paths: tuple[str, ...] = ()
-                ensure_entry = None
-                if inject_kind == "vite_index_html":
-                    db_js_path, index_path = vite_db_paths()
-                    entry_paths = (index_path,)
-                    ensure_entry = ensure_index_includes_db_script
-                elif inject_kind == "next_layout_tsx":
-                    db_js_path, entry_paths = next_db_paths()
-                    ensure_entry = ensure_next_layout_includes_db_script
-                elif inject_kind == "remix_root_tsx":
-                    db_js_path, entry_paths = remix_db_paths()
-                    ensure_entry = ensure_remix_root_includes_db_script
-                elif inject_kind == "nuxt_config_ts":
-                    db_js_path, entry_paths = nuxt_db_paths()
-                    ensure_entry = ensure_nuxt_config_includes_db_script
-                elif inject_kind == "sveltekit_app_html":
-                    db_js_path, app_html = sveltekit_db_paths()
-                    entry_paths = (app_html,)
-                    ensure_entry = ensure_sveltekit_app_html_includes_db_script
-                elif inject_kind == "laravel_blade":
-                    db_js_path, entry_paths = laravel_db_paths()
-                    ensure_entry = ensure_laravel_welcome_includes_db_script
+        db_js_path = "/amicable-db.js"
+        entry_paths: tuple[str, ...] = ()
+        ensure_entry = None
+        if inject_kind == "vite_index_html":
+            db_js_path, index_path = vite_db_paths()
+            entry_paths = (index_path,)
+            ensure_entry = ensure_index_includes_db_script
+        elif inject_kind == "next_layout_tsx":
+            db_js_path, entry_paths = next_db_paths()
+            ensure_entry = ensure_next_layout_includes_db_script
+        elif inject_kind == "remix_root_tsx":
+            db_js_path, entry_paths = remix_db_paths()
+            ensure_entry = ensure_remix_root_includes_db_script
+        elif inject_kind == "nuxt_config_ts":
+            db_js_path, entry_paths = nuxt_db_paths()
+            ensure_entry = ensure_nuxt_config_includes_db_script
+        elif inject_kind == "sveltekit_app_html":
+            db_js_path, app_html = sveltekit_db_paths()
+            entry_paths = (app_html,)
+            ensure_entry = ensure_sveltekit_app_html_includes_db_script
+        elif inject_kind == "laravel_blade":
+            db_js_path, entry_paths = laravel_db_paths()
+            ensure_entry = ensure_laravel_welcome_includes_db_script
 
-                # Determine app_key to inject:
-                # - if newly created/rotated, we have plaintext app_key
-                # - else, attempt to read it from the sandbox and validate against stored hash
-                app_key = app.app_key
-                if not app_key:
-                    downloads = backend.download_files([db_js_path])
-                    existing_key: str | None = None
-                    if (
-                        downloads
-                        and downloads[0].error is None
-                        and downloads[0].content is not None
-                    ):
-                        text = downloads[0].content.decode("utf-8", errors="replace")
-                        obj = parse_db_js(text) or {}
-                        k = obj.get("appKey")
-                        if isinstance(k, str) and k:
-                            existing_key = k
+        # Determine app_key to inject:
+        # - if newly created/rotated, we have plaintext app_key
+        # - else, attempt to read it from the sandbox and validate against stored hash
+        app_key = app.app_key
+        if not app_key:
+            downloads = backend.download_files([db_js_path])
+            existing_key: str | None = None
+            if (
+                downloads
+                and downloads[0].error is None
+                and downloads[0].content is not None
+            ):
+                text = downloads[0].content.decode("utf-8", errors="replace")
+                obj = parse_db_js(text) or {}
+                k = obj.get("appKey")
+                if isinstance(k, str) and k:
+                    existing_key = k
 
-                    if existing_key and verify_app_key(app=app, app_key=existing_key):
-                        app_key = existing_key
-                    else:
-                        rotated = rotate_app_key(client, app_id=session_id)
-                        app_key = rotated.app_key
-                        app = rotated
+            if existing_key and verify_app_key(app=app, app_key=existing_key):
+                app_key = existing_key
+            else:
+                rotated = rotate_app_key(client, app_id=session_id)
+                app_key = rotated.app_key
+                app = rotated
 
-                if isinstance(app_key, str) and app_key:
-                    parsed = urlparse(str(sess.preview_url or ""))
-                    preview_origin = (
-                        f"{parsed.scheme}://{parsed.netloc}"
-                        if parsed.scheme and parsed.netloc
-                        else ""
+        if isinstance(app_key, str) and app_key:
+            parsed = urlparse(str(sess.preview_url or ""))
+            preview_origin = (
+                f"{parsed.scheme}://{parsed.netloc}"
+                if parsed.scheme and parsed.netloc
+                else ""
+            )
+            db_js = render_db_js(
+                app_id=session_id,
+                graphql_url=graphql_url,
+                app_key=app_key,
+                preview_origin=preview_origin,
+            )
+
+            # Ensure the browser gets the injected db file. Optionally patch
+            # the stack entrypoint to include the script tag.
+            if entry_paths and ensure_entry is not None:
+                downloads = backend.download_files(list(entry_paths))
+                entry_path = None
+                entry_text = ""
+                for idx, d in enumerate(downloads):
+                    if d.error is None and d.content is not None:
+                        entry_path = entry_paths[idx]
+                        entry_text = d.content.decode("utf-8", errors="replace")
+                        break
+
+                if entry_path and entry_text:
+                    updated = ensure_entry(entry_text)
+                    backend.upload_files(
+                        [
+                            (db_js_path, db_js.encode("utf-8")),
+                            (entry_path, updated.encode("utf-8")),
+                        ]
                     )
-                    db_js = render_db_js(
-                        app_id=session_id,
-                        graphql_url=graphql_url,
-                        app_key=app_key,
-                        preview_origin=preview_origin,
-                    )
+                else:
+                    backend.upload_files([(db_js_path, db_js.encode("utf-8"))])
+            else:
+                backend.upload_files([(db_js_path, db_js.encode("utf-8"))])
 
-                    # Ensure the browser gets the injected db file. Optionally patch
-                    # the stack entrypoint to include the script tag.
-                    if entry_paths and ensure_entry is not None:
-                        downloads = backend.download_files(list(entry_paths))
-                        entry_path = None
-                        entry_text = ""
-                        for idx, d in enumerate(downloads):
-                            if d.error is None and d.content is not None:
-                                entry_path = entry_paths[idx]
-                                entry_text = d.content.decode("utf-8", errors="replace")
-                                break
-
-                        if entry_path and entry_text:
-                            updated = ensure_entry(entry_text)
-                            backend.upload_files(
-                                [
-                                    (db_js_path, db_js.encode("utf-8")),
-                                    (entry_path, updated.encode("utf-8")),
-                                ]
-                            )
-                        else:
-                            backend.upload_files([(db_js_path, db_js.encode("utf-8"))])
-                    else:
-                        backend.upload_files([(db_js_path, db_js.encode("utf-8"))])
-
-                init_data["app_id"] = session_id
-                init_data["db"] = {"graphql_url": graphql_url}
-                init_data["db_schema"] = app.schema_name
-                init_data["db_role"] = app.role_name
-            except Exception:
-                logger.exception(
-                    "DB provisioning/injection failed (continuing without DB)"
-                )
+        init_data["app_id"] = session_id
+        init_data["db"] = {"graphql_url": graphql_url}
+        init_data["db_schema"] = app.schema_name
+        init_data["db_role"] = app.role_name
 
         self.session_data[session_id] = init_data
         return bool(sess.exists)

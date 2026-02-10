@@ -16,17 +16,28 @@ def _env(name: str) -> str | None:
     return v or None
 
 
-def db_enabled_from_env() -> bool:
-    return bool(_env("HASURA_BASE_URL") and _env("HASURA_GRAPHQL_ADMIN_SECRET"))
+def require_hasura_from_env() -> None:
+    """Fail fast: this deployment requires Hasura."""
+    required = (
+        "HASURA_BASE_URL",
+        "HASURA_GRAPHQL_ADMIN_SECRET",
+        "HASURA_GRAPHQL_JWT_SECRET",
+    )
+    missing = [k for k in required if not _env(k)]
+    if missing:
+        raise RuntimeError(
+            "Hasura is required but not configured (missing: "
+            + ", ".join(missing)
+            + ")"
+        )
 
 
 def hasura_client_from_env() -> HasuraClient:
+    # This repo assumes Hasura is always present; fail fast on misconfiguration.
+    require_hasura_from_env()
     base = _env("HASURA_BASE_URL")
     secret = _env("HASURA_GRAPHQL_ADMIN_SECRET")
-    if not base or not secret:
-        raise RuntimeError(
-            "Hasura not configured (missing HASURA_BASE_URL or HASURA_GRAPHQL_ADMIN_SECRET)"
-        )
+    assert base and secret
     source = (_env("HASURA_SOURCE_NAME") or "default").strip()
     return HasuraClient(
         HasuraConfig(base_url=base, admin_secret=secret, source_name=source)

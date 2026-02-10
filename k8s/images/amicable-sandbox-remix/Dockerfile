@@ -19,6 +19,35 @@ RUN npx -y create-react-router@latest /app \
   --install \
   --no-git-init
 
+# Pre-wire the base app with DB proxy wiring (Hasura via agent).
+COPY k8s/images/amicable-sandbox-remix/overlay/ /app/
+
+# Pre-wire Hasura DB proxy integration for the Remix-style template.
+# The agent will overwrite /public/amicable-db.js with real credentials when Hasura is configured.
+RUN python3 - <<'PY'
+from pathlib import Path
+
+db_js = Path("/app/public/amicable-db.js")
+if not db_js.exists():
+    db_js.write_text(
+        "window.__AMICABLE_DB__ = window.__AMICABLE_DB__ || null;\n",
+        encoding="utf-8",
+    )
+
+root = Path("/app/app/root.tsx")
+if root.exists():
+    text = root.read_text(encoding="utf-8", errors="replace")
+    if "/amicable-db.js" not in text:
+        tag = '      <script src="/amicable-db.js"></script>\n'
+        if "<Scripts" in text:
+            text = text.replace("<Scripts", tag + "      <Scripts", 1)
+        elif "</head>" in text:
+            text = text.replace("</head>", tag + "    </head>", 1)
+        else:
+            text = text + "\n" + tag
+        root.write_text(text, encoding="utf-8")
+PY
+
 # Default DeepAgents memory/skills locations.
 COPY k8s/images/amicable-sandbox-remix/AGENTS.md /app/AGENTS.md
 COPY k8s/images/amicable-sandbox-remix/.deepagents/AGENTS.md /app/.deepagents/AGENTS.md

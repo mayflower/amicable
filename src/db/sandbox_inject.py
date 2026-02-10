@@ -16,7 +16,9 @@ _NEXT_LAYOUT_PATHS = ("/app/layout.tsx", "/src/app/layout.tsx")
 _REMIX_ROOT_PATHS = ("/app/root.tsx",)
 
 
-def render_db_js(*, app_id: str, graphql_url: str, app_key: str, preview_origin: str) -> str:
+def render_db_js(
+    *, app_id: str, graphql_url: str, app_key: str, preview_origin: str
+) -> str:
     payload = {
         "appId": app_id,
         "graphqlUrl": graphql_url,
@@ -111,10 +113,31 @@ def ensure_nuxt_config_includes_db_script(nuxt_config_ts: str) -> str:
 
     # Minimal, idempotent insert: add app.head.script entry.
     # Prefer inserting inside defineNuxtConfig({...}).
-    m = re.search(r"defineNuxtConfig\\(\\s*\\{", nuxt_config_ts)
+    m = re.search(r"defineNuxtConfig\(\s*\{", nuxt_config_ts)
     if not m:
-        return nuxt_config_ts + '\n\nexport default defineNuxtConfig({ app: { head: { script: [{ src: "/amicable-db.js" }] } } });\n'
+        return (
+            nuxt_config_ts
+            + '\n\nexport default defineNuxtConfig({ app: { head: { script: [{ src: "/amicable-db.js" }] } } });\n'
+        )
 
+    # If config already has an `app:` section, try to insert into its `head`.
+    if re.search(r"\bapp\s*:\s*\{", nuxt_config_ts):
+        if re.search(r"\bhead\s*:\s*\{", nuxt_config_ts):
+            # Insert script array after head: {
+            return re.sub(
+                r"(\bhead\s*:\s*\{)",
+                r'\1\n      script: [{ src: "/amicable-db.js" }],',
+                nuxt_config_ts,
+                count=1,
+            )
+        return re.sub(
+            r"(\bapp\s*:\s*\{)",
+            r'\1\n    head: { script: [{ src: "/amicable-db.js" }] },',
+            nuxt_config_ts,
+            count=1,
+        )
+
+    # No app section: insert one near the top of the object literal.
     insert = (
         "\n  app: {\n"
         "    head: {\n"
@@ -122,25 +145,6 @@ def ensure_nuxt_config_includes_db_script(nuxt_config_ts: str) -> str:
         "    },\n"
         "  },"
     )
-    # If config already has an `app:` section, try to insert into its `head`.
-    if re.search(r"\\bapp\\s*:\\s*\\{", nuxt_config_ts):
-        # Insert a head.script if missing (simple heuristic).
-        if re.search(r"\\bhead\\s*:\\s*\\{", nuxt_config_ts):
-            # Insert script array after head: {
-            return re.sub(
-                r"(\\bhead\\s*:\\s*\\{)",
-                r"\\1\\n      script: [{ src: \"/amicable-db.js\" }],",
-                nuxt_config_ts,
-                count=1,
-            )
-        return re.sub(
-            r"(\\bapp\\s*:\\s*\\{)",
-            r"\\1\\n    head: { script: [{ src: \"/amicable-db.js\" }] },",
-            nuxt_config_ts,
-            count=1,
-        )
-
-    # No app section: insert one near the top of the object literal.
     return nuxt_config_ts[: m.end()] + insert + nuxt_config_ts[m.end() :]
 
 

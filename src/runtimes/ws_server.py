@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import secrets
+import time
 from typing import Any
 from urllib.parse import urlparse
 
@@ -69,11 +70,12 @@ async def _generate_project_name(prompt: str) -> str:
         return ""
 
 
-def _hasura_enabled() -> bool:
-    return bool(
-        (os.environ.get("HASURA_BASE_URL") or "").strip()
-        and (os.environ.get("HASURA_GRAPHQL_ADMIN_SECRET") or "").strip()
-    )
+def _require_hasura() -> None:
+    # This deployment requires Hasura. Fail fast on startup and provide clear
+    # errors if a handler is reached during misconfiguration.
+    from src.db.provisioning import require_hasura_from_env
+
+    require_hasura_from_env()
 
 
 def _get_owner_from_request(request: Request) -> tuple[str, str]:
@@ -253,7 +255,9 @@ def _preview_resolver_token() -> str:
 
 
 @app.get("/internal/preview/resolve")
-async def internal_preview_resolve(request: Request, host: str | None = None) -> Response:
+async def internal_preview_resolve(
+    request: Request, host: str | None = None
+) -> Response:
     """Resolve a slug-based preview hostname to the concrete sandbox_id.
 
     This endpoint is intended to be called by the in-cluster preview-router.
@@ -286,12 +290,9 @@ async def internal_preview_resolve(request: Request, host: str | None = None) ->
         from src.sandbox_backends.k8s_backend import K8sAgentSandboxBackend
 
         k8s = K8sAgentSandboxBackend()
-        if not _hasura_enabled():
-            if k8s._claim_exists(label):
-                return Response(
-                    status_code=200, headers={"X-Amicable-Sandbox-Id": label}
-                )
-            return Response(status_code=404)
+        # Fast-path: treat direct SandboxClaim names as routable ids.
+        if k8s._claim_exists(label):
+            return Response(status_code=200, headers={"X-Amicable-Sandbox-Id": label})
     except Exception:
         k8s = None  # type: ignore[assignment]
 
@@ -350,8 +351,7 @@ async def internal_preview_resolve(request: Request, host: str | None = None) ->
 
 @app.get("/api/projects")
 async def api_list_projects(request: Request) -> JSONResponse:
-    if not _hasura_enabled():
-        return JSONResponse({"error": "hasura_not_configured"}, status_code=503)
+    _require_hasura()
     try:
         sub, email = _get_owner_from_request(request)
     except PermissionError:
@@ -383,8 +383,7 @@ async def api_list_projects(request: Request) -> JSONResponse:
 
 @app.post("/api/projects")
 async def api_create_project(request: Request) -> JSONResponse:
-    if not _hasura_enabled():
-        return JSONResponse({"error": "hasura_not_configured"}, status_code=503)
+    _require_hasura()
     try:
         sub, email = _get_owner_from_request(request)
     except PermissionError:
@@ -419,7 +418,9 @@ async def api_create_project(request: Request) -> JSONResponse:
 
     client = hasura_client_from_env()
     owner = ProjectOwner(sub=sub, email=email)
-    p = create_project(client, owner=owner, name=name, template_id=effective_template_id)
+    p = create_project(
+        client, owner=owner, name=name, template_id=effective_template_id
+    )
 
     try:
         p, _git = ensure_gitlab_repo_for_project(client, owner=owner, project=p)
@@ -429,7 +430,9 @@ async def api_create_project(request: Request) -> JSONResponse:
             hard_delete_project_row(client, owner=owner, project_id=p.project_id)
         detail = str(e)
         status = 503 if ("GITLAB_TOKEN" in detail or "required" in detail) else 502
-        return JSONResponse({"error": "gitlab_error", "detail": detail}, status_code=status)
+        return JSONResponse(
+            {"error": "gitlab_error", "detail": detail}, status_code=status
+        )
 
     return JSONResponse(
         {
@@ -445,8 +448,7 @@ async def api_create_project(request: Request) -> JSONResponse:
 
 @app.get("/api/projects/by-slug/{slug}")
 async def api_get_project_by_slug(slug: str, request: Request) -> JSONResponse:
-    if not _hasura_enabled():
-        return JSONResponse({"error": "hasura_not_configured"}, status_code=503)
+    _require_hasura()
     try:
         sub, email = _get_owner_from_request(request)
     except PermissionError:
@@ -477,8 +479,7 @@ async def api_get_project_by_slug(slug: str, request: Request) -> JSONResponse:
 
 @app.get("/api/projects/{project_id}")
 async def api_get_project_by_id(project_id: str, request: Request) -> JSONResponse:
-    if not _hasura_enabled():
-        return JSONResponse({"error": "hasura_not_configured"}, status_code=503)
+    _require_hasura()
     try:
         sub, email = _get_owner_from_request(request)
     except PermissionError:
@@ -509,8 +510,7 @@ async def api_get_project_by_id(project_id: str, request: Request) -> JSONRespon
 
 @app.patch("/api/projects/{project_id}")
 async def api_rename_project(project_id: str, request: Request) -> JSONResponse:
-    if not _hasura_enabled():
-        return JSONResponse({"error": "hasura_not_configured"}, status_code=503)
+    _require_hasura()
     try:
         sub, email = _get_owner_from_request(request)
     except PermissionError:
@@ -550,10 +550,122 @@ async def api_rename_project(project_id: str, request: Request) -> JSONResponse:
     )
 
 
+@app.post("/api/projects/{project_id}/git/sync")
+async def api_git_sync_project(project_id: str, request: Request) -> JSONResponse:
+    # This endpoint is intended for the browser Code view: after a file save in the
+    # sandbox FS, persist the full sandbox tree back to GitLab (commit + push).
+    _require_hasura()
+    try:
+        sub, email = _get_owner_from_request(request)
+    except PermissionError:
+        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+
+    body: Any
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    commit_message = body.get("commit_message")
+    commit_message = (
+        str(commit_message).strip()
+        if isinstance(commit_message, str) and commit_message.strip()
+        else None
+    )
+
+    from src.gitlab.config import git_sync_enabled, git_sync_required
+
+    if not git_sync_enabled():
+        return JSONResponse({"error": "git_sync_disabled"}, status_code=409)
+
+    from src.db.provisioning import hasura_client_from_env
+    from src.gitlab.integration import ensure_gitlab_repo_for_project
+    from src.projects.store import ProjectOwner, ensure_project_for_id
+
+    client = hasura_client_from_env()
+    owner = ProjectOwner(sub=sub, email=email)
+    try:
+        project = ensure_project_for_id(client, owner=owner, project_id=str(project_id))
+    except PermissionError:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+
+    try:
+        project, git = ensure_gitlab_repo_for_project(
+            client, owner=owner, project=project
+        )
+    except Exception as e:
+        detail = str(e)
+        status = 503 if ("GITLAB_TOKEN" in detail or "required" in detail) else 502
+        return JSONResponse(
+            {"error": "gitlab_error", "detail": detail}, status_code=status
+        )
+
+    repo_url = None
+    if isinstance(git, dict):
+        repo_url = git.get("http_url_to_repo") or git.get("repo_http_url")
+    if not isinstance(repo_url, str) or not repo_url.strip():
+        return JSONResponse({"error": "missing_repo_url"}, status_code=400)
+
+    agent = _get_agent()
+    await agent.init(
+        session_id=str(project_id),
+        template_id=getattr(project, "template_id", None),
+        slug=getattr(project, "slug", None),
+    )
+
+    # Get the sandbox backend and sync the sandbox manifest back into the repo.
+    assert agent._session_manager is not None
+    backend = agent._session_manager.get_backend(str(project_id))
+
+    from src.gitlab.sync import sync_sandbox_tree_to_repo
+
+    slug_for_commit = (str(getattr(project, "slug", "") or "")).strip() or str(
+        project_id
+    )
+    if commit_message is None:
+        commit_message = (
+            f"UI sync ({slug_for_commit}) {time.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
+    try:
+        pushed, sha, diff_stat, name_status = await asyncio.to_thread(
+            sync_sandbox_tree_to_repo,
+            backend,
+            repo_http_url=str(repo_url),
+            project_slug=slug_for_commit,
+            commit_message=commit_message,
+        )
+        return JSONResponse(
+            {
+                "pushed": bool(pushed),
+                "commit_sha": sha,
+                "diff_stat": diff_stat,
+                "name_status": name_status,
+            },
+            status_code=200,
+        )
+    except Exception as e:
+        detail = str(e)
+        if git_sync_required():
+            return JSONResponse(
+                {"error": "git_sync_failed", "detail": detail}, status_code=500
+            )
+        return JSONResponse(
+            {
+                "pushed": False,
+                "commit_sha": None,
+                "error": "git_sync_failed",
+                "detail": detail,
+            },
+            status_code=200,
+        )
+
+
 @app.delete("/api/projects/{project_id}")
 async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
-    if not _hasura_enabled():
-        return JSONResponse({"error": "hasura_not_configured"}, status_code=503)
+    _require_hasura()
     try:
         sub, email = _get_owner_from_request(request)
     except PermissionError:
@@ -583,7 +695,9 @@ async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
     except Exception as e:
         detail = str(e)
         status = 503 if ("GITLAB_TOKEN" in detail or "required" in detail) else 502
-        return JSONResponse({"error": "gitlab_error", "detail": detail}, status_code=status)
+        return JSONResponse(
+            {"error": "gitlab_error", "detail": detail}, status_code=status
+        )
 
     # Mark deleted immediately (so it disappears from the list), then cleanup async.
     mark_project_deleted(client, owner=owner, project_id=project_id)
@@ -609,18 +723,14 @@ async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
 
 def _ensure_project_access(request: Request, *, project_id: str) -> None:
     """Raise PermissionError if request is not allowed to access project_id."""
-    if _hasura_enabled():
-        sub, email = _get_owner_from_request(request)
-        from src.db.provisioning import hasura_client_from_env
-        from src.projects.store import ProjectOwner, ensure_project_for_id
+    _require_hasura()
+    sub, email = _get_owner_from_request(request)
+    from src.db.provisioning import hasura_client_from_env
+    from src.projects.store import ProjectOwner, ensure_project_for_id
 
-        client = hasura_client_from_env()
-        owner = ProjectOwner(sub=sub, email=email)
-        ensure_project_for_id(client, owner=owner, project_id=str(project_id))
-        return
-
-    # Without Hasura configured, we can't verify ownership; allow for dev.
-    _get_owner_from_request(request)
+    client = hasura_client_from_env()
+    owner = ProjectOwner(sub=sub, email=email)
+    ensure_project_for_id(client, owner=owner, project_id=str(project_id))
 
 
 def _get_agent() -> Agent:
@@ -703,7 +813,9 @@ async def api_sandbox_write(project_id: str, request: Request) -> JSONResponse:
     path = str(body.get("path") or "")
     content = str(body.get("content") or "")
     expected_sha = body.get("expected_sha256")
-    expected_sha = str(expected_sha) if isinstance(expected_sha, str) and expected_sha else None
+    expected_sha = (
+        str(expected_sha) if isinstance(expected_sha, str) and expected_sha else None
+    )
 
     agent = _get_agent()
     await agent.init(session_id=project_id)
@@ -1004,6 +1116,7 @@ async def db_graphql_proxy(app_id: str, request: Request) -> Response:
 @app.on_event("startup")
 async def _startup() -> None:
     global _agent
+    _require_hasura()
     if _agent is None:
         _agent = Agent()
 
@@ -1166,55 +1279,63 @@ async def _handle_ws(ws: WebSocket) -> None:
             session_id = data.get("session_id")
             if not session_id:
                 # Keep behavior: server-side session id if missing.
-                session_id = Message.new(MessageType.INIT, {}, session_id=None).session_id
+                session_id = Message.new(
+                    MessageType.INIT, {}, session_id=None
+                ).session_id
 
             project = None
             git = None
-            if _hasura_enabled():
-                try:
-                    sub, email = _get_owner_from_ws(ws)
-                    from src.db.provisioning import hasura_client_from_env
-                    from src.gitlab.integration import ensure_gitlab_repo_for_project
-                    from src.projects.store import ProjectOwner, ensure_project_for_id
+            try:
+                _require_hasura()
+                sub, email = _get_owner_from_ws(ws)
+                from src.db.provisioning import hasura_client_from_env
+                from src.gitlab.integration import ensure_gitlab_repo_for_project
+                from src.projects.store import ProjectOwner, ensure_project_for_id
 
-                    client = hasura_client_from_env()
-                    owner = ProjectOwner(sub=sub, email=email)
-                    project = ensure_project_for_id(
-                        client, owner=owner, project_id=str(session_id)
-                    )
+                client = hasura_client_from_env()
+                owner = ProjectOwner(sub=sub, email=email)
+                project = ensure_project_for_id(
+                    client, owner=owner, project_id=str(session_id)
+                )
 
-                    project, git = ensure_gitlab_repo_for_project(
-                        client, owner=owner, project=project
-                    )
-                except PermissionError as e:
-                    # Most common cause: user mismatch between cookie/session and session_id.
-                    logger.warning(
-                        "WS INIT permission denied: %s (session_id=%s client=%s sub=%s)",
-                        e,
-                        session_id,
-                        getattr(ws, "client", None),
-                        sub if "sub" in locals() else None,
-                    )
-                    await ws.close(code=1008)
-                    return
-                except Exception as e:
-                    logger.exception(
-                        "WS INIT failed (session_id=%s client=%s)",
-                        session_id,
-                        getattr(ws, "client", None),
-                    )
-                    await ws.send_json(
-                        Message.new(
-                            MessageType.ERROR,
-                            {"error": "project_init_failed", "detail": str(e)},
-                            session_id=session_id,
-                        ).to_dict()
-                    )
-                    await ws.close(code=1011)
-                    return
-            template_id = getattr(project, "template_id", None) if project is not None else None
-            project_slug = getattr(project, "slug", None) if project is not None else None
-            exists = await agent.init(session_id=session_id, template_id=template_id, slug=project_slug)
+                project, git = ensure_gitlab_repo_for_project(
+                    client, owner=owner, project=project
+                )
+            except PermissionError as e:
+                # Most common cause: user mismatch between cookie/session and session_id.
+                logger.warning(
+                    "WS INIT permission denied: %s (session_id=%s client=%s sub=%s)",
+                    e,
+                    session_id,
+                    getattr(ws, "client", None),
+                    sub if "sub" in locals() else None,
+                )
+                await ws.close(code=1008)
+                return
+            except Exception as e:
+                logger.exception(
+                    "WS INIT failed (session_id=%s client=%s)",
+                    session_id,
+                    getattr(ws, "client", None),
+                )
+                await ws.send_json(
+                    Message.new(
+                        MessageType.ERROR,
+                        {"error": "project_init_failed", "detail": str(e)},
+                        session_id=session_id,
+                    ).to_dict()
+                )
+                await ws.close(code=1011)
+                return
+            template_id = (
+                getattr(project, "template_id", None) if project is not None else None
+            )
+            project_slug = (
+                getattr(project, "slug", None) if project is not None else None
+            )
+            exists = await agent.init(
+                session_id=session_id, template_id=template_id, slug=project_slug
+            )
             init_data = agent.session_data[session_id]
             init_data["exists"] = exists
             if project is not None:
@@ -1242,7 +1363,9 @@ async def _handle_ws(ws: WebSocket) -> None:
                             assert agent._session_manager is not None
                             backend = agent._session_manager.get_backend(session_id)
                             slug_for_commit = (
-                                str(getattr(project, "slug", "") or "") if project is not None else ""
+                                str(getattr(project, "slug", "") or "")
+                                if project is not None
+                                else ""
                             ).strip() or str(session_id)
                             msg = deterministic_bootstrap_commit_message(
                                 project_slug=slug_for_commit,
@@ -1309,57 +1432,58 @@ async def _handle_ws(ws: WebSocket) -> None:
                 )
                 continue
 
-            if _hasura_enabled():
-                try:
-                    sub, email = _get_owner_from_ws(ws)
-                    from src.db.provisioning import hasura_client_from_env
-                    from src.gitlab.integration import ensure_gitlab_repo_for_project
-                    from src.projects.store import ProjectOwner, ensure_project_for_id
+            try:
+                _require_hasura()
+                sub, email = _get_owner_from_ws(ws)
+                from src.db.provisioning import hasura_client_from_env
+                from src.gitlab.integration import ensure_gitlab_repo_for_project
+                from src.projects.store import ProjectOwner, ensure_project_for_id
 
-                    client = hasura_client_from_env()
-                    owner = ProjectOwner(sub=sub, email=email)
-                    project = ensure_project_for_id(
-                        client, owner=owner, project_id=str(session_id)
-                    )
+                client = hasura_client_from_env()
+                owner = ProjectOwner(sub=sub, email=email)
+                project = ensure_project_for_id(
+                    client, owner=owner, project_id=str(session_id)
+                )
 
-                    # Ensure agent session exists so we can attach project/git metadata
-                    # for downstream controller graph nodes (git_sync).
-                    await agent.init(session_id=session_id)
-                    project, git = ensure_gitlab_repo_for_project(
-                        client, owner=owner, project=project
-                    )
+                # Ensure agent session exists so we can attach project/git metadata
+                # for downstream controller graph nodes (git_sync).
+                await agent.init(session_id=session_id)
+                project, git = ensure_gitlab_repo_for_project(
+                    client, owner=owner, project=project
+                )
 
-                    # Persist into session_data for the controller run.
-                    init_data = agent.session_data.get(session_id) or {}
-                    if isinstance(init_data, dict):
-                        init_data["project"] = _project_dto(project)
-                        init_data["git"] = git
-                        agent.session_data[session_id] = init_data
-                except PermissionError:
-                    await ws.close(code=1008)
-                    return
-                except Exception as e:
-                    await ws.send_json(
-                        Message.new(
-                            MessageType.ERROR,
-                            {"error": "project_init_failed", "detail": str(e)},
-                            session_id=session_id,
-                        ).to_dict()
-                    )
-                    await ws.close(code=1011)
-                    return
-                pending = agent.get_pending_hitl(session_id)
-                if pending:
-                    await ws.send_json(
-                        Message.new(
-                            MessageType.ERROR,
-                            {
-                                "error": "HITL approval pending. Approve/reject the pending tool call to continue."
-                            },
-                            session_id=session_id,
-                        ).to_dict()
-                    )
-                    continue
+                # Persist into session_data for the controller run.
+                init_data = agent.session_data.get(session_id) or {}
+                if isinstance(init_data, dict):
+                    init_data["project"] = _project_dto(project)
+                    init_data["git"] = git
+                    agent.session_data[session_id] = init_data
+            except PermissionError:
+                await ws.close(code=1008)
+                return
+            except Exception as e:
+                await ws.send_json(
+                    Message.new(
+                        MessageType.ERROR,
+                        {"error": "project_init_failed", "detail": str(e)},
+                        session_id=session_id,
+                    ).to_dict()
+                )
+                await ws.close(code=1011)
+                return
+
+            pending = agent.get_pending_hitl(session_id)
+            if pending:
+                await ws.send_json(
+                    Message.new(
+                        MessageType.ERROR,
+                        {
+                            "error": "HITL approval pending. Approve/reject the pending tool call to continue."
+                        },
+                        session_id=session_id,
+                    ).to_dict()
+                )
+                continue
 
             async for out in agent.send_feedback(session_id=session_id, feedback=text):
                 await ws.send_json(out)
@@ -1383,42 +1507,42 @@ async def _handle_ws(ws: WebSocket) -> None:
                 )
                 continue
 
-            if _hasura_enabled():
-                try:
-                    sub, email = _get_owner_from_ws(ws)
-                    from src.db.provisioning import hasura_client_from_env
-                    from src.gitlab.integration import ensure_gitlab_repo_for_project
-                    from src.projects.store import ProjectOwner, ensure_project_for_id
+            try:
+                _require_hasura()
+                sub, email = _get_owner_from_ws(ws)
+                from src.db.provisioning import hasura_client_from_env
+                from src.gitlab.integration import ensure_gitlab_repo_for_project
+                from src.projects.store import ProjectOwner, ensure_project_for_id
 
-                    client = hasura_client_from_env()
-                    owner = ProjectOwner(sub=sub, email=email)
-                    project = ensure_project_for_id(
-                        client, owner=owner, project_id=str(session_id)
-                    )
+                client = hasura_client_from_env()
+                owner = ProjectOwner(sub=sub, email=email)
+                project = ensure_project_for_id(
+                    client, owner=owner, project_id=str(session_id)
+                )
 
-                    await agent.init(session_id=session_id)
-                    project, git = ensure_gitlab_repo_for_project(
-                        client, owner=owner, project=project
-                    )
+                await agent.init(session_id=session_id)
+                project, git = ensure_gitlab_repo_for_project(
+                    client, owner=owner, project=project
+                )
 
-                    init_data = agent.session_data.get(session_id) or {}
-                    if isinstance(init_data, dict):
-                        init_data["project"] = _project_dto(project)
-                        init_data["git"] = git
-                        agent.session_data[session_id] = init_data
-                except PermissionError:
-                    await ws.close(code=1008)
-                    return
-                except Exception as e:
-                    await ws.send_json(
-                        Message.new(
-                            MessageType.ERROR,
-                            {"error": "project_init_failed", "detail": str(e)},
-                            session_id=session_id,
-                        ).to_dict()
-                    )
-                    await ws.close(code=1011)
-                    return
+                init_data = agent.session_data.get(session_id) or {}
+                if isinstance(init_data, dict):
+                    init_data["project"] = _project_dto(project)
+                    init_data["git"] = git
+                    agent.session_data[session_id] = init_data
+            except PermissionError:
+                await ws.close(code=1008)
+                return
+            except Exception as e:
+                await ws.send_json(
+                    Message.new(
+                        MessageType.ERROR,
+                        {"error": "project_init_failed", "detail": str(e)},
+                        session_id=session_id,
+                    ).to_dict()
+                )
+                await ws.close(code=1011)
+                return
             async for out in agent.resume_hitl(
                 session_id=session_id,
                 interrupt_id=interrupt_id,

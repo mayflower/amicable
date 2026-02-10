@@ -10,11 +10,12 @@ import {
   RefreshCcw,
   Trash2,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tree, type NodeApi, type NodeRendererProps } from "react-arborist";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { projectGitSync } from "@/services/gitSync";
 import {
   sandboxCreate,
   sandboxLs,
@@ -122,13 +123,25 @@ export const CodePane = ({
   agentTouchedPath?: string | null;
 }) => {
   const [treeData, setTreeData] = useState<FileNode[]>([]);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [treeSelectedPath, setTreeSelectedPath] = useState<string | null>(null);
+
+  const [openPath, setOpenPath] = useState<string | null>(null);
+  const [activePath, setActivePath] = useState<string | null>(null);
+  const [openState, setOpenState] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
+  const [openError, setOpenError] = useState<{
+    message: string;
+    status?: number;
+    data?: unknown;
+  } | null>(null);
 
   const [fileSha, setFileSha] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>("");
   const [fileBinary, setFileBinary] = useState<boolean>(false);
   const [dirty, setDirty] = useState<boolean>(false);
   const [saveStatus, setSaveStatus] = useState<string>("");
+  const [gitStatus, setGitStatus] = useState<string>("");
   const [conflict, setConflict] = useState<boolean>(false);
 
   const { ref: treeWrapRef, height: treeHeight } = useElementHeight();
@@ -143,7 +156,17 @@ export const CodePane = ({
 
   const refreshRoots = async () => {
     setSaveStatus("");
+    setGitStatus("");
     setConflict(false);
+    setOpenError(null);
+    setOpenState("idle");
+    setOpenPath(null);
+    setActivePath(null);
+    setTreeSelectedPath(null);
+    setFileSha(null);
+    setFileContent("");
+    setFileBinary(false);
+    setDirty(false);
     // Mark roots as unloaded; children are lazy-loaded.
     setTreeData((prev) =>
       prev.map((n) => ({
@@ -166,28 +189,102 @@ export const CodePane = ({
     );
   };
 
+  const openReqIdRef = useRef(0);
   const openFile = async (path: string) => {
+    const reqId = ++openReqIdRef.current;
     setSaveStatus("Loading...");
     setConflict(false);
-    const r = await sandboxRead(projectId, path);
-    setSelectedPath(r.path);
-    setFileSha(r.sha256);
-    setFileBinary(!!r.is_binary);
-    setDirty(false);
-    if (r.is_binary || r.content == null) {
-      setFileContent("");
-    } else {
-      setFileContent(r.content);
+    setOpenError(null);
+    setOpenState("loading");
+    setOpenPath(path);
+    try {
+      const r = await sandboxRead(projectId, path);
+      if (reqId !== openReqIdRef.current) return;
+
+      setTreeSelectedPath(r.path);
+      setOpenPath(r.path);
+      setActivePath(r.path);
+      setOpenState("ready");
+      setFileSha(r.sha256);
+      setFileBinary(!!r.is_binary);
+      setDirty(false);
+      if (r.is_binary || r.content == null) {
+        setFileContent("");
+      } else {
+        setFileContent(r.content);
+      }
+      setSaveStatus("");
+      onOpenFile?.(r.path);
+    } catch (e: unknown) {
+      if (reqId !== openReqIdRef.current) return;
+      const status = asErrorWithStatus(e).status;
+      const data =
+        e && typeof e === "object" && "data" in (e as Record<string, unknown>)
+          ? (e as Record<string, unknown>).data
+          : undefined;
+      setOpenState("error");
+      setOpenError({
+        message: `Failed to open ${path}${status ? ` (HTTP ${status})` : ""}`,
+        status,
+        data,
+      });
+      setSaveStatus("Open failed");
     }
-    setSaveStatus("");
-    onOpenFile?.(r.path);
   };
 
   const debouncedSaveRef = useRef<number | null>(null);
+  const syncRunningRef = useRef(false);
+  const syncPendingRef = useRef(false);
+  const syncPendingCommitMsgRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    syncRunningRef.current = false;
+    syncPendingRef.current = false;
+    syncPendingCommitMsgRef.current = null;
+    setGitStatus("");
+  }, [projectId]);
+
+  const startGitSync = useCallback(async (commitMessage?: string) => {
+    if (syncRunningRef.current) {
+      syncPendingRef.current = true;
+      syncPendingCommitMsgRef.current = commitMessage || null;
+      return;
+    }
+    syncRunningRef.current = true;
+    setGitStatus("Syncing to Git...");
+    try {
+      const r = await projectGitSync(projectId, {
+        commit_message: commitMessage,
+      });
+      const shaShort =
+        typeof r.commit_sha === "string" && r.commit_sha
+          ? r.commit_sha.slice(0, 8)
+          : null;
+      setGitStatus(shaShort ? `Synced (${shaShort})` : "Synced");
+      setTimeout(() => setGitStatus(""), 2500);
+    } catch (e: unknown) {
+      const status = asErrorWithStatus(e).status;
+      setGitStatus(
+        `Git sync failed${status ? ` (HTTP ${status})` : ""}`
+      );
+    } finally {
+      syncRunningRef.current = false;
+      if (syncPendingRef.current) {
+        syncPendingRef.current = false;
+        const msg = syncPendingCommitMsgRef.current || undefined;
+        syncPendingCommitMsgRef.current = null;
+        void startGitSync(msg);
+      }
+    }
+  }, [projectId]);
+
   useEffect(() => {
     if (!dirty) return;
-    if (!selectedPath) return;
+    if (openState !== "ready") return;
+    if (!activePath) return;
+    if (openPath !== activePath) return;
     if (fileBinary) return;
+    if (!fileSha) return;
 
     if (debouncedSaveRef.current != null) {
       window.clearTimeout(debouncedSaveRef.current);
@@ -196,13 +293,14 @@ export const CodePane = ({
       try {
         setSaveStatus("Saving...");
         const res = await sandboxWrite(projectId, {
-          path: selectedPath,
+          path: activePath,
           content: fileContent,
           expected_sha256: fileSha || undefined,
         });
         setFileSha(res.sha256);
         setDirty(false);
         setSaveStatus("Saved");
+        void startGitSync(`UI save: ${activePath}`);
         setTimeout(() => setSaveStatus(""), 1200);
       } catch (e: unknown) {
         if (asErrorWithStatus(e).status === 409) {
@@ -219,15 +317,25 @@ export const CodePane = ({
         window.clearTimeout(debouncedSaveRef.current);
       }
     };
-  }, [dirty, selectedPath, fileBinary, fileContent, fileSha, projectId]);
+  }, [
+    dirty,
+    openState,
+    openPath,
+    activePath,
+    fileBinary,
+    fileContent,
+    fileSha,
+    projectId,
+    startGitSync,
+  ]);
 
   useEffect(() => {
     if (!agentTouchedPath) return;
-    if (!selectedPath) return;
-    if (agentTouchedPath === selectedPath) {
+    if (!activePath) return;
+    if (agentTouchedPath === activePath) {
       setSaveStatus("Changed by agent; reload?");
     }
-  }, [agentTouchedPath, selectedPath]);
+  }, [agentTouchedPath, activePath]);
 
   const createInDir = async (dir: string, kind: "file" | "dir") => {
     const name = window.prompt(kind === "file" ? "New file name:" : "New folder name:");
@@ -240,32 +348,44 @@ export const CodePane = ({
   };
 
   const renameSelected = async () => {
-    if (!selectedPath) return;
-    const parts = selectedPath.split("/");
+    if (!treeSelectedPath || treeSelectedPath === "/") return;
+    const parts = treeSelectedPath.split("/");
     const cur = parts[parts.length - 1] || "";
     const next = window.prompt("Rename to:", cur);
     if (!next || !next.trim()) return;
-    const parent = selectedPath.split("/").slice(0, -1).join("/") || "/";
+    const parent = treeSelectedPath.split("/").slice(0, -1).join("/") || "/";
     const to = (parent === "/" ? "" : parent) + "/" + next.trim();
-    await sandboxRename(projectId, { from: selectedPath, to });
-    setSelectedPath(to);
+    await sandboxRename(projectId, { from: treeSelectedPath, to });
+    setTreeSelectedPath(to);
+    if (activePath === treeSelectedPath) {
+      setActivePath(to);
+      setOpenPath(to);
+    }
     setSaveStatus("Renamed");
     // Refresh parent listing.
     await loadChildren(parent);
   };
 
   const deleteSelected = async () => {
-    if (!selectedPath) return;
-    const ok = window.confirm(`Delete ${selectedPath}?`);
+    if (!treeSelectedPath || treeSelectedPath === "/") return;
+    const ok = window.confirm(`Delete ${treeSelectedPath}?`);
     if (!ok) return;
     const recursive = window.confirm("Recursive delete? (OK = recursive, Cancel = non-recursive)");
-    await sandboxRm(projectId, { path: selectedPath, recursive });
-    setSelectedPath(null);
-    setFileContent("");
-    setFileSha(null);
-    setDirty(false);
+    await sandboxRm(projectId, { path: treeSelectedPath, recursive });
+    const wasActive = activePath === treeSelectedPath;
+    setTreeSelectedPath(null);
+    if (wasActive) {
+      setOpenState("idle");
+      setOpenPath(null);
+      setActivePath(null);
+      setFileContent("");
+      setFileSha(null);
+      setDirty(false);
+      setFileBinary(false);
+      setConflict(false);
+    }
     setSaveStatus("Deleted");
-    const parent = selectedPath.split("/").slice(0, -1).join("/") || "/";
+    const parent = treeSelectedPath.split("/").slice(0, -1).join("/") || "/";
     await loadChildren(parent);
   };
 
@@ -303,11 +423,7 @@ export const CodePane = ({
               }
             }
           } else {
-            try {
-              await openFile(data.id);
-            } catch {
-              // ignore
-            }
+            await openFile(data.id);
           }
         }}
         title={data.id}
@@ -334,12 +450,15 @@ export const CodePane = ({
   };
 
   const selectedDirForCreate = useMemo(() => {
-    if (!selectedPath) return "/";
+    if (!treeSelectedPath) return "/";
     // If a dir is selected, create inside it; otherwise create next to the file.
-    const node = findNode(treeData, selectedPath);
+    const node = findNode(treeData, treeSelectedPath);
     if (node?.isDir) return node.id;
-    return selectedPath.split("/").slice(0, -1).join("/") || "/";
-  }, [selectedPath, treeData]);
+    return treeSelectedPath.split("/").slice(0, -1).join("/") || "/";
+  }, [treeSelectedPath, treeData]);
+
+  const canMutateSelected =
+    !!treeSelectedPath && treeSelectedPath !== "/";
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -382,7 +501,7 @@ export const CodePane = ({
             size="sm"
             variant="outline"
             onClick={() => renameSelected()}
-            disabled={!selectedPath}
+            disabled={!canMutateSelected}
             title="Rename"
           >
             Rename
@@ -391,7 +510,7 @@ export const CodePane = ({
             size="sm"
             variant="destructive"
             onClick={() => deleteSelected()}
-            disabled={!selectedPath}
+            disabled={!canMutateSelected}
             title="Delete"
           >
             <Trash2 size={14} />
@@ -400,10 +519,12 @@ export const CodePane = ({
 
         <div style={{ fontSize: 12, opacity: 0.85, whiteSpace: "nowrap" }}>
           {saveStatus}
+          {saveStatus && gitStatus ? " \u2022 " : ""}
+          {gitStatus}
         </div>
       </div>
 
-      {conflict && selectedPath ? (
+      {conflict && activePath ? (
         <div
           className="border-b"
           style={{
@@ -423,7 +544,7 @@ export const CodePane = ({
               size="sm"
               variant="outline"
               onClick={async () => {
-                await openFile(selectedPath);
+                await openFile(activePath);
                 setConflict(false);
               }}
             >
@@ -436,13 +557,14 @@ export const CodePane = ({
                 try {
                   setSaveStatus("Overwriting...");
                   const res = await sandboxWrite(projectId, {
-                    path: selectedPath,
+                    path: activePath,
                     content: fileContent,
                   });
                   setFileSha(res.sha256);
                   setDirty(false);
                   setConflict(false);
                   setSaveStatus("Saved");
+                  void startGitSync(`UI save: ${activePath}`);
                   setTimeout(() => setSaveStatus(""), 1200);
                 } catch {
                   setSaveStatus("Overwrite failed");
@@ -472,7 +594,7 @@ export const CodePane = ({
             onSelect={(nodes: NodeApi<FileNode>[]) => {
               const n = nodes[0];
               if (!n) return;
-              setSelectedPath(n.data.id);
+              setTreeSelectedPath(n.data.id);
             }}
           >
             {Node}
@@ -480,7 +602,55 @@ export const CodePane = ({
         </div>
 
         <div className="flex-1 min-w-0">
-          {!selectedPath ? (
+          {openState === "idle" ? (
+            <div style={{ padding: 12, fontSize: 12, opacity: 0.8 }}>
+              Select a file to edit.
+            </div>
+          ) : openState === "loading" ? (
+            <div style={{ padding: 12, fontSize: 12, opacity: 0.8 }}>
+              Loading{openPath ? `: ${openPath}` : "..."}
+            </div>
+          ) : openState === "error" ? (
+            <div style={{ padding: 12, fontSize: 12, opacity: 0.85 }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                {openError?.message || "Failed to open file."}
+              </div>
+              {openError?.data ? (
+                <details style={{ marginTop: 8 }}>
+                  <summary style={{ cursor: "pointer" }}>Details</summary>
+                  <pre style={{ marginTop: 8, whiteSpace: "pre-wrap", fontSize: 11, opacity: 0.85 }}>
+                    {JSON.stringify(openError.data, null, 2)}
+                  </pre>
+                </details>
+              ) : null}
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={async () => {
+                    if (openPath) await openFile(openPath);
+                  }}
+                  disabled={!openPath}
+                >
+                  Retry
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    if (!activePath) return;
+                    setOpenPath(activePath);
+                    setOpenState("ready");
+                    setOpenError(null);
+                    setSaveStatus("");
+                  }}
+                  disabled={!activePath}
+                >
+                  Back to opened file
+                </Button>
+              </div>
+            </div>
+          ) : !activePath ? (
             <div style={{ padding: 12, fontSize: 12, opacity: 0.8 }}>
               Select a file to edit.
             </div>
@@ -490,9 +660,9 @@ export const CodePane = ({
             </div>
           ) : (
             <Editor
-              path={selectedPath}
-              defaultLanguage={inferLanguage(selectedPath)}
-              language={inferLanguage(selectedPath)}
+              path={activePath}
+              defaultLanguage={inferLanguage(activePath)}
+              language={inferLanguage(activePath)}
               theme="vs-dark"
               value={fileContent}
               onChange={(v) => {

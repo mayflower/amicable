@@ -64,18 +64,33 @@ class SandboxFs:
         require_read_allowed(path, policy=DEFAULT_POLICY)
         p = normalize_public_path(path)
         res = self._backend.download_files([p])
-        if not res or res[0].get("error") is not None:
-            err = (res[0].get("error") if res else "file_not_found") or "file_not_found"
-            raise FileNotFoundError(str(err))
-        data = res[0].get("content") or b""
-        if not isinstance(data, (bytes, bytearray)):
-            data = str(data).encode("utf-8", errors="replace")
+        if not res:
+            raise FileNotFoundError("file_not_found")
 
-        sha = _sha256_bytes(bytes(data))
-        if len(data) > _MAX_TEXT_BYTES or _looks_binary(bytes(data)):
+        # Backend implementations may return dict-like or attribute-like objects.
+        item = res[0]
+        if isinstance(item, dict):
+            err = item.get("error")
+            data = item.get("content")
+        else:
+            err = getattr(item, "error", None)
+            data = getattr(item, "content", None)
+
+        if err is not None:
+            err_str = str(err) if err else "file_not_found"
+            raise FileNotFoundError(err_str)
+        if data is None:
+            raise FileNotFoundError("file_not_found")
+
+        payload = data
+        if not isinstance(payload, (bytes, bytearray)):
+            payload = str(payload).encode("utf-8", errors="replace")
+
+        sha = _sha256_bytes(bytes(payload))
+        if len(payload) > _MAX_TEXT_BYTES or _looks_binary(bytes(payload)):
             return ReadResult(path=p, content=None, sha256=sha, is_binary=True)
 
-        text = bytes(data).decode("utf-8", errors="strict")
+        text = bytes(payload).decode("utf-8", errors="strict")
         return ReadResult(path=p, content=text, sha256=sha, is_binary=False)
 
     def write(

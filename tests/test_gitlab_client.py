@@ -20,7 +20,7 @@ class _Sess:
         self.routes = routes
         self.calls = []
 
-    def request(self, method, url, headers=None, params=None, data=None, timeout=None):
+    def request(self, method, url, headers=None, params=None, data=None, timeout=None):  # noqa: ARG002
         self.calls.append((method, url, params, data))
         key = (method, url)
         if key not in self.routes:
