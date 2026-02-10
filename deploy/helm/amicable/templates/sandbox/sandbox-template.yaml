@@ -29,12 +29,12 @@ spec:
               containerPort: 3000
               protocol: TCP
           readinessProbe:
-            httpGet:
-              path: /healthz
+            tcpSocket:
               port: 8888
             initialDelaySeconds: 1
-            periodSeconds: 2
-            failureThreshold: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 10
           env:
             - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
               value: {{ ($t.additionalAllowedHosts | default $.Values.sandboxTemplate.additionalAllowedHosts) | quote }}
@@ -76,12 +76,12 @@ spec:
               containerPort: 3000
               protocol: TCP
           readinessProbe:
-            httpGet:
-              path: /healthz
+            tcpSocket:
               port: 8888
             initialDelaySeconds: 1
-            periodSeconds: 2
-            failureThreshold: 15
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 10
           env:
             - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
               value: {{ .Values.sandboxTemplate.additionalAllowedHosts | quote }}
