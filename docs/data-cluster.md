@@ -66,7 +66,6 @@ Create the agent secret in the `amicable` namespace:
   - `GOOGLE_CLIENT_ID`
   - `GOOGLE_CLIENT_SECRET`
   - `SESSION_SECRET`
-- `AGENT_AUTH_TOKEN` (optional; legacy token mode, not recommended for browser-based editor)
 - `GITLAB_TOKEN` (optional; enables GitLab-backed project persistence)
 - Hasura DB integration (optional):
   - `HASURA_GRAPHQL_ADMIN_SECRET` (Hasura admin secret for metadata + run_sql)

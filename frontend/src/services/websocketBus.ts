@@ -7,7 +7,6 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 
 export interface WebSocketBusConfig {
   url: string;
-  token?: string;
   messageBus: MessageBus;
   sessionId?: string;
 }
@@ -27,9 +26,6 @@ export class WebSocketBus {
 
   private websocketUrl(): string {
     const url = new URL(this.config.url);
-    if (this.config.token) {
-      url.searchParams.set("auth_token", this.config.token);
-    }
     return url.toString();
   }
 
@@ -239,9 +235,8 @@ export class WebSocketBus {
 
 export const createWebSocketBus = (
   url: string,
-  token: string | undefined,
   messageBus: MessageBus,
   sessionId?: string
 ): WebSocketBus => {
-  return new WebSocketBus({ url, token, messageBus, sessionId });
+  return new WebSocketBus({ url, messageBus, sessionId });
 };

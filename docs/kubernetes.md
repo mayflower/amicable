@@ -165,8 +165,7 @@ helm upgrade --install amicable ./deploy/helm/amicable \
   --namespace amicable --create-namespace --reuse-values \
   --set editor.enabled=true \
   --set editor.ingress.host=editor.example.com \
-  --set editor.runtimeConfig.VITE_AGENT_WS_URL=wss://agent.example.com/ \
-  --set editor.runtimeConfig.VITE_AGENT_TOKEN=
+  --set editor.runtimeConfig.VITE_AGENT_WS_URL=wss://agent.example.com/
 ```
 
 For more control, prefer a values file instead of many `--set` flags.
@@ -257,9 +256,6 @@ kubectl create secret generic amicable-agent-secrets \\
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Optional auth:
-- If you set `AGENT_AUTH_TOKEN` in the secret and uncomment it in the deployment, the WS server will require `?auth_token=...`.
-
 ## 7. Optional: Hasura Database Integration
 
 Amicable can expose a per-app database via Hasura through the agent service:
@@ -275,8 +271,6 @@ To enable, set agent env vars:
 - `HASURA_GRAPHQL_JWT_SECRET` (secret JSON, HS256)
 
 And ensure Hasura is configured with the same `HASURA_GRAPHQL_JWT_SECRET`.
-
-Note: if you enable `AGENT_AUTH_TOKEN`, any client must know the token. A browser-based editor cannot keep a shared token secret, so this is only suitable for low-risk dev setups or when paired with a real auth layer (OIDC, reverse proxy auth, etc).
 
 ## 7. Deploy the Agent
 
@@ -321,8 +315,7 @@ helm upgrade --install amicable ./deploy/helm/amicable \\
   --set previewRouter.ingress.wildcardHost=\"*.preview.example.com\" \\
   --set editor.enabled=true \\
   --set editor.ingress.host=editor.example.com \\
-  --set editor.runtimeConfig.VITE_AGENT_WS_URL=wss://agent.example.com/ \\
-  --set editor.runtimeConfig.VITE_AGENT_TOKEN=
+  --set editor.runtimeConfig.VITE_AGENT_WS_URL=wss://agent.example.com/
 ```
 
 Then open:
@@ -334,7 +327,6 @@ Set in `frontend/.env`:
 
 ```bash
 VITE_AGENT_WS_URL=wss://agent.example.com/
-VITE_AGENT_TOKEN=your-token-if-enabled
 ```
 
 Then:

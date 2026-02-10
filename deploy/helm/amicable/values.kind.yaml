@@ -100,5 +100,3 @@ editor:
       secretName: ""
   runtimeConfig:
     VITE_AGENT_WS_URL: "ws://agent.127.0.0.1.nip.io/"
-    VITE_AGENT_TOKEN: ""
-

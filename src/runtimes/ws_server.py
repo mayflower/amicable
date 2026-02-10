@@ -78,6 +78,15 @@ def _require_hasura() -> None:
     require_hasura_from_env()
 
 
+def _hasura_enabled() -> bool:
+    """Return True iff Hasura is configured in the current environment."""
+    try:
+        _require_hasura()
+        return True
+    except Exception:
+        return False
+
+
 def _get_owner_from_request(request: Request) -> tuple[str, str]:
     """Return (sub, email) for project ownership checks."""
     mode = _auth_mode()
@@ -131,13 +140,14 @@ def _csv_env(name: str) -> list[str]:
 def _auth_mode() -> str:
     # Modes:
     # - none: no auth enforced
-    # - token: legacy ?auth_token=... (AGENT_AUTH_TOKEN)
     # - google: Google OAuth login + session cookie
     mode = (os.environ.get("AUTH_MODE") or "").strip().lower()
     if mode:
+        if mode == "token":
+            raise RuntimeError(
+                "AUTH_MODE=token is no longer supported; use AUTH_MODE=google"
+            )
         return mode
-    if os.environ.get("AGENT_AUTH_TOKEN"):
-        return "token"
     # If Google is configured, default to enforcing it.
     if os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"):
         return "google"
@@ -554,7 +564,8 @@ async def api_rename_project(project_id: str, request: Request) -> JSONResponse:
 async def api_git_sync_project(project_id: str, request: Request) -> JSONResponse:
     # This endpoint is intended for the browser Code view: after a file save in the
     # sandbox FS, persist the full sandbox tree back to GitLab (commit + push).
-    _require_hasura()
+    if not _hasura_enabled():
+        return JSONResponse({"error": "hasura_not_configured"}, status_code=400)
     try:
         sub, email = _get_owner_from_request(request)
     except PermissionError:
@@ -1221,16 +1232,6 @@ async def auth_logout(request: Request, redirect: str | None = None):
 def _require_auth(ws: WebSocket) -> None:
     mode = _auth_mode()
     if mode == "none":
-        return
-
-    if mode == "token":
-        expected = os.environ.get("AGENT_AUTH_TOKEN")
-        # Keep old behavior: if token isn't configured, don't enforce.
-        if not expected:
-            return
-        token = ws.query_params.get("auth_token")
-        if token != expected:
-            raise PermissionError("invalid auth_token")
         return
 
     if mode == "google":

@@ -6,7 +6,6 @@ import { MessageType } from "../types/messages";
 
 interface UseMessageBusConfig {
   wsUrl: string;
-  token?: string;
   sessionId?: string;
   handlers?: {
     [K in MessageType]?: (message: Message) => void;
@@ -27,7 +26,6 @@ interface UseMessageBusReturn {
 
 export const useMessageBus = ({
   wsUrl,
-  token,
   sessionId,
   handlers = {},
   onConnect,
@@ -44,7 +42,6 @@ export const useMessageBus = ({
   const isConnectingRef = useRef(false);
   const lastConnectParamsRef = useRef<{
     wsUrl: string;
-    token?: string;
     sessionId?: string;
   } | null>(null);
 
@@ -130,12 +127,11 @@ export const useMessageBus = ({
       return;
     }
 
-    const nextParams = { wsUrl, token, sessionId };
+    const nextParams = { wsUrl, sessionId };
     const prevParams = lastConnectParamsRef.current;
     const sameParams =
       prevParams &&
       prevParams.wsUrl === nextParams.wsUrl &&
-      prevParams.token === nextParams.token &&
       prevParams.sessionId === nextParams.sessionId;
 
     if (isConnected && webSocketRef.current && sameParams) {
@@ -161,7 +157,6 @@ export const useMessageBus = ({
       );
       webSocketRef.current = createWebSocketBus(
         wsUrl,
-        token,
         messageBusRef.current,
         sessionId
       );
@@ -174,7 +169,7 @@ export const useMessageBus = ({
       isConnectingRef.current = false;
       setError(err instanceof Error ? err.message : "Failed to connect");
     }
-  }, [wsUrl, token, sessionId, isConnected]);
+  }, [wsUrl, sessionId, isConnected]);
 
   const disconnect = useCallback(() => {
     if (webSocketRef.current) {
@@ -226,7 +221,7 @@ export const useMessageBus = ({
     if (!isConnected || !webSocketRef.current) return;
     console.log("Connection parameters changed, reconnecting...");
     connect().catch((e) => console.error("Reconnect failed:", e));
-  }, [wsUrl, token, sessionId, isConnected, connect]);
+  }, [wsUrl, sessionId, isConnected, connect]);
 
   return {
     isConnecting,

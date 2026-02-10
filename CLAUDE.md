@@ -101,7 +101,7 @@ Preview URLs are generally `https://<sandbox_id>.<PREVIEW_BASE_DOMAIN>/`. In clu
 
 ### Agent env vars
 - `DEEPAGENTS_MODEL` — LLM model string
-- `AUTH_MODE` — `none`, `token`, or `google`
+- `AUTH_MODE` — `none` or `google` (token mode removed)
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET` — for OAuth
 - `PUBLIC_BASE_URL` — OAuth callback URL base
 - `CORS_ALLOW_ORIGINS`, `AUTH_REDIRECT_ALLOW_ORIGINS` — allowlists
@@ -138,7 +138,6 @@ Preview URLs are generally `https://<sandbox_id>.<PREVIEW_BASE_DOMAIN>/`. In clu
 ### Frontend env vars
 - `VITE_AGENT_WS_URL` — agent WebSocket URL
 - `VITE_AGENT_HTTP_URL` (optional; derived from WS URL if unset)
-- `VITE_AGENT_TOKEN` — auth token (optional; not needed with Google OAuth)
 - Runtime override via `window.__AMICABLE_CONFIG__` in `frontend/public/config.js`
 
 ### GitLab Persistence (optional)

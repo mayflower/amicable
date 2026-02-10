@@ -75,7 +75,6 @@ In Kubernetes deployments, the editor reads runtime config from a served `/confi
 Key runtime keys:
 - `VITE_AGENT_WS_URL` (WebSocket URL of the agent)
 - `VITE_AGENT_HTTP_URL` (optional; derived from WS URL if unset)
-- `VITE_AGENT_TOKEN` (optional; only used for legacy token auth modes, not for Google OAuth)
 
 ### WS Protocol Summary
 
@@ -148,7 +147,7 @@ WebSocket access is blocked unless the session contains a user:
 - `DEEPAGENTS_MODEL_RETRY_MAX_RETRIES`: model retry middleware retries (default `2`)
 - `DEEPAGENTS_TOOL_RETRY_MAX_RETRIES`: tool retry middleware retries (default `2`)
 - `DEEPAGENTS_HITL_INTERRUPT_ON_JSON`: JSON mapping tool -> interrupt config (default `{}`)
-- `AUTH_MODE`: `google` / `token` / `none`
+- `AUTH_MODE`: `google` / `none`
 - `PUBLIC_BASE_URL`: used for OAuth callback URL generation
 - `CORS_ALLOW_ORIGINS`, `AUTH_REDIRECT_ALLOW_ORIGINS`: allowlists
 - `K8S_SANDBOX_NAMESPACE`, `K8S_SANDBOX_TEMPLATE_NAME`

@@ -796,7 +796,6 @@ const Create = () => {
 
   const { isConnecting, isConnected, error, connect, send } = useMessageBus({
     wsUrl: AGENT_CONFIG.WS_URL,
-    token: AGENT_CONFIG.TOKEN,
     sessionId: resolvedSessionId || undefined,
     handlers: messageHandlers,
     onConnect: () => {

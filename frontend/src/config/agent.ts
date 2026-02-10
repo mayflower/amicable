@@ -3,7 +3,6 @@ declare global {
     __AMICABLE_CONFIG__?: {
       VITE_AGENT_HTTP_URL?: string;
       VITE_AGENT_WS_URL?: string;
-      VITE_AGENT_TOKEN?: string;
     };
   }
 }
@@ -23,12 +22,8 @@ function deriveHttpBaseUrlFromWs(wsUrl: string): string {
 const WS_URL =
   runtime?.VITE_AGENT_WS_URL ?? import.meta.env.VITE_AGENT_WS_URL;
 
-const TOKEN =
-  runtime?.VITE_AGENT_TOKEN ?? import.meta.env.VITE_AGENT_TOKEN;
-
 export const AGENT_CONFIG = {
   WS_URL,
-  TOKEN,
   HTTP_URL:
     runtime?.VITE_AGENT_HTTP_URL ??
     import.meta.env.VITE_AGENT_HTTP_URL ??

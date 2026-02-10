@@ -39,12 +39,6 @@ spec:
               value: "8888"
             - name: SANDBOX_PREVIEW_PORT
               value: "3000"
-            # Optional: enforce token auth. Frontend sends ?auth_token=...
-            # - name: AGENT_AUTH_TOKEN
-            #   valueFrom:
-            #     secretKeyRef:
-            #       name: amicable-agent-secrets
-            #       key: AGENT_AUTH_TOKEN
           command: ["uvicorn"]
           args: ["src.runtimes.ws_server:app", "--host", "0.0.0.0", "--port", "8000"]
           ports:

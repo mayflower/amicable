@@ -31,13 +31,6 @@ spec:
                   key: {{ .Values.agent.secret.gitlabTokenKey | quote }}
             - name: AMICABLE_GIT_SYNC_REQUIRED
               value: {{ .Values.agent.env.gitSyncRequired | quote }}
-            {{- if .Values.agent.secret.enableAuthToken }}
-            - name: AGENT_AUTH_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.agent.secret.name | quote }}
-                  key: {{ .Values.agent.secret.authTokenKey | quote }}
-            {{- end }}
             - name: SANDBOX_BACKEND
               value: "k8s"
             - name: K8S_SANDBOX_NAMESPACE

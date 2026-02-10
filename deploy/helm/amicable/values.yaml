@@ -178,10 +178,6 @@ agent:
     openaiApiKeyKey: OPENAI_API_KEY
     # Required GitLab token for project persistence (repo create/sync/delete).
     gitlabTokenKey: GITLAB_TOKEN
-    # Optional auth token enforcement.
-    # If enabled, the secret must contain this key.
-    enableAuthToken: false
-    authTokenKey: AGENT_AUTH_TOKEN
     # Map of env var name -> key in the same Kubernetes secret.
     # Example:
     #   GOOGLE_CLIENT_ID: GOOGLE_CLIENT_ID
@@ -222,4 +218,3 @@ editor:
     # Note: this value is delivered to the browser, so it is not a real "secret".
     # If you need access control, enforce auth at the ingress (OIDC/basic auth) or
     # put the editor behind your SSO.
-    VITE_AGENT_TOKEN: ""

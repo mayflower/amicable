@@ -71,7 +71,6 @@ Create `frontend/.env`:
 
 ```bash
 VITE_AGENT_WS_URL=wss://your-agent-host/
-VITE_AGENT_TOKEN=              # optional if using Google OAuth
 ```
 
 ### Run locally

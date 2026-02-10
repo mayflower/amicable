@@ -24,7 +24,6 @@ def _redact(text: str) -> str:
         "DATABASE_URL",
         "LANGGRAPH_DATABASE_URL",
         "AMICABLE_LANGGRAPH_DATABASE_URL",
-        "AGENT_AUTH_TOKEN",
     ):
         val = (os.environ.get(key) or "").strip()
         if val and val in s:
