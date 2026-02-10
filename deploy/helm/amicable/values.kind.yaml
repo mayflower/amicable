@@ -75,6 +75,9 @@ agent:
   secret:
     # You still need to create this secret, but values can be dummy for local dev.
     name: amicable-agent-secrets
+    extraEnv:
+      # Persist LangGraph checkpoints (DeepAgents session history) across agent restarts:
+      # AMICABLE_LANGGRAPH_DATABASE_URL: AMICABLE_LANGGRAPH_DATABASE_URL
 
 previewRouter:
   replicas: 1

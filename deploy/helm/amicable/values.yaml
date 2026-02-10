@@ -187,6 +187,8 @@ agent:
     gitlabTokenKey: GITLAB_TOKEN
     # Map of env var name -> key in the same Kubernetes secret.
     # Example:
+    #   # Persist LangGraph checkpoints (DeepAgents session history) across agent restarts:
+    #   AMICABLE_LANGGRAPH_DATABASE_URL: AMICABLE_LANGGRAPH_DATABASE_URL
     #   GOOGLE_CLIENT_ID: GOOGLE_CLIENT_ID
     #   GOOGLE_CLIENT_SECRET: GOOGLE_CLIENT_SECRET
     #   SESSION_SECRET: SESSION_SECRET

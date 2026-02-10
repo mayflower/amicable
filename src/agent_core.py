@@ -279,6 +279,10 @@ class Agent:
 
         dsn = _langgraph_database_url()
         if not dsn:
+            logger.info(
+                "LangGraph checkpointing disabled (no AMICABLE_LANGGRAPH_DATABASE_URL/LANGGRAPH_DATABASE_URL/DATABASE_URL); "
+                "using in-memory checkpointing"
+            )
             return None
 
         try:
