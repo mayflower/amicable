@@ -267,9 +267,9 @@ def rename_gitlab_repo_to_match_project_slug(
 
 
 def delete_gitlab_repo_for_project(
-    _client,
+    client,
     *,
-    _owner: projects_store.ProjectOwner,
+    owner: projects_store.ProjectOwner,
     project: projects_store.Project,
 ) -> None:
     """Delete the GitLab repo for a project.
@@ -279,10 +279,13 @@ def delete_gitlab_repo_for_project(
     - If required and deletion fails: raise.
     - 404 is treated as already deleted.
     """
-    ensure_git_sync_configured()
+    # Metadata deletion is best-effort and does not require Hasura access.
+    del client, owner
     required = git_sync_required()
     if not git_sync_enabled():
         return
+    # Only validate configuration (token, requiredness) if Git sync is enabled.
+    ensure_git_sync_configured()
 
     gl = GitLabClient.from_env()
 

@@ -3,120 +3,109 @@ import { serve } from "@hono/node-server";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import type { Context } from "hono";
-
 const app = new Hono();
-
 // Swagger UI assets are served from the locally installed `swagger-ui-dist`
 // package so the sandbox doesn't depend on outbound internet access.
 const require = createRequire(import.meta.url);
-const swaggerUiDist = require("swagger-ui-dist") as {
-  getAbsoluteFSPath: () => string;
-};
+const swaggerUiDist = require("swagger-ui-dist");
 const swaggerUiDistDir = swaggerUiDist.getAbsoluteFSPath();
-
-function serveSwaggerAsset(filename: string, contentType: string) {
-  return (c: Context) => {
-    const p = path.join(swaggerUiDistDir, filename);
-    const buf = readFileSync(p);
-    return c.body(buf, 200, { "content-type": contentType });
-  };
+function serveSwaggerAsset(filename, contentType) {
+    return (c) => {
+        const p = path.join(swaggerUiDistDir, filename);
+        const buf = readFileSync(p);
+        return c.body(buf, 200, { "content-type": contentType });
+    };
 }
-
 const openapi = {
-  openapi: "3.0.3",
-  info: {
-    title: "Amicable Hono Sandbox API",
-    version: "1.0.0",
-    description:
-      "OpenAPI for the Hono sandbox. Update /openapi.json when you add new routes.",
-  },
-  paths: {
-    "/healthz": {
-      get: {
-        summary: "Health check",
-        responses: {
-          "200": {
-            description: "OK",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: { status: { type: "string" } },
-                  required: ["status"],
-                },
-              },
-            },
-          },
-        },
-      },
+    openapi: "3.0.3",
+    info: {
+        title: "Amicable Hono Sandbox API",
+        version: "1.0.0",
+        description: "OpenAPI for the Hono sandbox. Update /openapi.json when you add new routes.",
     },
-    "/actions/echo": {
-      post: {
-        summary: "Example Hasura Action: echo request body",
-        requestBody: {
-          required: false,
-          content: {
-            "application/json": {
-              schema: { type: "object", additionalProperties: true },
-            },
-          },
-        },
-        responses: {
-          "200": {
-            description: "Echo response",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: {
-                    ok: { type: "boolean" },
-                    input: { type: "object", additionalProperties: true },
-                  },
-                  required: ["ok", "input"],
+    paths: {
+        "/healthz": {
+            get: {
+                summary: "Health check",
+                responses: {
+                    "200": {
+                        description: "OK",
+                        content: {
+                            "application/json": {
+                                schema: {
+                                    type: "object",
+                                    properties: { status: { type: "string" } },
+                                    required: ["status"],
+                                },
+                            },
+                        },
+                    },
                 },
-              },
             },
-          },
         },
-      },
-    },
-    "/events/log": {
-      post: {
-        summary: "Example Hasura Event Trigger: log request body",
-        requestBody: {
-          required: false,
-          content: {
-            "application/json": {
-              schema: { type: "object", additionalProperties: true },
-            },
-          },
-        },
-        responses: {
-          "200": {
-            description: "OK",
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: { ok: { type: "boolean" } },
-                  required: ["ok"],
+        "/actions/echo": {
+            post: {
+                summary: "Example Hasura Action: echo request body",
+                requestBody: {
+                    required: false,
+                    content: {
+                        "application/json": {
+                            schema: { type: "object", additionalProperties: true },
+                        },
+                    },
                 },
-              },
+                responses: {
+                    "200": {
+                        description: "Echo response",
+                        content: {
+                            "application/json": {
+                                schema: {
+                                    type: "object",
+                                    properties: {
+                                        ok: { type: "boolean" },
+                                        input: { type: "object", additionalProperties: true },
+                                    },
+                                    required: ["ok", "input"],
+                                },
+                            },
+                        },
+                    },
+                },
             },
-          },
         },
-      },
+        "/events/log": {
+            post: {
+                summary: "Example Hasura Event Trigger: log request body",
+                requestBody: {
+                    required: false,
+                    content: {
+                        "application/json": {
+                            schema: { type: "object", additionalProperties: true },
+                        },
+                    },
+                },
+                responses: {
+                    "200": {
+                        description: "OK",
+                        content: {
+                            "application/json": {
+                                schema: {
+                                    type: "object",
+                                    properties: { ok: { type: "boolean" } },
+                                    required: ["ok"],
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
     },
-  },
-} as const;
-
+};
 app.get("/healthz", (c) => c.json({ status: "ok" }));
-
 app.get("/openapi.json", (c) => c.json(openapi));
-
 app.get("/docs", (c) => {
-  return c.html(`<!doctype html>
+    return c.html(`<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -148,45 +137,29 @@ app.get("/docs", (c) => {
   </body>
 </html>`);
 });
-
 // Support both `/docs` and `/docs/` (some routers/proxies normalize differently).
 app.get("/docs/", (c) => c.redirect("/docs"));
-
 // Minimal Swagger UI static assets.
 app.get("/docs/swagger-ui.css", serveSwaggerAsset("swagger-ui.css", "text/css; charset=utf-8"));
-app.get(
-  "/docs/swagger-ui-bundle.js",
-  serveSwaggerAsset("swagger-ui-bundle.js", "application/javascript; charset=utf-8"),
-);
-app.get(
-  "/docs/swagger-ui-standalone-preset.js",
-  serveSwaggerAsset(
-    "swagger-ui-standalone-preset.js",
-    "application/javascript; charset=utf-8",
-  ),
-);
-
+app.get("/docs/swagger-ui-bundle.js", serveSwaggerAsset("swagger-ui-bundle.js", "application/javascript; charset=utf-8"));
+app.get("/docs/swagger-ui-standalone-preset.js", serveSwaggerAsset("swagger-ui-standalone-preset.js", "application/javascript; charset=utf-8"));
 // Optional but some Swagger UI builds reference this.
-app.get(
-  "/docs/oauth2-redirect.html",
-  serveSwaggerAsset("oauth2-redirect.html", "text/html; charset=utf-8"),
-);
-
+app.get("/docs/oauth2-redirect.html", serveSwaggerAsset("oauth2-redirect.html", "text/html; charset=utf-8"));
 app.get("/amicable-db.js", (c) => {
-  // Serve the injected file if present; otherwise serve a safe stub so the
-  // container is "pre-wired" even before injection runs.
-  try {
-    const js = readFileSync("./amicable-db.js", "utf8");
-    return c.body(js, 200, { "content-type": "application/javascript" });
-  } catch {
-    return c.body("window.__AMICABLE_DB__ = window.__AMICABLE_DB__ || null;\n", 200, {
-      "content-type": "application/javascript",
-    });
-  }
+    // Serve the injected file if present; otherwise serve a safe stub so the
+    // container is "pre-wired" even before injection runs.
+    try {
+        const js = readFileSync("./amicable-db.js", "utf8");
+        return c.body(js, 200, { "content-type": "application/javascript" });
+    }
+    catch {
+        return c.body("window.__AMICABLE_DB__ = window.__AMICABLE_DB__ || null;\n", 200, {
+            "content-type": "application/javascript",
+        });
+    }
 });
-
 app.get("/", (c) => {
-  return c.html(`<!doctype html>
+    return c.html(`<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -252,22 +225,17 @@ app.get("/", (c) => {
   </body>
 </html>`);
 });
-
 app.post("/actions/echo", async (c) => {
-  const body = await c.req.json().catch(() => ({}));
-  return c.json({ ok: true, input: body });
+    const body = await c.req.json().catch(() => ({}));
+    return c.json({ ok: true, input: body });
 });
-
 app.post("/events/log", async (c) => {
-  const body = await c.req.json().catch(() => ({}));
-  // In real code you would validate the Hasura event trigger payload.
-  console.log("hasura_event", JSON.stringify(body).slice(0, 2000));
-  return c.json({ ok: true });
+    const body = await c.req.json().catch(() => ({}));
+    // In real code you would validate the Hasura event trigger payload.
+    console.log("hasura_event", JSON.stringify(body).slice(0, 2000));
+    return c.json({ ok: true });
 });
-
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || "0.0.0.0";
-
 console.log(`Starting Hono server on http://${host}:${port}`);
-
 serve({ fetch: app.fetch, port, hostname: host });

@@ -854,15 +854,6 @@ async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
     if not p:
         return JSONResponse({"error": "not_found"}, status_code=404)
 
-    try:
-        delete_gitlab_repo_for_project(client, owner=owner, project=p)
-    except Exception as e:
-        detail = str(e)
-        status = 503 if ("GITLAB_TOKEN" in detail or "required" in detail) else 502
-        return JSONResponse(
-            {"error": "gitlab_error", "detail": detail}, status_code=status
-        )
-
     # Mark deleted immediately (so it disappears from the list), then cleanup async.
     mark_project_deleted(client, owner=owner, project_id=project_id)
 
@@ -871,6 +862,9 @@ async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
     def _cleanup() -> None:
         import contextlib
 
+        # Best-effort GitLab cleanup. Project deletion should not be blocked by GitLab.
+        with contextlib.suppress(Exception):
+            delete_gitlab_repo_for_project(client, owner=owner, project=p)
         # Best-effort sandbox delete.
         with contextlib.suppress(Exception):
             SessionSandboxManager().delete_session(project_id)
