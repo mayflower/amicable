@@ -180,6 +180,37 @@ const Create = () => {
   const latestAssistantMsgIdRef = useRef<string | null>(null);
   const [mainView, setMainView] = useState<"preview" | "code">("preview");
 
+  type ToolRun = {
+    runId: string;
+    toolName: string;
+    startTs?: number;
+    endTs?: number;
+    status: "running" | "success" | "error";
+    input?: unknown;
+    output?: unknown;
+    error?: unknown;
+    explanations: string[];
+  };
+
+  // Trace events can be extremely chatty. Keep an incrementally-aggregated view instead
+  // of appending every trace_event into `messages` (which causes O(n) re-aggregation and
+  // huge DOM growth during streaming).
+  const toolRunsByIdRef = useRef<Map<string, ToolRun>>(new Map());
+  const runToAssistantMsgIdRef = useRef<Map<string, string>>(new Map());
+  const reasoningByAssistantMsgIdRef = useRef<
+    Map<string, { key: string; ts: number; text: string }[]>
+  >(new Map());
+  const assistantTraceFirstTsRef = useRef<Map<string, number>>(new Map());
+  type AssistantStreamItem =
+    | { kind: "text"; key: string; ts: number; text: string }
+    | { kind: "tool"; key: string; ts: number; runId: string }
+    | { kind: "reasoning"; key: string; ts: number; text: string };
+  const assistantTimelineRef = useRef<Map<string, AssistantStreamItem[]>>(new Map());
+  const assistantLastFullTextRef = useRef<Map<string, string>>(new Map());
+  const assistantOpenTextKeyRef = useRef<Map<string, string | null>>(new Map());
+  const assistantTextSeqRef = useRef<Map<string, number>>(new Map());
+  const [traceVersion, setTraceVersion] = useState(0);
+
   useEffect(() => {
     if (authLoading) return;
     if (authMode === "google" && !authUser) {
@@ -336,6 +367,45 @@ const Create = () => {
 
       if (text && text.trim()) {
         const cleaned = stripUiBlocks(text.replace(/\\/g, ""));
+
+        // Build an interleaved stream timeline: text segments + tool cards inserted by trace events.
+        // We assume partials are append-only (cumulative text). If not, we fall back to replacing
+        // the current open text segment.
+        try {
+          const ts = typeof message.timestamp === "number" ? message.timestamp : Date.now();
+          const prevFull = assistantLastFullTextRef.current.get(id) || "";
+          const isAppend = cleaned.startsWith(prevFull);
+          const delta = isAppend ? cleaned.slice(prevFull.length) : cleaned;
+          assistantLastFullTextRef.current.set(id, cleaned);
+
+          if (!isAppend) {
+            const seq = 1;
+            assistantTextSeqRef.current.set(id, seq);
+            const key = `text-${id}-${seq}`;
+            assistantTimelineRef.current.set(id, [{ kind: "text", key, ts, text: cleaned }]);
+            assistantOpenTextKeyRef.current.set(id, key);
+            setTraceVersion((v) => v + 1);
+          } else if (delta) {
+            const timeline = assistantTimelineRef.current.get(id) || [];
+            const openKey = assistantOpenTextKeyRef.current.get(id) || null;
+            const last = timeline.length ? timeline[timeline.length - 1] : null;
+
+            if (openKey && last && last.kind === "text" && last.key === openKey) {
+              last.text += delta;
+            } else {
+              const seq = (assistantTextSeqRef.current.get(id) || 0) + 1;
+              assistantTextSeqRef.current.set(id, seq);
+              const key = `text-${id}-${seq}`;
+              timeline.push({ kind: "text", key, ts, text: delta });
+              assistantTimelineRef.current.set(id, timeline);
+              assistantOpenTextKeyRef.current.set(id, key);
+            }
+            setTraceVersion((v) => v + 1);
+          }
+        } catch {
+          // ignore
+        }
+
         setMessages((prev) => {
           const existingIndex = prev.findIndex((msg) => msg.id === id);
           if (existingIndex !== -1) {
@@ -343,7 +413,9 @@ const Create = () => {
               idx === existingIndex
                 ? {
                     ...msg,
-                    timestamp: message.timestamp || msg.timestamp,
+                    // Keep stable ordering while streaming; don't update the timestamp
+                    // on every partial chunk.
+                    timestamp: msg.timestamp || message.timestamp || Date.now(),
                     data: {
                       ...msg.data,
                       text: cleaned,
@@ -383,6 +455,44 @@ const Create = () => {
       if (text && text.trim()) {
         const cleanedText = text.replace(/\\/g, "");
         const extracted = extractUiBlocks(cleanedText);
+
+        // Finalize stream timeline for this assistant message.
+        try {
+          const ts = typeof message.timestamp === "number" ? message.timestamp : Date.now();
+          const prevFull = assistantLastFullTextRef.current.get(id) || "";
+          const nextFull = extracted.text || "";
+          const isAppend = nextFull.startsWith(prevFull);
+          const delta = isAppend ? nextFull.slice(prevFull.length) : nextFull;
+          assistantLastFullTextRef.current.set(id, nextFull);
+
+          if (!isAppend) {
+            const seq = 1;
+            assistantTextSeqRef.current.set(id, seq);
+            const key = `text-${id}-${seq}`;
+            assistantTimelineRef.current.set(id, [{ kind: "text", key, ts, text: nextFull }]);
+            assistantOpenTextKeyRef.current.set(id, key);
+            setTraceVersion((v) => v + 1);
+          } else if (delta) {
+            const timeline = assistantTimelineRef.current.get(id) || [];
+            const openKey = assistantOpenTextKeyRef.current.get(id) || null;
+            const last = timeline.length ? timeline[timeline.length - 1] : null;
+
+            if (openKey && last && last.kind === "text" && last.key === openKey) {
+              last.text += delta;
+            } else {
+              const seq = (assistantTextSeqRef.current.get(id) || 0) + 1;
+              assistantTextSeqRef.current.set(id, seq);
+              const key = `text-${id}-${seq}`;
+              timeline.push({ kind: "text", key, ts, text: delta });
+              assistantTimelineRef.current.set(id, timeline);
+              assistantOpenTextKeyRef.current.set(id, key);
+            }
+            setTraceVersion((v) => v + 1);
+          }
+        } catch {
+          // ignore
+        }
+
         setMessages((prev) => {
           const existingIndex = prev.findIndex((msg) => msg.id === id);
           if (existingIndex !== -1) {
@@ -390,7 +500,7 @@ const Create = () => {
               idx === existingIndex
                 ? {
                     ...msg,
-                    timestamp: message.timestamp || msg.timestamp,
+                    timestamp: msg.timestamp || message.timestamp || Date.now(),
                     data: {
                       ...msg.data,
                       text: extracted.text,
@@ -560,7 +670,22 @@ const Create = () => {
     },
 
     [MessageType.TRACE_EVENT]: (message: Message) => {
-      // Keep trace events in the message stream; render tool runs inline in the chat timeline.
+	      // Render tool runs inline in the chat timeline. Keep trace aggregation incremental
+	      // to avoid unbounded message growth and expensive re-aggregation on every update.
+	      const ts = typeof message.timestamp === "number" ? message.timestamp : Date.now();
+	      const explicitAssistantMsgId =
+	        typeof message.data.assistant_msg_id === "string" && message.data.assistant_msg_id
+	          ? message.data.assistant_msg_id
+	          : "";
+	      const assistantMsgId = explicitAssistantMsgId || latestAssistantMsgIdRef.current || "";
+
+      if (assistantMsgId) {
+        const prev = assistantTraceFirstTsRef.current.get(assistantMsgId);
+        if (typeof prev !== "number" || ts < prev) {
+          assistantTraceFirstTsRef.current.set(assistantMsgId, ts);
+        }
+      }
+
       try {
         const phase = typeof message.data.phase === "string" ? message.data.phase : "";
         const toolName =
@@ -589,153 +714,129 @@ const Create = () => {
       } catch {
         // ignore
       }
-      setMessages((prev) => [
-        ...prev,
-        {
-          ...message,
-          timestamp: message.timestamp || Date.now(),
-          data: {
-            ...message.data,
-            assistant_msg_id:
-              typeof message.data.assistant_msg_id === "string" && message.data.assistant_msg_id
-                ? message.data.assistant_msg_id
-                : latestAssistantMsgIdRef.current || undefined,
-            sender: Sender.ASSISTANT,
-            isStreaming: false,
-          },
-        },
-      ]);
+
+      try {
+        const phase = typeof message.data.phase === "string" ? message.data.phase : "";
+        const runId = typeof message.data.run_id === "string" ? message.data.run_id : "";
+        const toolName =
+          typeof message.data.tool_name === "string" ? message.data.tool_name : "";
+
+        if (phase === "reasoning_summary") {
+          if (assistantMsgId) {
+            const text = typeof message.data.text === "string" ? message.data.text : "";
+            if (text.trim()) {
+              const arr = reasoningByAssistantMsgIdRef.current.get(assistantMsgId) || [];
+              const key = message.id || `reason-${ts}`;
+              arr.push({ key, ts, text });
+              reasoningByAssistantMsgIdRef.current.set(assistantMsgId, arr);
+
+              const timeline = assistantTimelineRef.current.get(assistantMsgId) || [];
+              timeline.push({ kind: "reasoning", key: `reason-${key}`, ts, text });
+              assistantTimelineRef.current.set(assistantMsgId, timeline);
+              // Next text should start a new segment after this reasoning block.
+              assistantOpenTextKeyRef.current.set(assistantMsgId, null);
+            }
+          }
+          setTraceVersion((v) => v + 1);
+          return;
+        }
+
+        // Tool events: aggregate by run_id.
+        if (!runId || !toolName) {
+          setTraceVersion((v) => v + 1);
+          return;
+        }
+
+        const byId = toolRunsByIdRef.current;
+        const cur: ToolRun =
+          byId.get(runId) ||
+          ({
+            runId,
+            toolName,
+            status: "running",
+            explanations: [],
+          } as ToolRun);
+
+        cur.toolName = toolName;
+        if (!cur.startTs) cur.startTs = ts;
+
+        if (phase === "tool_start") {
+          cur.startTs = ts;
+          cur.input = message.data.input;
+          cur.status = "running";
+        } else if (phase === "tool_end") {
+          cur.endTs = ts;
+          cur.output = message.data.output;
+          cur.status = "success";
+        } else if (phase === "tool_error") {
+          cur.endTs = ts;
+          cur.error = message.data.error;
+          cur.status = "error";
+        } else if (phase === "tool_explain") {
+          const t = typeof message.data.text === "string" ? message.data.text : "";
+          if (t) cur.explanations.push(t.replace(/^\[explain\]\s*/i, "").trim());
+        }
+
+        byId.set(runId, cur);
+
+        // Attach the run to an assistant message id.
+	        // If the backend provided an explicit assistant_msg_id, treat it as authoritative.
+	        // Otherwise, fall back to "first seen wins" to avoid reshuffling on streaming updates.
+        if (explicitAssistantMsgId) {
+          runToAssistantMsgIdRef.current.set(runId, explicitAssistantMsgId);
+        } else if (assistantMsgId && !runToAssistantMsgIdRef.current.has(runId)) {
+          runToAssistantMsgIdRef.current.set(runId, assistantMsgId);
+        }
+
+        // Insert a tool card into the assistant stream timeline (at the first event we see).
+        const attachId = explicitAssistantMsgId || assistantMsgId;
+        if (attachId) {
+          const timeline = assistantTimelineRef.current.get(attachId) || [];
+          const key = `tool-${runId}`;
+          const exists = timeline.some((it) => it.kind === "tool" && it.runId === runId);
+          if (!exists) {
+            timeline.push({ kind: "tool", key, ts, runId });
+            assistantTimelineRef.current.set(attachId, timeline);
+            // Next text should start a new segment after the tool.
+            assistantOpenTextKeyRef.current.set(attachId, null);
+          }
+        }
+
+        setTraceVersion((v) => v + 1);
+      } catch {
+        setTraceVersion((v) => v + 1);
+      }
     },
   };
 
-  const toolRuns = useMemo(() => {
-    type Run = {
-      runId: string;
-      toolName: string;
-      startTs?: number;
-      endTs?: number;
-      status: "running" | "success" | "error";
-      input?: unknown;
-      output?: unknown;
-      error?: unknown;
-      explanations: string[];
-    };
-    const byId = new Map<string, Run>();
-
-    for (const m of messages) {
-      if (m.type !== MessageType.TRACE_EVENT) continue;
-      const runId = typeof m.data.run_id === "string" ? m.data.run_id : "";
-      const toolName = typeof m.data.tool_name === "string" ? m.data.tool_name : "";
-      if (!runId || !toolName) continue;
-
-      const phase = typeof m.data.phase === "string" ? m.data.phase : "";
-      if (phase === "reasoning_summary") continue;
-      const ts = typeof m.timestamp === "number" ? m.timestamp : 0;
-
-      const cur: Run =
-        byId.get(runId) ||
-        ({
-          runId,
-          toolName,
-          status: "running",
-          explanations: [],
-        } as Run);
-
-      if (!cur.startTs) cur.startTs = ts;
-      cur.toolName = toolName;
-
-      if (phase === "tool_start") {
-        cur.startTs = ts;
-        cur.input = m.data.input;
-        cur.status = "running";
-      } else if (phase === "tool_end") {
-        cur.endTs = ts;
-        cur.output = m.data.output;
-        cur.status = "success";
-      } else if (phase === "tool_error") {
-        cur.endTs = ts;
-        cur.error = m.data.error;
-        cur.status = "error";
-      } else if (phase === "tool_explain") {
-        const t = typeof m.data.text === "string" ? m.data.text : "";
-        if (t) cur.explanations.push(t.replace(/^\[explain\]\s*/i, "").trim());
-      }
-
-      byId.set(runId, cur);
-    }
-
-    return Array.from(byId.values()).sort((a, b) => (a.startTs || 0) - (b.startTs || 0));
-  }, [messages]);
-
   const toolRunsByAssistantMsgId = useMemo(() => {
-    const map = new Map<string, (typeof toolRuns)[number][]>();
-    for (const m of messages) {
-      if (m.type !== MessageType.TRACE_EVENT) continue;
-      const runId = typeof m.data.run_id === "string" ? m.data.run_id : "";
-      const toolName = typeof m.data.tool_name === "string" ? m.data.tool_name : "";
-      if (!runId || !toolName) continue;
-
-      const phase = typeof m.data.phase === "string" ? m.data.phase : "";
-      if (phase === "reasoning_summary") continue;
-
-      const assistantMsgId =
-        typeof m.data.assistant_msg_id === "string" ? m.data.assistant_msg_id : "";
-      if (!assistantMsgId) continue;
-
-      // toolRuns is already aggregated; we'll attach by matching run_id below.
-      // (This loop just collects assistant_msg_id values present in trace stream.)
-      if (!map.has(assistantMsgId)) map.set(assistantMsgId, []);
-    }
-
-    // Populate by scanning aggregated runs and attaching them to the first seen assistant_msg_id
-    // in the trace stream for that run.
-    const runToAssistant = new Map<string, string>();
-    for (const m of messages) {
-      if (m.type !== MessageType.TRACE_EVENT) continue;
-      const runId = typeof m.data.run_id === "string" ? m.data.run_id : "";
-      if (!runId) continue;
-      const assistantMsgId =
-        typeof m.data.assistant_msg_id === "string" ? m.data.assistant_msg_id : "";
-      if (!assistantMsgId) continue;
-      if (!runToAssistant.has(runId)) runToAssistant.set(runId, assistantMsgId);
-    }
-
-    for (const r of toolRuns) {
-      const assistantMsgId = runToAssistant.get(r.runId);
-      if (!assistantMsgId) continue;
-      const arr = map.get(assistantMsgId) || [];
+    // Depends on traceVersion to re-evaluate mutable refs.
+    if (traceVersion === -1) return new Map<string, ToolRun[]>();
+    const out = new Map<string, ToolRun[]>();
+    for (const [runId, assistantMsgId] of runToAssistantMsgIdRef.current.entries()) {
+      const r = toolRunsByIdRef.current.get(runId);
+      if (!assistantMsgId || !r) continue;
+      const arr = out.get(assistantMsgId) || [];
       arr.push(r);
-      map.set(assistantMsgId, arr);
+      out.set(assistantMsgId, arr);
     }
-
-    for (const v of map.values()) {
+    for (const v of out.values()) {
       v.sort((a, b) => (a.startTs || 0) - (b.startTs || 0));
     }
-    return map;
-  }, [messages, toolRuns]);
+    return out;
+  }, [traceVersion]);
 
   const reasoningByAssistantMsgId = useMemo(() => {
-    const map = new Map<string, { key: string; ts: number; text: string }[]>();
-    for (const m of messages) {
-      if (m.type !== MessageType.TRACE_EVENT) continue;
-      if (!(typeof m.data.phase === "string" && m.data.phase === "reasoning_summary")) continue;
-      const assistantMsgId =
-        typeof m.data.assistant_msg_id === "string" ? m.data.assistant_msg_id : "";
-      if (!assistantMsgId) continue;
-      const ts = typeof m.timestamp === "number" ? m.timestamp : 0;
-      const text = typeof m.data.text === "string" ? m.data.text : "";
-      const key = m.id || `reason-${ts}`;
-      if (!text.trim()) continue;
-      const arr = map.get(assistantMsgId) || [];
-      arr.push({ key, ts, text });
-      map.set(assistantMsgId, arr);
+    // Depends on traceVersion to re-evaluate mutable refs.
+    if (traceVersion === -1) return new Map<string, { key: string; ts: number; text: string }[]>();
+    const out = new Map<string, { key: string; ts: number; text: string }[]>();
+    for (const [assistantMsgId, entries] of reasoningByAssistantMsgIdRef.current.entries()) {
+      const arr = [...entries];
+      arr.sort((a, b) => a.ts - b.ts);
+      out.set(assistantMsgId, arr);
     }
-
-    for (const v of map.values()) {
-      v.sort((a, b) => a.ts - b.ts);
-    }
-    return map;
-  }, [messages]);
+    return out;
+  }, [traceVersion]);
 
   const displayMessages = useMemo(() => {
     const base = messages.filter((msg) => {
@@ -756,17 +857,7 @@ const Create = () => {
     for (const assistantMsgId of assistantIds) {
       if (!assistantMsgId || haveIds.has(assistantMsgId)) continue;
 
-      // Find earliest trace timestamp for this assistant id.
-      let ts = Number.POSITIVE_INFINITY;
-      for (const m of messages) {
-        if (m.type !== MessageType.TRACE_EVENT) continue;
-        const a =
-          typeof m.data.assistant_msg_id === "string" ? m.data.assistant_msg_id : "";
-        if (a !== assistantMsgId) continue;
-        const mts = typeof m.timestamp === "number" ? m.timestamp : ts;
-        ts = Math.min(ts, mts);
-      }
-      if (!Number.isFinite(ts)) ts = 0;
+      const ts = assistantTraceFirstTsRef.current.get(assistantMsgId) || 0;
 
       placeholders.push({
         type: MessageType.AGENT_PARTIAL,
@@ -823,7 +914,7 @@ const Create = () => {
     if (chatHistoryRef.current) {
       chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, traceVersion]);
 
   // Handle resizing
   useEffect(() => {
@@ -981,7 +1072,25 @@ const Create = () => {
     );
   };
 
-  const renderToolRunBubble = (r: (typeof toolRuns)[number]) => {
+  const previewJson = (v: unknown, depth = 0): unknown => {
+    if (depth > 2) return "[…]";
+    if (typeof v === "string") {
+      const s = v.length > 2000 ? `${v.slice(0, 2000)}\n…(truncated)…` : v;
+      return s;
+    }
+    if (typeof v !== "object" || v === null) return v;
+    if (Array.isArray(v)) return v.slice(0, 50).map((x) => previewJson(x, depth + 1));
+    const o = v as Record<string, unknown>;
+    const keys = Object.keys(o).slice(0, 50);
+    const out: Record<string, unknown> = {};
+    for (const k of keys) out[k] = previewJson(o[k], depth + 1);
+    const extra = Object.keys(o).length - keys.length;
+    if (extra > 0) out["…"] = `+${extra} more keys`;
+    return out;
+  };
+
+  const ToolRunCard = ({ r }: { r: ToolRun }) => {
+    const [open, setOpen] = useState(false);
     const dur =
       r.startTs && r.endTs ? Math.max(0, r.endTs - r.startTs) : undefined;
     const badge =
@@ -1001,7 +1110,8 @@ const Create = () => {
         <details
           className="border w-full bg-muted-foreground/5 rounded-md text-sm text-muted-foreground"
           style={{ padding: 10 }}
-          open={r.status !== "success"}
+          open={open}
+          onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
         >
           <summary style={{ cursor: "pointer", listStyle: "none" }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1033,36 +1143,35 @@ const Create = () => {
               </div>
             ) : null}
           </summary>
-          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-            {r.input !== undefined ? (
-              <details className="border bg-background/60 rounded-md" style={{ padding: 8 }}>
-                <summary style={{ cursor: "pointer", fontWeight: 600 }}>Input</summary>
-                <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
-                  {JSON.stringify(r.input, null, 2)}
-                </pre>
-              </details>
-            ) : null}
-            {r.output !== undefined ? (
-              <details className="border bg-background/60 rounded-md" style={{ padding: 8 }}>
-                <summary style={{ cursor: "pointer", fontWeight: 600 }}>Output</summary>
-                <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
-                  {JSON.stringify(r.output, null, 2)}
-                </pre>
-              </details>
-            ) : null}
-            {r.error !== undefined ? (
-              <details
-                className="border bg-background/60 rounded-md"
-                style={{ padding: 8 }}
-                open
-              >
-                <summary style={{ cursor: "pointer", fontWeight: 600 }}>Error</summary>
-                <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
-                  {JSON.stringify(r.error, null, 2)}
-                </pre>
-              </details>
-            ) : null}
-          </div>
+
+          {open ? (
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+              {r.input !== undefined ? (
+                <details className="border bg-background/60 rounded-md" style={{ padding: 8 }}>
+                  <summary style={{ cursor: "pointer", fontWeight: 600 }}>Input</summary>
+                  <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
+                    {JSON.stringify(previewJson(r.input), null, 2)}
+                  </pre>
+                </details>
+              ) : null}
+              {r.output !== undefined ? (
+                <details className="border bg-background/60 rounded-md" style={{ padding: 8 }}>
+                  <summary style={{ cursor: "pointer", fontWeight: 600 }}>Output</summary>
+                  <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
+                    {JSON.stringify(previewJson(r.output), null, 2)}
+                  </pre>
+                </details>
+              ) : null}
+              {r.error !== undefined ? (
+                <details className="border bg-background/60 rounded-md" style={{ padding: 8 }}>
+                  <summary style={{ cursor: "pointer", fontWeight: 600 }}>Error</summary>
+                  <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>
+                    {JSON.stringify(previewJson(r.error), null, 2)}
+                  </pre>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
         </details>
       </div>
     );
@@ -1932,52 +2041,74 @@ const Create = () => {
             className="flex flex-col gap-2.5 overflow-y-auto flex-1 min-h-0"
             ref={chatHistoryRef}
           >
-            {displayMessages.map((msg, index) => {
-              const id = typeof msg.id === "string" ? msg.id : "";
-              const isUser = msg.data.sender === Sender.USER;
-              const runs = !isUser && id ? toolRunsByAssistantMsgId.get(id) || [] : [];
-              const reasons = !isUser && id ? reasoningByAssistantMsgId.get(id) || [] : [];
+	            {displayMessages.map((msg, index) => {
+	              const id = typeof msg.id === "string" ? msg.id : "";
+	              const isUser = msg.data.sender === Sender.USER;
+	              const timeline = !isUser && id ? assistantTimelineRef.current.get(id) || [] : [];
+	              const hasTimeline = !isUser && timeline.length > 0;
+	              const hasMeta =
+	                !isUser &&
+	                (timeline.some((it) => it.kind !== "text") || !!msg.data.ui_blocks?.length);
 
-              return (
-                <div
-                  key={msg.id || `msg-${index}-${msg.timestamp ?? 0}`}
-                  className={cn("flex", isUser ? "justify-end" : "justify-start")}
-                >
-                  <div
-                    className={cn(
-                      "p-3 rounded-md max-w-[70%]",
-                      "border w-full bg-muted-foreground/10 rounded-md text-sm text-muted-foreground"
-                    )}
-                  >
-                    {!isUser ? renderUiBlocks(msg.data.ui_blocks) : null}
+	              return (
+	                <div
+	                  key={msg.id || `msg-${index}-${msg.timestamp ?? 0}`}
+	                  className={cn("flex", isUser ? "justify-end" : "justify-start")}
+	                >
+	                  <div
+	                    className={cn(
+	                      "max-w-[70%] text-sm",
+	                      isUser
+	                        ? "px-3 py-2 rounded-md bg-violet-600 text-white border border-violet-500/40"
+	                        : hasMeta
+	                          ? "w-full flex flex-col gap-2"
+	                          : "px-3 py-2 rounded-md bg-white/5 border border-white/10"
+	                    )}
+	                  >
+	                    {!isUser ? renderUiBlocks(msg.data.ui_blocks) : null}
 
-                    {!isUser && (runs.length || reasons.length) ? (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 8 }}>
-                        {runs.map((r) => (
-                          <div key={r.runId}>{renderToolRunBubble(r)}</div>
-                        ))}
-                        {reasons.map((r) => {
-                          const el = renderReasoningSummaryBubble(r.text);
-                          if (!el) return null;
-                          return <div key={r.key}>{el}</div>;
-                        })}
-                      </div>
-                    ) : null}
+	                    {!isUser && hasTimeline ? (
+	                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+	                        {timeline.map((it) => {
+	                          if (it.kind === "tool") {
+	                            const r = toolRunsByIdRef.current.get(it.runId);
+	                            if (!r) return null;
+	                            return (
+	                              <div key={it.key}>
+	                                <ToolRunCard r={r} />
+	                              </div>
+	                            );
+	                          }
+	                          if (it.kind === "reasoning") {
+	                            const el = renderReasoningSummaryBubble(it.text);
+	                            return el ? <div key={it.key}>{el}</div> : null;
+	                          }
+	                          // text
+	                          return (
+	                            <div
+	                              key={it.key}
+	                              className="text-foreground"
+	                              style={{ whiteSpace: "pre-wrap" }}
+	                            >
+	                              {it.text}
+	                            </div>
+	                          );
+	                        })}
+	                      </div>
+	                    ) : msg.data.text && typeof msg.data.text === "string" && msg.data.text.trim() ? (
+	                      <p
+	                        style={{
+	                          whiteSpace: "pre-wrap",
+	                        }}
+	                        className={isUser ? "text-white" : "text-foreground"}
+	                      >
+	                        {String(msg.data.text || "")}
+	                      </p>
+	                    ) : null}
 
-                    {msg.data.text && typeof msg.data.text === "string" && msg.data.text.trim() ? (
-                      <p
-                        style={{
-                          whiteSpace: "pre-wrap",
-                        }}
-                        className={isUser ? "text-white" : "text-foreground"}
-                      >
-                        {String(msg.data.text || "")}
-                      </p>
-                    ) : null}
-
-                    {msg.data.isStreaming && (
-                      <div className="flex gap-1 mt-2 justify-start">
-                        <div
+	                    {msg.data.isStreaming && (
+	                      <div className="flex gap-1 mt-2 justify-start">
+	                        <div
                           className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce"
                           style={{ animationDelay: "0ms" }}
                         />
