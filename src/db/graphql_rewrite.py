@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 GraphQL query rewriting for Amicable's per-app Postgres schemas.
 
@@ -15,7 +13,7 @@ Only top-level fields are rewritten; nested selections are left untouched.
 Introspection fields (`__schema`, `__type`) are never rewritten.
 """
 
-from typing import Callable
+from __future__ import annotations
 
 
 def _rewrite_query_root_field(name: str, *, schema: str) -> str:
@@ -72,11 +70,11 @@ def rewrite_hasura_query_for_app_schema(query: str, *, schema: str) -> str:
             return selection_set
 
         if op == "mutation":
-            f_rewrite: Callable[[str], str] = lambda n: _rewrite_mutation_root_field(
-                n, schema=schema
-            )
+            def f_rewrite(n: str) -> str:
+                return _rewrite_mutation_root_field(n, schema=schema)
         else:
-            f_rewrite = lambda n: _rewrite_query_root_field(n, schema=schema)
+            def f_rewrite(n: str) -> str:
+                return _rewrite_query_root_field(n, schema=schema)
 
         changed = False
         new_selections = []
