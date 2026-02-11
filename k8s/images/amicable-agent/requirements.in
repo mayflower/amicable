@@ -17,6 +17,9 @@ anthropic
 langfuse
 python-dotenv
 
+# GraphQL query rewriting for Hasura DB proxy
+graphql-core
+
 # LangGraph PostgresStore (DeepAgents long-term memory)
 psycopg[binary,pool]
 
