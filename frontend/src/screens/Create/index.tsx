@@ -2088,24 +2088,27 @@ const Create = () => {
         className="p-6 flex flex-col text-white gap-6 h-full min-w-[340px] bg-black/35 border-l border-white/10"
         style={{ width: `${chatWidth}px` }}
       >
-        <div className="flex flex-row items-center gap-3">
-          <img
-            className="w-14 h-14 object-contain"
-            src="/amicable-logo.svg"
-            alt="Amicable"
-            loading="eager"
-            decoding="async"
-          />
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <div style={{ fontWeight: 600, lineHeight: 1.1 }}>
-              {projectInfo?.name || "Project"}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <img
+              className="w-14 h-14 object-contain"
+              src="/amicable-logo.svg"
+              alt="Amicable"
+              loading="eager"
+              decoding="async"
+            />
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }} className="min-w-0">
+              <div style={{ fontWeight: 600, lineHeight: 1.1 }} className="truncate">
+                {projectInfo?.name || "Project"}
+              </div>
+              {projectInfo?.slug ? (
+                <div className="text-xs text-muted-foreground truncate">/{projectInfo.slug}</div>
+              ) : null}
             </div>
-            {projectInfo?.slug ? (
-              <div className="text-xs text-muted-foreground">/{projectInfo.slug}</div>
-            ) : null}
           </div>
-          <div className="flex-1" />
-          <AgentAuthStatus />
+          <div className="flex items-center justify-end">
+            <AgentAuthStatus />
+          </div>
         </div>
 
         <div className="flex flex-col min-h-0 flex-1">
