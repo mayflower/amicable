@@ -50,6 +50,7 @@ def rewrite_hasura_query_for_app_schema(query: str, *, schema: str) -> str:
         from graphql.language.ast import (  # type: ignore
             DocumentNode,
             FieldNode,
+            NameNode,
             OperationDefinitionNode,
             SelectionSetNode,
         )
@@ -83,8 +84,11 @@ def rewrite_hasura_query_for_app_schema(query: str, *, schema: str) -> str:
                 new_name = f_rewrite(sel.name.value)
                 if new_name != sel.name.value:
                     changed = True
+                    # Preserve the original field name as a GraphQL alias so the
+                    # response JSON key matches what the client expects.
+                    original_alias = sel.alias or NameNode(value=sel.name.value)
                     sel = FieldNode(
-                        alias=sel.alias,
+                        alias=original_alias,
                         name=type(sel.name)(value=new_name),
                         arguments=sel.arguments,
                         directives=sel.directives,
