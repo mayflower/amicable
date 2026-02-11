@@ -981,6 +981,93 @@ async def api_db_schema_get(project_id: str, request: Request) -> JSONResponse:
     )
 
 
+@app.post("/api/db/{project_id}/schema/intent")
+async def api_db_schema_intent(project_id: str, request: Request) -> JSONResponse:
+    try:
+        _proj = _ensure_project_access(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
+
+    body: Any
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    base_version = str(body.get("base_version") or "").strip() or None
+    draft = body.get("draft")
+    intent_text = str(body.get("intent_text") or "").strip()
+    if not isinstance(draft, dict):
+        return JSONResponse({"error": "invalid_draft"}, status_code=400)
+    if not intent_text:
+        return JSONResponse({"error": "missing_intent_text"}, status_code=400)
+
+    from src.db.provisioning import ensure_app, hasura_client_from_env
+    from src.db.schema_ai_intent import generate_schema_intent
+    from src.db.schema_diff import SchemaValidationError, compute_schema_version
+    from src.db.schema_introspection import introspect_schema
+
+    client = hasura_client_from_env()
+    app = ensure_app(client, app_id=str(project_id))
+    current = introspect_schema(
+        client,
+        app_id=str(project_id),
+        schema_name=app.schema_name,
+    )
+    current_version = compute_schema_version(current)
+    if base_version and base_version != current_version:
+        return JSONResponse(
+            {
+                "error": "version_conflict",
+                "current_version": current_version,
+                "schema": current,
+            },
+            status_code=409,
+        )
+
+    draft = dict(draft)
+    draft.setdefault("app_id", str(project_id))
+    draft.setdefault("schema_name", app.schema_name)
+
+    try:
+        result = generate_schema_intent(
+            current=current,
+            draft=draft,
+            intent_text=intent_text,
+        )
+    except SchemaValidationError as e:
+        return JSONResponse({"error": "invalid_draft", "detail": str(e)}, status_code=400)
+
+    raw_options = list(result.get("clarification_options") or [])
+    clarification_options: list[dict[str, str]] = []
+    for idx, item in enumerate(raw_options):
+        text = str(item or "").strip()
+        if not text:
+            continue
+        clarification_options.append(
+            {"id": f"option_{idx + 1}", "label": text[:120]}
+        )
+
+    return JSONResponse(
+        {
+            "base_version": current_version,
+            "draft": result.get("draft") or draft,
+            "assistant_message": str(result.get("assistant_message") or "").strip(),
+            "change_cards": result.get("change_cards") or [],
+            "needs_clarification": bool(result.get("needs_clarification")),
+            "clarification_question": str(
+                result.get("clarification_question") or ""
+            ).strip(),
+            "clarification_options": clarification_options,
+            "warnings": result.get("warnings") or [],
+        },
+        status_code=200,
+    )
+
+
 @app.post("/api/db/{project_id}/schema/review")
 async def api_db_schema_review(project_id: str, request: Request) -> JSONResponse:
     try:

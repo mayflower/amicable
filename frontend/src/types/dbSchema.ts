@@ -39,6 +39,30 @@ export type DbSchemaGetResponse = {
   template_id?: string;
 };
 
+export type CitizenChangeCard = {
+  id: string;
+  title: string;
+  description: string;
+  kind: string;
+  risk: "low" | "medium" | "high";
+};
+
+export type ClarificationOption = {
+  id: string;
+  label: string;
+};
+
+export type DbSchemaIntentResponse = {
+  base_version: string;
+  draft: DbSchema;
+  assistant_message: string;
+  change_cards: CitizenChangeCard[];
+  needs_clarification: boolean;
+  clarification_question: string;
+  clarification_options: ClarificationOption[];
+  warnings: string[];
+};
+
 export type DbSchemaReviewResponse = {
   review: {
     summary: string;

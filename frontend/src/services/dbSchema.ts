@@ -3,6 +3,7 @@ import type {
   DbSchemaApplyResponse,
   DbSchema,
   DbSchemaGetResponse,
+  DbSchemaIntentResponse,
   DbSchemaReviewResponse,
 } from "@/types/dbSchema";
 
@@ -46,6 +47,26 @@ export const dbSchemaReview = async (
       data,
     });
   return data as DbSchemaReviewResponse;
+};
+
+export const dbSchemaIntent = async (
+  projectId: string,
+  payload: { base_version?: string; draft: DbSchema; intent_text: string }
+): Promise<DbSchemaIntentResponse> => {
+  const url = agentUrl(`/api/db/${encodeURIComponent(projectId)}/schema/intent`);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+  const data = await readJson(res);
+  if (!res.ok)
+    throw Object.assign(new Error("db_schema_intent_failed"), {
+      status: res.status,
+      data,
+    });
+  return data as DbSchemaIntentResponse;
 };
 
 export const dbSchemaApply = async (
