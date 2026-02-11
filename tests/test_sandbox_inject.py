@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from src.db.sandbox_inject import ensure_nuxt_config_includes_db_script
+from src.db.sandbox_inject import (
+    ensure_nuxt_config_includes_db_script,
+    render_runtime_js,
+)
 
 
 def test_ensure_nuxt_config_includes_db_script_inserts_head_script():
@@ -16,3 +19,17 @@ def test_ensure_nuxt_config_includes_db_script_is_idempotent():
     twice = ensure_nuxt_config_includes_db_script(once)
     assert twice.count("/amicable-db.js") == once.count("/amicable-db.js")
     assert twice.count("/amicable-runtime.js") == once.count("/amicable-runtime.js")
+
+
+def test_render_runtime_js_includes_console_error_hook_and_probe_ack():
+    js = render_runtime_js()
+    assert "window.console.error=function(){" in js
+    assert "console_error" in js
+    assert "amicable_runtime_probe_ack" in js
+
+
+def test_render_runtime_js_includes_parent_origin_fallbacks():
+    js = render_runtime_js()
+    assert "amicableParentOrigin" in js
+    assert "__amicable_parent_origin" in js
+    assert "document.referrer" in js

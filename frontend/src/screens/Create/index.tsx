@@ -16,6 +16,7 @@ import {
   type HitlRequest,
   type HitlReviewConfig,
   type JsonObject,
+  type RuntimeErrorPayload,
 } from "../../types/messages";
 import {
   useCallback,
@@ -147,6 +148,12 @@ const Create = () => {
   } | null>(null);
   const chatHistoryRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const isConnectedRef = useRef(false);
+  const sendRef = useRef<(type: MessageType, payload: Record<string, unknown>) => void>(
+    () => {}
+  );
+  const runtimeErrorRecentRef = useRef<Map<string, number>>(new Map());
+  const runtimeProbeSeqRef = useRef(0);
   const processedMessageIds = useRef<Set<string>>(new Set());
   const location = useLocation();
   const routeState = (location.state as unknown as CreateRouteState | null) ?? null;
@@ -256,6 +263,145 @@ const Create = () => {
       }, 300);
     }
   }, [iframeUrl]);
+
+  const hash = useCallback((s: string): string => {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
+    return (h >>> 0).toString(16);
+  }, []);
+
+  const trunc = useCallback((s: unknown, n: number): string => {
+    const v = typeof s === "string" ? s : String(s ?? "");
+    if (v.length <= n) return v;
+    return v.slice(0, Math.max(0, n - 3)) + "...";
+  }, []);
+
+  const shouldSkipRuntimeFingerprint = useCallback((fingerprint: string, now: number) => {
+    const recent = runtimeErrorRecentRef.current;
+    const maxRecent = 200;
+    const windowMs = 10 * 60 * 1000;
+    const prev = recent.get(fingerprint);
+    if (typeof prev === "number" && now - prev < windowMs) return true;
+    recent.set(fingerprint, now);
+    if (recent.size > maxRecent) {
+      const items = [...recent.entries()].sort((a, b) => a[1] - b[1]);
+      for (let i = 0; i < items.length - maxRecent; i++) {
+        recent.delete(items[i]![0]);
+      }
+    }
+    return false;
+  }, []);
+
+  const sendRuntimeError = useCallback(
+    (error: RuntimeErrorPayload) => {
+      if (!resolvedSessionId || !isConnectedRef.current) return;
+      const now = Date.now();
+      const kind = typeof error.kind === "string" ? error.kind : "window_error";
+      const message = trunc(error.message, 2000);
+      const stack = typeof error.stack === "string" ? trunc(error.stack, 8000) : undefined;
+      const url = typeof error.url === "string" ? trunc(error.url, 2000) : undefined;
+      const argsPreview =
+        typeof error.args_preview === "string" ? trunc(error.args_preview, 4000) : undefined;
+      const tsMs = typeof error.ts_ms === "number" ? error.ts_ms : now;
+      const base = `${kind}|${message}|${stack || ""}|${url || ""}|${argsPreview || ""}`;
+      const fingerprint =
+        typeof error.fingerprint === "string" && error.fingerprint
+          ? error.fingerprint
+          : `rt_${hash(base)}`;
+
+      if (shouldSkipRuntimeFingerprint(fingerprint, now)) return;
+
+      sendRef.current(MessageType.RUNTIME_ERROR, {
+        session_id: resolvedSessionId,
+        error: {
+          kind,
+          message,
+          stack,
+          url,
+          ts_ms: tsMs,
+          fingerprint,
+          level: error.level,
+          source: error.source,
+          args_preview: argsPreview,
+          extra: error.extra,
+        },
+      });
+    },
+    [resolvedSessionId, trunc, hash, shouldSkipRuntimeFingerprint]
+  );
+
+  const runRuntimeBridgeProbe = useCallback(
+    (trigger: "iframe_load" | "update_completed") => {
+      const iframeWindow = iframeRef.current?.contentWindow;
+      const iframeSrc = rawIframeUrl || iframeUrl;
+      if (!iframeWindow || !iframeSrc) return;
+
+      let allowedOrigin = "";
+      try {
+        allowedOrigin = new URL(iframeSrc).origin;
+      } catch {
+        allowedOrigin = "";
+      }
+      if (!allowedOrigin) return;
+
+      const probeId = `probe_${++runtimeProbeSeqRef.current}_${Date.now()}`;
+      const fingerprint = `bridge_${hash(`${allowedOrigin}|${trigger}`)}`;
+      let done = false;
+
+      const cleanup = () => {
+        window.removeEventListener("message", onMessage);
+      };
+
+      const onMessage = (event: MessageEvent) => {
+        if (done) return;
+        if (!event?.data || typeof event.data !== "object") return;
+        if (event.origin !== allowedOrigin) return;
+        const dataObj = asObj(event.data);
+        if (!dataObj || dataObj.type !== "amicable_runtime_probe_ack") return;
+        if (dataObj.probe_id !== probeId) return;
+        done = true;
+        cleanup();
+      };
+
+      window.addEventListener("message", onMessage);
+
+      const timeoutId = window.setTimeout(() => {
+        if (done) return;
+        done = true;
+        cleanup();
+        sendRuntimeError({
+          kind: "runtime_bridge_missing",
+          message: "Runtime bridge probe was not acknowledged by preview iframe",
+          source: "bridge",
+          level: "error",
+          url: iframeSrc,
+          fingerprint,
+          extra: { trigger, probe_id: probeId },
+        });
+      }, 1500);
+
+      try {
+        iframeWindow.postMessage(
+          { type: "amicable_runtime_probe", probe_id: probeId },
+          allowedOrigin
+        );
+      } catch {
+        window.clearTimeout(timeoutId);
+        done = true;
+        cleanup();
+        sendRuntimeError({
+          kind: "runtime_bridge_missing",
+          message: "Failed to send runtime bridge probe to preview iframe",
+          source: "bridge",
+          level: "error",
+          url: iframeSrc,
+          fingerprint,
+          extra: { trigger, probe_id: probeId },
+        });
+      }
+    },
+    [rawIframeUrl, iframeUrl, hash, sendRuntimeError]
+  );
 
   // Message handlers for different message types
   const messageHandlers = {
@@ -660,6 +806,9 @@ const Create = () => {
         ];
       });
       refreshIframe();
+      window.setTimeout(() => {
+        runRuntimeBridgeProbe("update_completed");
+      }, 1800);
     },
 
     [MessageType.HITL_REQUEST]: (message: Message) => {
@@ -913,6 +1062,11 @@ const Create = () => {
       console.error("Processed error:", errorString);
     },
   });
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+    sendRef.current = send;
+  }, [isConnected, send]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -1223,22 +1377,6 @@ const Create = () => {
       allowedOrigin = "";
     }
 
-    const recent = new Map<string, number>();
-    const MAX_RECENT = 200;
-    const WINDOW_MS = 10 * 60 * 1000;
-
-    const hash = (s: string): string => {
-      let h = 5381;
-      for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
-      return (h >>> 0).toString(16);
-    };
-
-    const trunc = (s: unknown, n: number): string => {
-      const v = typeof s === "string" ? s : String(s ?? "");
-      if (v.length <= n) return v;
-      return v.slice(0, Math.max(0, n - 3)) + "...";
-    };
-
     const handler = (event: MessageEvent) => {
       if (!event?.data || typeof event.data !== "object") return;
       if (allowedOrigin && event.origin !== allowedOrigin) return;
@@ -1249,76 +1387,55 @@ const Create = () => {
       if (!p) return;
 
       const kind = typeof p.kind === "string" ? p.kind : "window_error";
-      const message = trunc(p.message, 2000);
-      const stack =
-        typeof p.stack === "string" ? trunc(p.stack, 8000) : undefined;
-      const url = typeof p.url === "string" ? trunc(p.url, 2000) : undefined;
-      const tsMs = typeof p.ts_ms === "number" ? p.ts_ms : Date.now();
-
-      const base = `${kind}|${message}|${stack || ""}|${url || ""}`;
-      const fingerprint =
-        typeof p.fingerprint === "string" && p.fingerprint
-          ? p.fingerprint
-          : `rt_${hash(base)}`;
-
-      const now = Date.now();
-      const prev = recent.get(fingerprint);
-      if (typeof prev === "number" && now - prev < WINDOW_MS) return;
-      recent.set(fingerprint, now);
-      if (recent.size > MAX_RECENT) {
-        const items = [...recent.entries()].sort((a, b) => a[1] - b[1]);
-        for (let i = 0; i < items.length - MAX_RECENT; i++) {
-          recent.delete(items[i]![0]);
-        }
-      }
-
-      if (!resolvedSessionId) return;
-      if (!isConnected) return;
-      send(MessageType.RUNTIME_ERROR, {
-        session_id: resolvedSessionId,
-        error: {
-          kind,
-          message,
-          stack,
-          url,
-          ts_ms: tsMs,
-          fingerprint,
-          extra: asObj(p.extra) ?? undefined,
-        },
+      const message =
+        typeof p.message === "string" ? p.message : String(p.message ?? "");
+      sendRuntimeError({
+        kind,
+        message,
+        stack: typeof p.stack === "string" ? p.stack : undefined,
+        url: typeof p.url === "string" ? p.url : undefined,
+        ts_ms: typeof p.ts_ms === "number" ? p.ts_ms : undefined,
+        fingerprint:
+          typeof p.fingerprint === "string" ? p.fingerprint : undefined,
+        level: p.level === "error" ? "error" : undefined,
+        source:
+          p.source === "console" ||
+          p.source === "window" ||
+          p.source === "promise" ||
+          p.source === "bridge"
+            ? p.source
+            : undefined,
+        args_preview:
+          typeof p.args_preview === "string" ? p.args_preview : undefined,
+        extra: asObj(p.extra) ?? undefined,
       });
     };
 
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [rawIframeUrl, resolvedSessionId, isConnected, send]);
+  }, [rawIframeUrl, sendRuntimeError]);
 
   const handleIframeLoad = () => {
     console.log("Iframe loaded successfully:", iframeUrl);
     setIframeError(false);
     setIframeReady(true);
+    runRuntimeBridgeProbe("iframe_load");
   };
 
   const handleIframeError = () => {
     console.error("Iframe failed to load:", iframeUrl);
     setIframeError(true);
-    if (resolvedSessionId && isConnected) {
-      const now = Date.now();
-      const u = rawIframeUrl || iframeUrl;
-      let h = 5381;
-      for (let i = 0; i < u.length; i++) h = ((h << 5) + h) ^ u.charCodeAt(i);
-      const fp = `preview_${(h >>> 0).toString(16)}`;
-      send(MessageType.RUNTIME_ERROR, {
-        session_id: resolvedSessionId,
-        error: {
-          kind: "preview_load_failed",
-          message: "Preview iframe failed to load",
-          url: u,
-          ts_ms: now,
-          fingerprint: fp,
-          extra: { iframe_url: u },
-        },
-      });
-    }
+    const u = rawIframeUrl || iframeUrl;
+    const fp = `preview_${hash(u)}`;
+    sendRuntimeError({
+      kind: "preview_load_failed",
+      message: "Preview iframe failed to load",
+      url: u,
+      fingerprint: fp,
+      source: "bridge",
+      level: "error",
+      extra: { iframe_url: u },
+    });
   };
 
   // Auto-connect when sessionId is available

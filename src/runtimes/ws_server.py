@@ -2219,10 +2219,6 @@ async def _handle_ws(ws: WebSocket) -> None:
                 continue
 
             kind = str(err.get("kind") or "window_error")
-            message = str(err.get("message") or "")
-            url = str(err.get("url") or "")
-            stack = str(err.get("stack") or "")
-            extra = err.get("extra")
 
             # Optionally include preview logs for load failures.
             preview_logs = ""
@@ -2238,47 +2234,11 @@ async def _handle_ws(ws: WebSocket) -> None:
                 except Exception:
                     preview_logs = ""
 
-            hint = ""
-            if kind == "graphql_error":
-                m = re.search(
-                    r"field\\s+'([^']+)'\\s+not\\s+found\\s+in\\s+type\\s*:\\s*'query_root'",
-                    message,
-                    flags=re.IGNORECASE,
-                )
-                if m:
-                    field = m.group(1)
-                    hint = (
-                        "\n\nHint: This usually means the Hasura table/field is missing or not tracked. "
-                        f"Consider creating/tracking the relevant table for `{field}` using `db_create_table` "
-                        "(safe) or updating the query to match the existing schema."
-                    )
+            from src.runtime_error_feedback import build_runtime_error_feedback_prompt
 
-            # Bound potentially-large fields.
-            if len(message) > 2000:
-                message = message[:2000]
-            if len(stack) > 8000:
-                stack = stack[:8000]
-            if len(url) > 2000:
-                url = url[:2000]
-            if preview_logs and len(preview_logs) > 12000:
-                preview_logs = preview_logs[-12000:]
-
-            prompt = (
-                "Runtime error detected in the running preview. Please fix the cause so the preview runs without errors.\n\n"
-                f"Kind: {kind}\n"
-                f"Message: {message}\n"
-                + (f"URL: {url}\n" if url else "")
-                + (f"Stack:\n{stack}\n" if stack else "")
+            prompt = build_runtime_error_feedback_prompt(
+                err=err, preview_logs=preview_logs
             )
-            if extra is not None:
-                try:
-                    payload = json.dumps(extra, indent=2, sort_keys=True, default=str)
-                except Exception:
-                    payload = str(extra)
-                prompt += f"\nExtra:\n{payload}\n"
-            if preview_logs:
-                prompt += f"\nPreview logs (tail):\n{preview_logs}\n"
-            prompt += hint
 
             try:
                 # Avoid queuing auto-heal runs behind user-initiated runs.

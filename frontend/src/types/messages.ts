@@ -46,11 +46,26 @@ export type HitlDecision =
   | { type: "reject"; message?: string }
   | { type: "edit"; edited_action: { name: string; args: JsonObject } };
 
+export type RuntimeErrorSource = "console" | "window" | "promise" | "bridge";
+
+export interface RuntimeErrorPayload {
+  kind: string;
+  message: string;
+  stack?: string;
+  url?: string;
+  ts_ms?: number;
+  fingerprint?: string;
+  level?: "error";
+  source?: RuntimeErrorSource;
+  args_preview?: string;
+  extra?: JsonObject;
+}
+
 export type MessageData = JsonObject & {
   text?: string;
   sender?: Sender;
   isStreaming?: boolean;
-  error?: unknown;
+  error?: RuntimeErrorPayload | unknown;
 
   // Optional: associate trace events with the assistant message they belong to.
   // (Backend may omit this; frontend can best-effort infer in that case.)
