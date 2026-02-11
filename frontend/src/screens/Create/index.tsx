@@ -2105,7 +2105,7 @@ const Create = () => {
       />
 
       <div
-        className="p-6 flex flex-col text-white gap-6 h-full min-w-[340px] bg-black/35 border-l border-white/10"
+        className="p-6 flex flex-col text-foreground gap-6 h-full min-w-[340px] bg-card border-l border-border"
         style={{ width: `${chatWidth}px` }}
       >
         <div className="flex flex-col gap-2">
@@ -2157,7 +2157,7 @@ const Create = () => {
 	                        ? "px-3 py-2 rounded-md bg-violet-600 text-white border border-violet-500/40"
 	                        : hasMeta
 	                          ? "w-full flex flex-col gap-2"
-	                          : "px-3 py-2 rounded-md bg-white/5 border border-white/10"
+	                          : "px-3 py-2 rounded-md bg-muted/40 border border-border"
 	                    )}
 	                  >
 	                    {!isUser ? renderUiBlocks(msg.data.ui_blocks) : null}
@@ -2232,12 +2232,10 @@ const Create = () => {
           ) : null}
           {agentStatusText.trim() ? (
             <div
-              className="w-full border rounded-md"
+              className="w-full border rounded-md bg-muted/40 border-border"
               style={{
                 padding: "10px 12px",
                 marginBottom: 12,
-                background: "rgba(255,255,255,0.06)",
-                borderColor: "rgba(255,255,255,0.12)",
               }}
             >
               <div className="text-xs text-muted-foreground" style={{ fontWeight: 600 }}>

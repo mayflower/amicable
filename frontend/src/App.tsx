@@ -15,6 +15,9 @@ const App: React.FC = () => {
           <Route path="/create" element={<CreateRoute />} />
         </Routes>
       </div>
+      <footer className="w-full shrink-0 border-t border-border/60 bg-background/95 px-4 py-2 text-center text-xs text-muted-foreground">
+        Made with Love by Mayflower, with the help of Langchain, Hasura, React
+      </footer>
     </div>
   );
 };
