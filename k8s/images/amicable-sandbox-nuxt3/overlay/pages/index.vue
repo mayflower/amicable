@@ -13,6 +13,10 @@ const detail = ref<string>("");
 const payload = ref<any>(null);
 const db = ref<AmicableDb | null>(null);
 
+useHead({
+  title: "Amicable Starter",
+});
+
 onMounted(async () => {
   const wdb = (window as any).__AMICABLE_DB__ as AmicableDb | null | undefined;
   if (!wdb || !wdb.graphqlUrl || !wdb.appKey) {
@@ -54,12 +58,13 @@ onMounted(async () => {
       line-height: 1.4;
     "
   >
-    <h1 style="margin: 0 0 8px">Sandbox DB Wiring</h1>
+    <h1 style="margin: 0 0 8px">Build something great</h1>
     <p style="margin: 0 0 16px; opacity: 0.8">
-      This app is pre-wired to call Hasura through the agent DB proxy.
+      Start from this scaffold and build your app. Changes appear live in
+      preview.
     </p>
 
-    <section
+    <details
       style="
         border: 1px solid #00000020;
         border-radius: 12px;
@@ -67,42 +72,44 @@ onMounted(async () => {
         background: white;
       "
     >
-      <div style="display: flex; gap: 12px; flex-wrap: wrap">
-        <span style="font-weight: 600">Status:</span>
-        <span v-if="status === 'running'">running smoke query...</span>
-        <span v-else-if="status === 'connected'" style="color: #0a7a2f"
-          >connected</span
+      <summary style="cursor: pointer; font-weight: 600">Diagnostics</summary>
+      <section style="margin-top: 12px">
+        <div style="display: flex; gap: 12px; flex-wrap: wrap">
+          <span style="font-weight: 600">Status:</span>
+          <span v-if="status === 'running'">running smoke query...</span>
+          <span v-else-if="status === 'connected'" style="color: #0a7a2f"
+            >connected</span
+          >
+          <span v-else-if="status === 'disabled'" style="color: #8a5a00"
+            >disabled</span
+          >
+          <span v-else style="color: #b00020">error</span>
+        </div>
+
+        <div style="margin-top: 12px; font-size: 13px; opacity: 0.85">
+          <div><code>appId</code>: {{ db?.appId || "(none)" }}</div>
+          <div><code>graphqlUrl</code>: {{ db?.graphqlUrl || "(none)" }}</div>
+        </div>
+
+        <pre
+          v-if="payload"
+          style="
+            margin-top: 12px;
+            padding: 12px;
+            background: #00000008;
+            border-radius: 10px;
+            overflow: auto;
+          "
+        >{{ JSON.stringify(payload, null, 2) }}</pre>
+
+        <p
+          v-if="status === 'disabled' || status === 'error'"
+          style="margin-top: 12px"
+          :style="{ color: status === 'error' ? '#b00020' : '' }"
         >
-        <span v-else-if="status === 'disabled'" style="color: #8a5a00"
-          >disabled</span
-        >
-        <span v-else style="color: #b00020">error</span>
-      </div>
-
-      <div style="margin-top: 12px; font-size: 13px; opacity: 0.85">
-        <div><code>appId</code>: {{ db?.appId || "(none)" }}</div>
-        <div><code>graphqlUrl</code>: {{ db?.graphqlUrl || "(none)" }}</div>
-      </div>
-
-      <pre
-        v-if="payload"
-        style="
-          margin-top: 12px;
-          padding: 12px;
-          background: #00000008;
-          border-radius: 10px;
-          overflow: auto;
-        "
-      >{{ JSON.stringify(payload, null, 2) }}</pre>
-
-      <p
-        v-if="status === 'disabled' || status === 'error'"
-        style="margin-top: 12px"
-        :style="{ color: status === 'error' ? '#b00020' : '' }"
-      >
-        {{ detail }}
-      </p>
-    </section>
+          {{ detail }}
+        </p>
+      </section>
+    </details>
   </main>
 </template>
-

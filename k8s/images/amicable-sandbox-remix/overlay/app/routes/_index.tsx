@@ -49,16 +49,21 @@ export default function Index() {
     };
   }, []);
 
+  React.useEffect(() => {
+    document.title = "Amicable Starter";
+  }, []);
+
   const db = getAmicableDb();
 
   return (
     <main style={{ padding: 24, maxWidth: 980, margin: "0 auto", lineHeight: 1.4 }}>
-      <h1 style={{ margin: "0 0 8px" }}>Sandbox DB Wiring</h1>
+      <h1 style={{ margin: "0 0 8px" }}>Build something great</h1>
       <p style={{ margin: "0 0 16px", opacity: 0.8 }}>
-        This app is pre-wired to call Hasura through the agent DB proxy.
+        Start from this scaffold and build your app. Changes appear live in
+        preview.
       </p>
 
-      <section
+      <details
         style={{
           border: "1px solid #00000020",
           borderRadius: 12,
@@ -66,50 +71,54 @@ export default function Index() {
           background: "white",
         }}
       >
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 600 }}>Status:</span>
-          {status === "running" && <span>running smoke query...</span>}
-          {status === "connected" && (
-            <span style={{ color: "#0a7a2f" }}>connected</span>
+        <summary style={{ cursor: "pointer", fontWeight: 600 }}>
+          Diagnostics
+        </summary>
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600 }}>Status:</span>
+            {status === "running" && <span>running smoke query...</span>}
+            {status === "connected" && (
+              <span style={{ color: "#0a7a2f" }}>connected</span>
+            )}
+            {status === "disabled" && (
+              <span style={{ color: "#8a5a00" }}>disabled</span>
+            )}
+            {status === "error" && (
+              <span style={{ color: "#b00020" }}>error</span>
+            )}
+          </div>
+
+          <div style={{ marginTop: 12, fontSize: 13, opacity: 0.85 }}>
+            <div>
+              <code>appId</code>: {db?.appId || "(none)"}
+            </div>
+            <div>
+              <code>graphqlUrl</code>: {db?.graphqlUrl || "(none)"}
+            </div>
+          </div>
+
+          {payload && (
+            <pre
+              style={{
+                marginTop: 12,
+                padding: 12,
+                background: "#00000008",
+                borderRadius: 10,
+                overflow: "auto",
+              }}
+            >
+              {JSON.stringify(payload, null, 2)}
+            </pre>
           )}
-          {status === "disabled" && (
-            <span style={{ color: "#8a5a00" }}>disabled</span>
-          )}
-          {status === "error" && (
-            <span style={{ color: "#b00020" }}>error</span>
+
+          {(status === "disabled" || status === "error") && (
+            <p style={{ marginTop: 12, color: status === "error" ? "#b00020" : "" }}>
+              {detail}
+            </p>
           )}
         </div>
-
-        <div style={{ marginTop: 12, fontSize: 13, opacity: 0.85 }}>
-          <div>
-            <code>appId</code>: {db?.appId || "(none)"}
-          </div>
-          <div>
-            <code>graphqlUrl</code>: {db?.graphqlUrl || "(none)"}
-          </div>
-        </div>
-
-        {payload && (
-          <pre
-            style={{
-              marginTop: 12,
-              padding: 12,
-              background: "#00000008",
-              borderRadius: 10,
-              overflow: "auto",
-            }}
-          >
-            {JSON.stringify(payload, null, 2)}
-          </pre>
-        )}
-
-        {(status === "disabled" || status === "error") && (
-          <p style={{ marginTop: 12, color: status === "error" ? "#b00020" : "" }}>
-            {detail}
-          </p>
-        )}
-      </section>
+      </details>
     </main>
   );
 }
-

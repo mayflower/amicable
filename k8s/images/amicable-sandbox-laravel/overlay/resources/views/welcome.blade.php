@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Sandbox DB Wiring</title>
+    <title>Amicable Starter</title>
     <style>
       body {
         font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
@@ -42,20 +42,23 @@
     </style>
   </head>
   <body>
-    <h1 style="margin: 0 0 8px">Sandbox DB Wiring</h1>
+    <h1 style="margin: 0 0 8px">Build something great</h1>
     <p style="margin: 0 0 16px; opacity: 0.8">
-      This app is pre-wired to call Hasura through the agent DB proxy.
+      Start from this scaffold and build your app. Changes appear live in preview.
     </p>
 
-    <div class="card">
-      <div><strong>Status:</strong> <span id="status">running</span></div>
-      <div style="margin-top: 12px; font-size: 13px; opacity: 0.85">
-        <div><code>appId</code>: <span id="appId">(none)</span></div>
-        <div><code>graphqlUrl</code>: <span id="graphqlUrl">(none)</span></div>
-      </div>
-      <pre id="out" style="margin-top: 12px; display: none"></pre>
-      <p id="detail" style="margin-top: 12px; display: none"></p>
-    </div>
+    <details class="card">
+      <summary style="cursor: pointer; font-weight: 600">Diagnostics</summary>
+      <section style="margin-top: 12px">
+        <div><strong>Status:</strong> <span id="status">running</span></div>
+        <div style="margin-top: 12px; font-size: 13px; opacity: 0.85">
+          <div><code>appId</code>: <span id="appId">(none)</span></div>
+          <div><code>graphqlUrl</code>: <span id="graphqlUrl">(none)</span></div>
+        </div>
+        <pre id="out" style="margin-top: 12px; display: none"></pre>
+        <p id="detail" style="margin-top: 12px; display: none"></p>
+      </section>
+    </details>
 
     <script>
       (async () => {
@@ -106,4 +109,3 @@
     </script>
   </body>
 </html>
-

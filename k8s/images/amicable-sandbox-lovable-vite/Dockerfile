@@ -26,6 +26,7 @@ COPY k8s/images/amicable-sandbox-lovable-vite/overlay/ /app/
 # Pre-wire Hasura DB proxy integration for the Vite template.
 # The agent will overwrite /amicable-db.js with real credentials when Hasura is configured.
 RUN python3 - <<'PY'
+import re
 from pathlib import Path
 
 db_js = Path("/app/amicable-db.js")
@@ -38,12 +39,31 @@ if not db_js.exists():
 index_html = Path("/app/index.html")
 if index_html.exists():
     text = index_html.read_text(encoding="utf-8", errors="replace")
+    changed = False
+    if "<title>Amicable Starter</title>" not in text:
+        if "<title" in text:
+            text = re.sub(
+                r"<title[^>]*>.*?</title>",
+                "<title>Amicable Starter</title>",
+                text,
+                count=1,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+        elif "</head>" in text:
+            text = text.replace(
+                "</head>", "  <title>Amicable Starter</title>\n</head>", 1
+            )
+        else:
+            text = "  <title>Amicable Starter</title>\n" + text
+        changed = True
     if "/amicable-db.js" not in text:
         tag = '  <script src="/amicable-db.js"></script>\n'
         if "</head>" in text:
             text = text.replace("</head>", tag + "</head>", 1)
         else:
             text = text + "\n" + tag
+        changed = True
+    if changed:
         index_html.write_text(text, encoding="utf-8")
 PY
 
