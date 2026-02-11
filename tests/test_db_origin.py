@@ -13,58 +13,53 @@ def test_expected_preview_origin_matches_claim_naming() -> None:
     assert origin.endswith(".amicable-preview.data.mayflower.tech")
 
 
-def test_origin_matches_expected() -> None:
-    app_id = "app-xyz"
-    expected = expected_preview_origin(
-        app_id=app_id,
-        preview_base_domain="example.com",
-        preview_scheme="https",
+BASE = "amicable-preview.data.mayflower.tech"
+APP_ID = "d0fda4fa-b437-4ff6-88cd-8f86d66134b4"
+
+
+def test_origin_matches_any_preview_subdomain() -> None:
+    """Any single-level subdomain of the preview base domain is accepted."""
+    assert origin_matches_expected(
+        "https://todolist.amicable-preview.data.mayflower.tech",
+        app_id=APP_ID, preview_base_domain=BASE, preview_scheme="https",
     )
     assert origin_matches_expected(
-        expected,
-        app_id=app_id,
-        preview_base_domain="example.com",
-        preview_scheme="https",
+        "https://my-app.amicable-preview.data.mayflower.tech",
+        app_id=APP_ID, preview_base_domain=BASE, preview_scheme="https",
     )
+
+
+def test_origin_rejects_wrong_scheme() -> None:
     assert not origin_matches_expected(
-        "https://other.example.com",
-        app_id=app_id,
-        preview_base_domain="example.com",
-        preview_scheme="https",
+        "http://todolist.amicable-preview.data.mayflower.tech",
+        app_id=APP_ID, preview_base_domain=BASE, preview_scheme="https",
     )
 
 
-def test_origin_matches_slug_and_hash() -> None:
-    """Both slug-based and hash-based origins should be accepted."""
-    app_id = "d0fda4fa-b437-4ff6-88cd-8f86d66134b4"
-    slug = "todo-list"
-    base = "amicable-preview.data.mayflower.tech"
-
-    slug_origin = expected_preview_origin(
-        app_id=app_id, slug=slug, preview_base_domain=base, preview_scheme="https",
-    )
-    hash_origin = expected_preview_origin(
-        app_id=app_id, slug=None, preview_base_domain=base, preview_scheme="https",
-    )
-    assert slug_origin != hash_origin
-
-    # Slug-based origin should match when slug is provided.
-    assert origin_matches_expected(
-        slug_origin, app_id=app_id, slug=slug,
-        preview_base_domain=base, preview_scheme="https",
-    )
-    # Hash-based origin should also match even when slug is provided.
-    assert origin_matches_expected(
-        hash_origin, app_id=app_id, slug=slug,
-        preview_base_domain=base, preview_scheme="https",
-    )
-    # Hash-based origin should match when slug is NOT provided.
-    assert origin_matches_expected(
-        hash_origin, app_id=app_id, slug=None,
-        preview_base_domain=base, preview_scheme="https",
-    )
-    # Slug-based origin should NOT match when slug is NOT provided.
+def test_origin_rejects_non_preview_domain() -> None:
     assert not origin_matches_expected(
-        slug_origin, app_id=app_id, slug=None,
-        preview_base_domain=base, preview_scheme="https",
+        "https://evil.example.com",
+        app_id=APP_ID, preview_base_domain=BASE, preview_scheme="https",
+    )
+
+
+def test_origin_rejects_bare_base_domain() -> None:
+    """The base domain itself (no subdomain) should be rejected."""
+    assert not origin_matches_expected(
+        "https://amicable-preview.data.mayflower.tech",
+        app_id=APP_ID, preview_base_domain=BASE, preview_scheme="https",
+    )
+
+
+def test_origin_rejects_nested_subdomain() -> None:
+    """Only single-level subdomains, not nested ones like a.b.base."""
+    assert not origin_matches_expected(
+        "https://a.b.amicable-preview.data.mayflower.tech",
+        app_id=APP_ID, preview_base_domain=BASE, preview_scheme="https",
+    )
+
+
+def test_origin_rejects_empty() -> None:
+    assert not origin_matches_expected(
+        "", app_id=APP_ID, preview_base_domain=BASE, preview_scheme="https",
     )

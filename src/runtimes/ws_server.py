@@ -1625,39 +1625,14 @@ def _origin_allowed_for_app(origin: str, *, app_id: str) -> bool:
     if mode == "any":
         return bool(origin)
 
-    # Default: only allow the expected preview origin for this deterministic app.
+    # Accept any single-level subdomain of the preview base domain.
+    # The x-amicable-app-key header authenticates requests per-app.
     from src.db.origin import origin_matches_expected
-
-    # Resolve slug from session data when available, fall back to project store.
-    slug: str | None = None
-    try:
-        agent = _get_agent()
-        sd = agent.session_data.get(app_id)
-        if isinstance(sd, dict):
-            proj = sd.get("project")
-            if isinstance(proj, dict):
-                slug = proj.get("slug")
-    except Exception:
-        pass
-
-    if not slug:
-        try:
-            from src.db.provisioning import hasura_client_from_env
-            from src.projects.store import get_project_any_owner
-
-            client = hasura_client_from_env()
-            if client:
-                proj_rec = get_project_any_owner(client, project_id=app_id)
-                if proj_rec:
-                    slug = proj_rec.slug
-        except Exception:
-            pass
 
     try:
         return origin_matches_expected(
             origin,
             app_id=app_id,
-            slug=slug,
             preview_base_domain=os.environ.get("PREVIEW_BASE_DOMAIN") or "",
             preview_scheme=os.environ.get("PREVIEW_SCHEME") or "https",
         )

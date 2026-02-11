@@ -49,24 +49,14 @@ def origin_matches_expected(
         return False
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return False
-    norm = origin.rstrip("/")
-    # Always accept the hash-based origin (deterministic, no slug needed).
-    hash_origin = expected_preview_origin(
-        app_id=app_id,
-        slug=None,
-        preview_base_domain=preview_base_domain,
-        preview_scheme=preview_scheme,
-    )
-    if norm == hash_origin.rstrip("/"):
-        return True
-    # If a slug is available, also accept the slug-based origin.
-    if slug:
-        slug_origin = expected_preview_origin(
-            app_id=app_id,
-            slug=slug,
-            preview_base_domain=preview_base_domain,
-            preview_scheme=preview_scheme,
-        )
-        if norm == slug_origin.rstrip("/"):
-            return True
-    return False
+    # Accept any single-level subdomain of the preview base domain.
+    # The app_key already authenticates per-app; this just ensures the
+    # request comes from *some* preview sandbox, not an arbitrary site.
+    scheme = (preview_scheme or "https").strip() or "https"
+    base = (preview_base_domain or "").strip().lstrip(".")
+    if not base:
+        return False
+    if parsed.scheme != scheme:
+        return False
+    host = parsed.hostname or ""
+    return host.endswith(f".{base}") and "." not in host[: -(len(base) + 1)]
