@@ -1628,7 +1628,7 @@ def _origin_allowed_for_app(origin: str, *, app_id: str) -> bool:
     # Default: only allow the expected preview origin for this deterministic app.
     from src.db.origin import origin_matches_expected
 
-    # Resolve slug from session data when available.
+    # Resolve slug from session data when available, fall back to project store.
     slug: str | None = None
     try:
         agent = _get_agent()
@@ -1639,6 +1639,19 @@ def _origin_allowed_for_app(origin: str, *, app_id: str) -> bool:
                 slug = proj.get("slug")
     except Exception:
         pass
+
+    if not slug:
+        try:
+            from src.db.provisioning import hasura_client_from_env
+            from src.projects.store import get_project_any_owner
+
+            client = hasura_client_from_env()
+            if client:
+                proj_rec = get_project_any_owner(client, project_id=app_id)
+                if proj_rec:
+                    slug = proj_rec.slug
+        except Exception:
+            pass
 
     try:
         return origin_matches_expected(

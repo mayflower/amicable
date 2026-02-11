@@ -49,10 +49,24 @@ def origin_matches_expected(
         return False
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return False
-    expected = expected_preview_origin(
+    norm = origin.rstrip("/")
+    # Always accept the hash-based origin (deterministic, no slug needed).
+    hash_origin = expected_preview_origin(
         app_id=app_id,
-        slug=slug,
+        slug=None,
         preview_base_domain=preview_base_domain,
         preview_scheme=preview_scheme,
     )
-    return origin.rstrip("/") == expected.rstrip("/")
+    if norm == hash_origin.rstrip("/"):
+        return True
+    # If a slug is available, also accept the slug-based origin.
+    if slug:
+        slug_origin = expected_preview_origin(
+            app_id=app_id,
+            slug=slug,
+            preview_base_domain=preview_base_domain,
+            preview_scheme=preview_scheme,
+        )
+        if norm == slug_origin.rstrip("/"):
+            return True
+    return False
