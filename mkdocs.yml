@@ -1,0 +1,43 @@
+site_name: Amicable
+site_description: Amicable platform documentation
+
+nav:
+  - Overview: index.md
+  - Usage: usage.md
+  - Development: development.md
+  - Architecture: architecture.md
+  - Configuration: configuration.md
+  - Deployment: deployment.md
+  - Testing: testing.md
+  - Operations: operations.md
+  - Deep Dives:
+      - Kubernetes Installation: kubernetes.md
+      - Local kind Development: local_kind.md
+      - Sandbox Configuration: sandbox_config.md
+      - Data-Cluster Deployment: data-cluster.md
+      - Debugging Runbook: debugging.md
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.sections
+    - content.code.copy
+
+markdown_extensions:
+  - tables
+  - toc:
+      permalink: true
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+plugins:
+  - techdocs-core

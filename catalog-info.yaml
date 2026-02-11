@@ -1,0 +1,17 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: amicable
+  title: Amicable
+  description: AI-powered web app builder with agent-driven sandbox editing and live preview.
+  annotations:
+    backstage.io/techdocs-ref: dir:.
+  tags:
+    - ai
+    - fastapi
+    - react
+    - kubernetes
+spec:
+  type: service
+  lifecycle: experimental
+  owner: group:platform
