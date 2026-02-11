@@ -29,6 +29,7 @@ import {
 import { AGENT_CONFIG } from "../../config/agent";
 import { Button } from "@/components/ui/button";
 import { CodePane } from "@/components/CodePane";
+import { DatabasePane } from "@/components/DatabasePane";
 import { Input } from "@/components/ui/input";
 import type { Message } from "../../types/messages";
 import { cn } from "@/lib/utils";
@@ -179,7 +180,7 @@ const Create = () => {
   const [agentTouchedPath, setAgentTouchedPath] = useState<string | null>(null);
   const toolFileByRunId = useRef<Map<string, string>>(new Map());
   const latestAssistantMsgIdRef = useRef<string | null>(null);
-  const [mainView, setMainView] = useState<"preview" | "code">("preview");
+  const [mainView, setMainView] = useState<"preview" | "code" | "database">("preview");
 
   type ToolRun = {
     runId: string;
@@ -1242,10 +1243,10 @@ const Create = () => {
       if (!event?.data || typeof event.data !== "object") return;
       if (allowedOrigin && event.origin !== allowedOrigin) return;
 
-      const anyData = event.data as any;
-      if (anyData.type !== "amicable_runtime_error") return;
-      const p = anyData.payload;
-      if (!p || typeof p !== "object") return;
+      const dataObj = asObj(event.data);
+      if (!dataObj || dataObj.type !== "amicable_runtime_error") return;
+      const p = asObj(dataObj.payload);
+      if (!p) return;
 
       const kind = typeof p.kind === "string" ? p.kind : "window_error";
       const message = trunc(p.message, 2000);
@@ -1282,7 +1283,7 @@ const Create = () => {
           url,
           ts_ms: tsMs,
           fingerprint,
-          extra: typeof p.extra === "object" ? p.extra : undefined,
+          extra: asObj(p.extra) ?? undefined,
         },
       });
     };
@@ -1747,7 +1748,7 @@ const Create = () => {
     );
   };
 
-  const renderMainViewToggle = (activeView: "preview" | "code") => {
+  const renderMainViewToggle = (activeView: "preview" | "code" | "database") => {
     return (
       <div className="flex gap-2">
         <ToggleButton
@@ -1765,6 +1766,12 @@ const Create = () => {
           onClick={() => setMainView("code")}
         >
           Code
+        </ToggleButton>
+        <ToggleButton
+          active={activeView === "database"}
+          onClick={() => setMainView("database")}
+        >
+          Database
         </ToggleButton>
       </div>
     );
@@ -1803,6 +1810,19 @@ const Create = () => {
             )}
             <div className="w-full flex items-center justify-between bg-gray-200 border-t border-gray-200 px-6 h-14 absolute left-0 right-0 bottom-0 z-[3]">
               {renderMainViewToggle("code")}
+              <div />
+              <div />
+            </div>
+          </div>
+        ) : mainView === "database" ? (
+          <div style={{ height: "100%", minHeight: 0 }}>
+            {resolvedSessionId ? (
+              <DatabasePane projectId={resolvedSessionId} />
+            ) : (
+              <div style={{ padding: 16 }}>Loading project...</div>
+            )}
+            <div className="w-full flex items-center justify-between bg-gray-200 border-t border-gray-200 px-6 h-14 absolute left-0 right-0 bottom-0 z-[3]">
+              {renderMainViewToggle("database")}
               <div />
               <div />
             </div>

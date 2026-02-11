@@ -949,6 +949,294 @@ def _get_agent() -> Agent:
     return _agent
 
 
+@app.get("/api/db/{project_id}/schema")
+async def api_db_schema_get(project_id: str, request: Request) -> JSONResponse:
+    try:
+        proj = _ensure_project_access(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
+
+    from src.db.provisioning import ensure_app, hasura_client_from_env
+    from src.db.schema_diff import compute_schema_version
+    from src.db.schema_introspection import introspect_schema
+
+    client = hasura_client_from_env()
+    app = ensure_app(client, app_id=str(project_id))
+    schema = introspect_schema(
+        client,
+        app_id=str(project_id),
+        schema_name=app.schema_name,
+    )
+    version = compute_schema_version(schema)
+    return JSONResponse(
+        {
+            "schema": schema,
+            "version": version,
+            "db_schema": app.schema_name,
+            "db_role": app.role_name,
+            "template_id": getattr(proj, "template_id", None),
+        },
+        status_code=200,
+    )
+
+
+@app.post("/api/db/{project_id}/schema/review")
+async def api_db_schema_review(project_id: str, request: Request) -> JSONResponse:
+    try:
+        _proj = _ensure_project_access(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
+
+    body: Any
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    base_version = str(body.get("base_version") or "").strip() or None
+    draft = body.get("draft")
+    if not isinstance(draft, dict):
+        return JSONResponse({"error": "invalid_draft"}, status_code=400)
+
+    from src.db.provisioning import ensure_app, hasura_client_from_env
+    from src.db.schema_ai_review import generate_schema_review
+    from src.db.schema_diff import (
+        SchemaValidationError,
+        build_schema_diff,
+        compute_schema_version,
+    )
+    from src.db.schema_introspection import introspect_schema
+
+    client = hasura_client_from_env()
+    app = ensure_app(client, app_id=str(project_id))
+    current = introspect_schema(
+        client,
+        app_id=str(project_id),
+        schema_name=app.schema_name,
+    )
+    current_version = compute_schema_version(current)
+    if base_version and base_version != current_version:
+        return JSONResponse(
+            {
+                "error": "version_conflict",
+                "current_version": current_version,
+                "schema": current,
+            },
+            status_code=409,
+        )
+
+    draft = dict(draft)
+    draft.setdefault("app_id", str(project_id))
+    draft.setdefault("schema_name", app.schema_name)
+    try:
+        diff = build_schema_diff(current, draft)
+    except SchemaValidationError as e:
+        return JSONResponse({"error": "invalid_draft", "detail": str(e)}, status_code=400)
+
+    review = generate_schema_review(current=current, diff=diff)
+    return JSONResponse(
+        {
+            "review": review,
+            "operations": diff.get("operations") or [],
+            "warnings": diff.get("warnings") or [],
+            "destructive": bool(diff.get("destructive")),
+            "destructive_details": diff.get("destructive_details") or [],
+            "sql_preview": diff.get("sql") or [],
+            "base_version": current_version,
+        },
+        status_code=200,
+    )
+
+
+@app.post("/api/db/{project_id}/schema/apply")
+async def api_db_schema_apply(project_id: str, request: Request) -> JSONResponse:
+    if not _hasura_enabled():
+        return JSONResponse({"error": "hasura_not_configured"}, status_code=400)
+
+    try:
+        sub, email = _get_owner_from_request(request)
+    except PermissionError:
+        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+
+    body: Any
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    base_version = str(body.get("base_version") or "").strip() or None
+    confirm_destructive = bool(body.get("confirm_destructive", False))
+    draft = body.get("draft")
+    if not isinstance(draft, dict):
+        return JSONResponse({"error": "invalid_draft"}, status_code=400)
+
+    from src.db.provisioning import ensure_app, hasura_client_from_env
+    from src.db.schema_ai_review import generate_schema_review
+    from src.db.schema_apply import apply_schema_changes
+    from src.db.schema_diff import (
+        SchemaValidationError,
+        build_schema_diff,
+        compute_schema_version,
+    )
+    from src.db.schema_introspection import introspect_schema
+    from src.gitlab.config import git_sync_enabled, git_sync_required
+    from src.gitlab.integration import ensure_gitlab_repo_for_project
+    from src.gitlab.sync import sync_sandbox_tree_to_repo
+    from src.projects.store import ProjectOwner, get_project_by_id
+
+    client = hasura_client_from_env()
+    owner = ProjectOwner(sub=sub, email=email)
+    project = get_project_by_id(client, owner=owner, project_id=str(project_id))
+    if not project:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+
+    app = ensure_app(client, app_id=str(project_id))
+    current = introspect_schema(
+        client,
+        app_id=str(project_id),
+        schema_name=app.schema_name,
+    )
+    current_version = compute_schema_version(current)
+    if base_version and base_version != current_version:
+        return JSONResponse(
+            {
+                "error": "version_conflict",
+                "current_version": current_version,
+                "schema": current,
+            },
+            status_code=409,
+        )
+
+    draft = dict(draft)
+    draft.setdefault("app_id", str(project_id))
+    draft.setdefault("schema_name", app.schema_name)
+
+    try:
+        diff = build_schema_diff(current, draft)
+    except SchemaValidationError as e:
+        return JSONResponse({"error": "invalid_draft", "detail": str(e)}, status_code=400)
+
+    if diff.get("destructive") and not confirm_destructive:
+        review = generate_schema_review(current=current, diff=diff)
+        return JSONResponse(
+            {
+                "error": "destructive_confirmation_required",
+                "review": review,
+                "destructive": True,
+                "destructive_details": diff.get("destructive_details") or [],
+                "operations": diff.get("operations") or [],
+            },
+            status_code=409,
+        )
+
+    agent = _get_agent()
+    await agent.init(
+        session_id=str(project_id),
+        template_id=getattr(project, "template_id", None),
+        slug=getattr(project, "slug", None),
+    )
+    assert agent._session_manager is not None
+    backend = agent._session_manager.get_backend(str(project_id))
+
+    try:
+        apply_res = apply_schema_changes(
+            client,
+            app_id=str(project_id),
+            schema_name=app.schema_name,
+            role_name=app.role_name,
+            current_schema=current,
+            draft_schema=draft,
+            backend=backend,
+        )
+    except SchemaValidationError as e:
+        return JSONResponse({"error": "invalid_draft", "detail": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": "apply_failed", "detail": str(e)}, status_code=500)
+
+    updated_schema = introspect_schema(
+        client,
+        app_id=str(project_id),
+        schema_name=app.schema_name,
+    )
+    updated_version = compute_schema_version(updated_schema)
+
+    git_sync_result: dict[str, Any] = {
+        "attempted": False,
+        "pushed": False,
+        "commit_sha": None,
+    }
+    warnings = list(apply_res.get("warnings") or [])
+
+    if git_sync_enabled():
+        git_sync_result["attempted"] = True
+        try:
+            project, git = ensure_gitlab_repo_for_project(
+                client, owner=owner, project=project
+            )
+            repo_url = None
+            if isinstance(git, dict):
+                repo_url = git.get("http_url_to_repo") or git.get("repo_http_url")
+            if not isinstance(repo_url, str) or not repo_url.strip():
+                raise RuntimeError("missing_repo_url")
+
+            slug_for_commit = (str(getattr(project, "slug", "") or "")).strip() or str(
+                project_id
+            )
+            commit_message = (
+                f"Database schema update ({slug_for_commit}) {time.strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            pushed, sha, diff_stat, name_status = await asyncio.to_thread(
+                sync_sandbox_tree_to_repo,
+                backend,
+                repo_http_url=str(repo_url),
+                project_slug=slug_for_commit,
+                commit_message=commit_message,
+            )
+            git_sync_result.update(
+                {
+                    "pushed": bool(pushed),
+                    "commit_sha": sha,
+                    "diff_stat": diff_stat,
+                    "name_status": name_status,
+                }
+            )
+        except Exception as e:
+            git_sync_result.update(
+                {
+                    "error": "git_sync_failed",
+                    "detail": str(e),
+                }
+            )
+            if git_sync_required():
+                warnings.append(
+                    "Git sync is configured as required but failed after DB apply."
+                )
+    else:
+        warnings.append("Git sync disabled; schema changes were applied but not committed.")
+
+    return JSONResponse(
+        {
+            "applied": True,
+            "new_version": updated_version,
+            "version": updated_version,
+            "schema": updated_schema,
+            "migration_files": apply_res.get("migration_files") or [],
+            "git_sync": git_sync_result,
+            "warnings": warnings,
+            "summary": apply_res.get("summary") or {},
+            "operations": (apply_res.get("diff") or {}).get("operations") or [],
+            "sql_preview": (apply_res.get("diff") or {}).get("sql") or [],
+        },
+        status_code=200,
+    )
+
+
 @app.get("/api/sandbox/{project_id}/ls")
 async def api_sandbox_ls(project_id: str, request: Request, path: str = "/"):
     try:

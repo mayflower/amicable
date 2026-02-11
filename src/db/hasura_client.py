@@ -38,13 +38,22 @@ class HasuraClient:
             "content-type": "application/json",
         }
 
-    def run_sql(self, sql: str, *, read_only: bool = False) -> dict[str, Any]:
+    def run_sql(
+        self,
+        sql: str,
+        *,
+        read_only: bool = False,
+        cascade: bool = False,
+        check_metadata_consistency: bool = False,
+    ) -> dict[str, Any]:
         payload = {
             "type": "run_sql",
             "args": {
                 "source": self._cfg.source_name,
                 "sql": sql,
                 "read_only": bool(read_only),
+                "cascade": bool(cascade),
+                "check_metadata_consistency": bool(check_metadata_consistency),
             },
         }
         resp = self._http.post(
