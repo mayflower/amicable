@@ -32,16 +32,16 @@ Components:
    - Code/runtime API: `k8s/images/amicable-sandbox/runtime.py`
 
 4. **Preview Router** (nginx)
-   - Routes `https://<sandbox-id>.amicable-preview.data.mayflower.zone/` to the correct sandbox pod's Vite server.
+   - Routes `https://<sandbox-id>.amicable-preview.data.mayflower.tech/` to the correct sandbox pod's Vite server.
    - Code: `deploy/helm/amicable/templates/preview-router/*`
 
 ## Where It Runs (Mayflower "data-cluster")
 
 In the Mayflower setup the public endpoints are:
 
-- Editor: `https://amicable.data.mayflower.zone/`
-- Agent: `https://amicable-agent.data.mayflower.zone/`
-- Preview wildcard: `https://<sandbox-id>.amicable-preview.data.mayflower.zone/`
+- Editor: `https://amicable.data.mayflower.tech/`
+- Agent: `https://amicable-agent.data.mayflower.tech/`
+- Preview wildcard: `https://<sandbox-id>.amicable-preview.data.mayflower.tech/`
 
 Deploy flow:
 

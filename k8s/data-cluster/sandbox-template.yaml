@@ -21,7 +21,7 @@ spec:
               containerPort: 3000
           env:
             - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
-              value: ".amicable-preview.data.mayflower.zone"
+              value: ".amicable-preview.data.mayflower.tech"
           resources:
             requests:
               cpu: "100m"
@@ -56,7 +56,7 @@ spec:
               containerPort: 3000
           env:
             - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
-              value: ".amicable-preview.data.mayflower.zone"
+              value: ".amicable-preview.data.mayflower.tech"
           resources:
             requests:
               cpu: "100m"
@@ -91,7 +91,7 @@ spec:
               containerPort: 3000
           env:
             - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
-              value: ".amicable-preview.data.mayflower.zone"
+              value: ".amicable-preview.data.mayflower.tech"
           resources:
             requests:
               cpu: "100m"
@@ -126,7 +126,7 @@ spec:
               containerPort: 3000
           env:
             - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
-              value: ".amicable-preview.data.mayflower.zone"
+              value: ".amicable-preview.data.mayflower.tech"
           resources:
             requests:
               cpu: "100m"
@@ -161,7 +161,7 @@ spec:
               containerPort: 3000
           env:
             - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
-              value: ".amicable-preview.data.mayflower.zone"
+              value: ".amicable-preview.data.mayflower.tech"
           resources:
             requests:
               cpu: "100m"
@@ -196,7 +196,7 @@ spec:
               containerPort: 3000
           env:
             - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
-              value: ".amicable-preview.data.mayflower.zone"
+              value: ".amicable-preview.data.mayflower.tech"
           resources:
             requests:
               cpu: "100m"
@@ -231,7 +231,7 @@ spec:
               containerPort: 3000
           env:
             - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
-              value: ".amicable-preview.data.mayflower.zone"
+              value: ".amicable-preview.data.mayflower.tech"
           resources:
             requests:
               cpu: "100m"
@@ -266,7 +266,7 @@ spec:
               containerPort: 3000
           env:
             - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
-              value: ".amicable-preview.data.mayflower.zone"
+              value: ".amicable-preview.data.mayflower.tech"
           resources:
             requests:
               cpu: "100m"

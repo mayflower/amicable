@@ -20,7 +20,7 @@ sandboxTemplate:
   # Fallback template name used by the agent if a project template id is unknown.
   # This should match one of the sandboxTemplates names when sandboxTemplates is set.
   name: amicable-sandbox-lovable-vite
-  additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+  additionalAllowedHosts: ".amicable-preview.data.mayflower.tech"
   # Optional: set a RuntimeClass for sandbox pods (example: "gvisor").
   # This must exist in the cluster as a RuntimeClass object.
   runtimeClassName: ""
@@ -34,7 +34,7 @@ sandboxTemplates:
       repository: ghcr.io/mayflower/amicable-sandbox-lovable-vite
       tag: main
       pullPolicy: IfNotPresent
-    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.tech"
     runtimeClassName: ""
     resources:
       requests:
@@ -48,7 +48,7 @@ sandboxTemplates:
       repository: ghcr.io/mayflower/amicable-sandbox-nextjs15
       tag: main
       pullPolicy: IfNotPresent
-    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.tech"
     runtimeClassName: ""
     resources:
       requests:
@@ -62,7 +62,7 @@ sandboxTemplates:
       repository: ghcr.io/mayflower/amicable-sandbox-fastapi
       tag: main
       pullPolicy: IfNotPresent
-    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.tech"
     runtimeClassName: ""
     resources:
       requests:
@@ -76,7 +76,7 @@ sandboxTemplates:
       repository: ghcr.io/mayflower/amicable-sandbox-hono
       tag: main
       pullPolicy: IfNotPresent
-    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.tech"
     runtimeClassName: ""
     resources:
       requests:
@@ -90,7 +90,7 @@ sandboxTemplates:
       repository: ghcr.io/mayflower/amicable-sandbox-remix
       tag: main
       pullPolicy: IfNotPresent
-    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.tech"
     runtimeClassName: ""
     resources:
       requests:
@@ -104,7 +104,7 @@ sandboxTemplates:
       repository: ghcr.io/mayflower/amicable-sandbox-nuxt3
       tag: main
       pullPolicy: IfNotPresent
-    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.tech"
     runtimeClassName: ""
     resources:
       requests:
@@ -118,7 +118,7 @@ sandboxTemplates:
       repository: ghcr.io/mayflower/amicable-sandbox-sveltekit
       tag: main
       pullPolicy: IfNotPresent
-    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.tech"
     runtimeClassName: ""
     resources:
       requests:
@@ -132,7 +132,7 @@ sandboxTemplates:
       repository: ghcr.io/mayflower/amicable-sandbox-laravel
       tag: main
       pullPolicy: IfNotPresent
-    additionalAllowedHosts: ".amicable-preview.data.mayflower.zone"
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.tech"
     runtimeClassName: ""
     resources:
       requests:
@@ -149,7 +149,7 @@ agent:
   ingress:
     enabled: true
     ingressClassName: traefik
-    host: amicable-agent.data.mayflower.zone
+    host: amicable-agent.data.mayflower.tech
     certIssuer: letsencrypt-intern-dns
     tls:
       enabled: true
@@ -162,7 +162,7 @@ agent:
         enabled: false
         tlsOptionName: amicable-agent-http1
   env:
-    previewBaseDomain: amicable-preview.data.mayflower.zone
+    previewBaseDomain: amicable-preview.data.mayflower.tech
     previewScheme: https
     runtimePort: "8888"
     previewPort: "3000"
@@ -173,9 +173,9 @@ agent:
     #   PREVIEW_RESOLVER_TOKEN: "<shared-token>"
     # Example (Google OAuth):
     #   AUTH_MODE: "google"
-    #   PUBLIC_BASE_URL: "https://amicable-agent.data.mayflower.zone"
-    #   CORS_ALLOW_ORIGINS: "https://amicable.data.mayflower.zone"
-    #   AUTH_REDIRECT_ALLOW_ORIGINS: "https://amicable.data.mayflower.zone"
+    #   PUBLIC_BASE_URL: "https://amicable-agent.data.mayflower.tech"
+    #   CORS_ALLOW_ORIGINS: "https://amicable.data.mayflower.tech"
+    #   AUTH_REDIRECT_ALLOW_ORIGINS: "https://amicable.data.mayflower.tech"
     # Langfuse (non-secret values):
     #   LANGFUSE_PUBLIC_KEY: "pk-lf-..."
     #   LANGFUSE_HOST: "https://langfuse.mayflower.cloud"
@@ -202,7 +202,7 @@ previewRouter:
   ingress:
     enabled: true
     ingressClassName: traefik
-    wildcardHost: "*.amicable-preview.data.mayflower.zone"
+    wildcardHost: "*.amicable-preview.data.mayflower.tech"
     certIssuer: letsencrypt-intern-dns
     tls:
       enabled: true
@@ -216,14 +216,14 @@ editor:
   ingress:
     enabled: true
     ingressClassName: traefik
-    host: amicable.data.mayflower.zone
+    host: amicable.data.mayflower.tech
     certIssuer: letsencrypt-intern-dns
     tls:
       enabled: true
       secretName: amicable-editor-tls
   runtimeConfig:
     # These are injected into /config.js and read by frontend/src/config/agent.ts at runtime.
-    VITE_AGENT_WS_URL: "wss://amicable-agent.data.mayflower.zone/"
+    VITE_AGENT_WS_URL: "wss://amicable-agent.data.mayflower.tech/"
     # Note: this value is delivered to the browser, so it is not a real "secret".
     # If you need access control, enforce auth at the ingress (OIDC/basic auth) or
     # put the editor behind your SSO.

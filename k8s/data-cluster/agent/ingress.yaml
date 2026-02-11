@@ -13,10 +13,10 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - amicable-agent.data.mayflower.zone
+        - amicable-agent.data.mayflower.tech
       secretName: amicable-agent-tls
   rules:
-    - host: amicable-agent.data.mayflower.zone
+    - host: amicable-agent.data.mayflower.tech
       http:
         paths:
           - path: /

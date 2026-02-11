@@ -10,10 +10,10 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - "*.amicable-preview.data.mayflower.zone"
+        - "*.amicable-preview.data.mayflower.tech"
       secretName: amicable-preview-wildcard-tls
   rules:
-    - host: "*.amicable-preview.data.mayflower.zone"
+    - host: "*.amicable-preview.data.mayflower.tech"
       http:
         paths:
           - path: /

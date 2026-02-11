@@ -6,7 +6,7 @@ This note is specific to the existing Mayflower Kubernetes setup in `../data-clu
 
 - Ingress controller: **Traefik** (`ingressClassName: traefik`)
 - Cert-manager cluster issuers:
-  - Internal: `letsencrypt-intern-dns` (typically for `*.data.mayflower.zone`)
+  - Internal: `letsencrypt-intern-dns` (typically for `*.data.mayflower.tech`)
   - Public: `letsencrypt` (typically for `*.data.mayflower.tech`)
 - agent-sandbox is already installed via ArgoCD from `data-cluster/agent-sandbox`.
   - Core CRD: `agents.x-k8s.io/v1alpha1` (`Sandbox`)
@@ -21,9 +21,9 @@ This note is specific to the existing Mayflower Kubernetes setup in `../data-clu
 ## What you need in the cluster
 
 - DNS records:
-  - `amicable-agent.data.mayflower.zone` -> Traefik
-  - `*.amicable-preview.data.mayflower.zone` -> Traefik
-  - `amicable.data.mayflower.zone` -> Traefik (editor UI)
+  - `amicable-agent.data.mayflower.tech` -> Traefik
+  - `*.amicable-preview.data.mayflower.tech` -> Traefik
+  - `amicable.data.mayflower.tech` -> Traefik (editor UI)
 - TLS certificates via cert-manager.
 
 ## Manifests to deploy
@@ -40,8 +40,8 @@ Cluster-specific configuration lives in the `data-cluster` repo:
 
 Default assumptions in those values:
 - namespace: `amicable`
-- agent host: `amicable-agent.data.mayflower.zone`
-- preview base domain: `amicable-preview.data.mayflower.zone` (wildcard)
+- agent host: `amicable-agent.data.mayflower.tech`
+- preview base domain: `amicable-preview.data.mayflower.tech` (wildcard)
 - cert-manager issuer: `letsencrypt-intern-dns`
 
 If you want the public domain (`*.data.mayflower.tech`), adjust the values and the issuer to `letsencrypt`.

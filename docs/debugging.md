@@ -4,9 +4,9 @@ This is a pragmatic runbook for debugging Amicable in production (Mayflower data
 
 ## Quick Facts
 
-- **Agent URL** (HTTP): `https://amicable-agent.data.mayflower.zone/`
-- **Editor URL**: `https://amicable.data.mayflower.zone/`
-- **Preview wildcard**: `https://<sandbox-id>.amicable-preview.data.mayflower.zone/`
+- **Agent URL** (HTTP): `https://amicable-agent.data.mayflower.tech/`
+- **Editor URL**: `https://amicable.data.mayflower.tech/`
+- **Preview wildcard**: `https://<sandbox-id>.amicable-preview.data.mayflower.tech/`
 - **ArgoCD app name**: `amicable`
 - **Kubernetes namespace**: `amicable`
 - **SandboxClaim naming**: `amicable-<sha256(session_id)[:8]>`
@@ -73,20 +73,20 @@ argocd app logs amicable \
 Agent health:
 
 ```bash
-curl -fsS https://amicable-agent.data.mayflower.zone/healthz
+curl -fsS https://amicable-agent.data.mayflower.tech/healthz
 ```
 
 Auth status:
 
 ```bash
-curl -fsS https://amicable-agent.data.mayflower.zone/auth/me
+curl -fsS https://amicable-agent.data.mayflower.tech/auth/me
 ```
 
 OAuth redirect sanity (should 302 to Google when configured):
 
 ```bash
 curl -sS -D- -o /dev/null \
-  "https://amicable-agent.data.mayflower.zone/auth/login?redirect=https%3A%2F%2Famicable.data.mayflower.zone%2F" \
+  "https://amicable-agent.data.mayflower.tech/auth/login?redirect=https%3A%2F%2Famicable.data.mayflower.tech%2F" \
   | sed -n '1,30p'
 ```
 
@@ -111,7 +111,7 @@ PY "PUT_SESSION_ID_HERE"
 You can also infer the claim name from the preview URL:
 
 ```text
-https://<claim_name>.amicable-preview.data.mayflower.zone/
+https://<claim_name>.amicable-preview.data.mayflower.tech/
 ```
 
 ## DeepAgents QA + Self-Healing: What to Expect in Logs

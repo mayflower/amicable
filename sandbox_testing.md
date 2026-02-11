@@ -2,7 +2,7 @@
 
 **Date:** 2026-02-10
 **Image Tag:** `sha-585981c`
-**Editor URL:** https://amicable.data.mayflower.zone
+**Editor URL:** https://amicable.data.mayflower.tech
 
 | # | Template ID | Label | Status | Preview URL | Notes |
 |---|------------|-------|--------|-------------|-------|

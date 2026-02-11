@@ -7,10 +7,10 @@ The Amicable editor frontend cannot establish a WebSocket connection to the agen
 ## Architecture
 
 ```
-Browser (editor SPA at https://amicable.data.mayflower.zone)
+Browser (editor SPA at https://amicable.data.mayflower.tech)
     ↓ fetch() — works ✅
     ↓ new WebSocket() — fails ❌
-Agent (FastAPI/Uvicorn at https://amicable-agent.data.mayflower.zone)
+Agent (FastAPI/Uvicorn at https://amicable-agent.data.mayflower.tech)
     ↓
 Traefik v3.3.3 (ingress controller, TLS termination)
     ↓
@@ -27,7 +27,7 @@ K8s Service → 2 agent pods (amicable-agent-7d76cfb95c-{5flg9,m599s})
 
 ## What fails
 
-- `new WebSocket('wss://amicable-agent.data.mayflower.zone/')` from the browser
+- `new WebSocket('wss://amicable-agent.data.mayflower.tech/')` from the browser
 - Connection hangs — no `onopen`, no `onerror`, no `onclose` until the app's 10s timeout fires
 - Then `onclose` fires with code 1006 (abnormal closure, no close frame)
 - **Zero WebSocket connection attempts appear in agent pod logs** during the failure window
@@ -39,7 +39,7 @@ K8s Service → 2 agent pods (amicable-agent-7d76cfb95c-{5flg9,m599s})
 
 2. **curl without `--http1.1` does NOT do WebSocket**: Default curl negotiates HTTP/2 via ALPN. Over HTTP/2, the `Connection: Upgrade` headers are hop-by-hop and ignored. The request becomes a regular GET that returns `{"status":"ok"}` (the healthz response) with HTTP 200.
 
-3. **Browser uses HTTP/2**: The browser negotiates HTTP/2 with Traefik for `amicable-agent.data.mayflower.zone`. HTTP fetch requests work fine over h2. But `new WebSocket()` requires the HTTP/1.1 upgrade mechanism (`Connection: Upgrade, Upgrade: websocket`), which doesn't exist in HTTP/2.
+3. **Browser uses HTTP/2**: The browser negotiates HTTP/2 with Traefik for `amicable-agent.data.mayflower.tech`. HTTP fetch requests work fine over h2. But `new WebSocket()` requires the HTTP/1.1 upgrade mechanism (`Connection: Upgrade, Upgrade: websocket`), which doesn't exist in HTTP/2.
 
 4. **Agent logs confirm WebSocket worked before**: Earlier in the pod's lifetime (from previous browser sessions, possibly before the pods were restarted), there are hundreds of `"WebSocket /" [accepted]` entries. So the server code is correct.
 
@@ -70,10 +70,10 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - amicable-agent.data.mayflower.zone
+        - amicable-agent.data.mayflower.tech
       secretName: amicable-agent-tls
   rules:
-    - host: amicable-agent.data.mayflower.zone
+    - host: amicable-agent.data.mayflower.tech
       http:
         paths:
           - path: /

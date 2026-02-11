@@ -31,7 +31,7 @@ spec:
             - name: K8S_SANDBOX_TEMPLATE_NAME
               value: "amicable-sandbox-lovable-vite"
             - name: PREVIEW_BASE_DOMAIN
-              value: "amicable-preview.data.mayflower.zone"
+              value: "amicable-preview.data.mayflower.tech"
             - name: PREVIEW_SCHEME
               value: "https"
             - name: SANDBOX_RUNTIME_PORT

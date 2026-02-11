@@ -6,11 +6,11 @@ from src.db.origin import expected_preview_origin, origin_matches_expected
 def test_expected_preview_origin_matches_claim_naming() -> None:
     origin = expected_preview_origin(
         app_id="00000000-0000-0000-0000-000000000000",
-        preview_base_domain="amicable-preview.data.mayflower.zone",
+        preview_base_domain="amicable-preview.data.mayflower.tech",
         preview_scheme="https",
     )
     assert origin.startswith("https://amicable-")
-    assert origin.endswith(".amicable-preview.data.mayflower.zone")
+    assert origin.endswith(".amicable-preview.data.mayflower.tech")
 
 
 def test_origin_matches_expected() -> None:
