@@ -66,6 +66,7 @@ export type MessageData = JsonObject & {
   sender?: Sender;
   isStreaming?: boolean;
   error?: RuntimeErrorPayload | unknown;
+  content_blocks?: JsonObject[];
 
   // Optional: associate trace events with the assistant message they belong to.
   // (Backend may omit this; frontend can best-effort infer in that case.)

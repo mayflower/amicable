@@ -152,6 +152,61 @@ def _runtime_autoheal_user_content_blocks(
     ]
 
 
+def _max_user_image_blocks() -> int:
+    return max(0, _env_int("AMICABLE_USER_IMAGE_MAX_BLOCKS", 4))
+
+
+def _max_user_image_base64_chars() -> int:
+    # 7_000_000 chars ~= 5.25MB raw image bytes.
+    return max(1_000, _env_int("AMICABLE_USER_IMAGE_MAX_BASE64_CHARS", 7_000_000))
+
+
+def _sanitize_user_content_blocks(
+    raw_blocks: Any,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    if raw_blocks is None:
+        return None, None
+    if not isinstance(raw_blocks, list):
+        return None, "content_blocks must be a list"
+
+    out: list[dict[str, Any]] = []
+    max_blocks = _max_user_image_blocks()
+    max_b64 = _max_user_image_base64_chars()
+    image_count = 0
+
+    for i, block in enumerate(raw_blocks):
+        if not isinstance(block, dict):
+            return None, f"content_blocks[{i}] must be an object"
+
+        btype = str(block.get("type") or "").strip().lower()
+        if btype == "text":
+            text = block.get("text")
+            if isinstance(text, str) and text.strip():
+                out.append({"type": "text", "text": text[:12_000]})
+            continue
+
+        if btype != "image":
+            # Ignore unsupported block types for now (safest default).
+            continue
+
+        image_count += 1
+        if image_count > max_blocks:
+            return None, f"too many images (max {max_blocks})"
+
+        image_b64 = block.get("base64")
+        mime_type = block.get("mime_type")
+        if not isinstance(image_b64, str) or not image_b64:
+            return None, f"content_blocks[{i}] image.base64 is required"
+        if len(image_b64) > max_b64:
+            return None, f"content_blocks[{i}] image is too large"
+        if not isinstance(mime_type, str) or not mime_type.startswith("image/"):
+            return None, f"content_blocks[{i}] image.mime_type must start with image/"
+
+        out.append({"type": "image", "base64": image_b64, "mime_type": mime_type})
+
+    return (out or None), None
+
+
 def _get_owner_from_request(request: Request) -> tuple[str, str]:
     """Return (sub, email) for project ownership checks."""
     mode = _auth_mode()
@@ -2094,16 +2149,34 @@ async def _handle_ws(ws: WebSocket) -> None:
 
         if mtype == MessageType.USER.value:
             session_id = data.get("session_id")
-            text = data.get("text")
-            if not session_id or not isinstance(text, str):
+            text_raw = data.get("text")
+            text = text_raw if isinstance(text_raw, str) else ""
+            user_blocks, blocks_err = _sanitize_user_content_blocks(
+                data.get("content_blocks")
+            )
+            if blocks_err:
                 await ws.send_json(
                     Message.new(
                         MessageType.ERROR,
-                        {"error": "missing session_id or text"},
+                        {"error": blocks_err},
                         session_id=session_id or "",
                     ).to_dict()
                 )
                 continue
+
+            if not session_id or (not text.strip() and not user_blocks):
+                await ws.send_json(
+                    Message.new(
+                        MessageType.ERROR,
+                        {"error": "missing session_id or user content"},
+                        session_id=session_id or "",
+                    ).to_dict()
+                )
+                continue
+
+            # Give multimodal-only prompts a minimal instruction anchor.
+            if not text.strip() and user_blocks:
+                text = "Use the attached image(s) as reference."
 
             try:
                 await _ensure_project_context_for_session(
@@ -2139,7 +2212,9 @@ async def _handle_ws(ws: WebSocket) -> None:
             lock = _agent_run_lock(str(session_id))
             async with lock:
                 async for out in agent.send_feedback(
-                    session_id=str(session_id), feedback=text
+                    session_id=str(session_id),
+                    feedback=text,
+                    user_content_blocks=user_blocks,
                 ):
                     await ws.send_json(out)
             continue

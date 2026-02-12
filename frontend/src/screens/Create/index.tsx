@@ -2,10 +2,12 @@ import {
   ComputerIcon,
   ExternalLink,
   Loader2,
+  Paperclip,
   PhoneIcon,
   Play,
   RotateCcw,
   TabletIcon,
+  X,
 } from "lucide-react";
 import {
   MessageType,
@@ -25,6 +27,7 @@ import {
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type ChangeEvent,
 } from "react";
 
 import { AGENT_CONFIG } from "../../config/agent";
@@ -45,6 +48,31 @@ const DEVICE_SPECS = {
   tablet: { width: 768, height: 1024 },
   desktop: { width: "100%", height: "100%" },
 };
+
+const MAX_IMAGE_ATTACHMENTS = 4;
+const MAX_IMAGE_FILE_BYTES = 5 * 1024 * 1024;
+
+type PendingImageAttachment = {
+  name: string;
+  mimeType: string;
+  base64: string;
+  size: number;
+};
+
+const readFileAsDataUrl = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const out = reader.result;
+      if (typeof out === "string") {
+        resolve(out);
+      } else {
+        reject(new Error("Failed to read file"));
+      }
+    };
+    reader.onerror = () => reject(reader.error || new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
 
 type _ToggleButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   active?: boolean;
@@ -189,6 +217,9 @@ const Create = () => {
   const toolFileByRunId = useRef<Map<string, string>>(new Map());
   const latestAssistantMsgIdRef = useRef<string | null>(null);
   const [mainView, setMainView] = useState<"preview" | "code" | "database">("preview");
+  const [pendingImages, setPendingImages] = useState<PendingImageAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   type ToolRun = {
     runId: string;
@@ -1104,17 +1135,37 @@ const Create = () => {
   }, [isChatResizing, chatWidth]);
 
   const handleSendMessage = () => {
-    if (!inputValue.trim()) return;
-    const text = inputValue;
-    send(MessageType.USER, { text });
+    const text = inputValue.trim();
+    const imgs = pendingImages;
+    if (!text && imgs.length === 0) return;
+
+    const content_blocks =
+      imgs.length > 0
+        ? [
+            ...(text ? [{ type: "text", text }] : []),
+            ...imgs.map((img) => ({
+              type: "image",
+              base64: img.base64,
+              mime_type: img.mimeType,
+            })),
+          ]
+        : undefined;
+    const localText =
+      text ||
+      `[Attached ${imgs.length} image${imgs.length === 1 ? "" : "s"}]`;
+
+    send(MessageType.USER, { text, content_blocks });
     setInputValue("");
+    setPendingImages([]);
+    setAttachmentError(null);
     setMessages((prev) => [
       ...prev,
       {
         type: MessageType.USER,
         timestamp: Date.now(),
         data: {
-          text,
+          text: localText,
+          content_blocks,
           sender: Sender.USER,
         },
         session_id: resolvedSessionId || undefined,
@@ -1138,6 +1189,66 @@ const Create = () => {
         session_id: resolvedSessionId || undefined,
       },
     ]);
+  };
+
+  const handleAttachClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleAttachmentChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    // Allow selecting the same file again later.
+    e.target.value = "";
+    if (!files.length) return;
+
+    const remaining = MAX_IMAGE_ATTACHMENTS - pendingImages.length;
+    if (remaining <= 0) {
+      setAttachmentError(`You can attach up to ${MAX_IMAGE_ATTACHMENTS} images.`);
+      return;
+    }
+
+    const accepted: PendingImageAttachment[] = [];
+    const errors: string[] = [];
+    for (const file of files.slice(0, remaining)) {
+      if (!file.type.startsWith("image/")) {
+        errors.push(`${file.name}: only image files are supported.`);
+        continue;
+      }
+      if (file.size > MAX_IMAGE_FILE_BYTES) {
+        errors.push(`${file.name}: exceeds ${Math.round(MAX_IMAGE_FILE_BYTES / 1024 / 1024)}MB.`);
+        continue;
+      }
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        const comma = dataUrl.indexOf(",");
+        if (comma < 0 || comma + 1 >= dataUrl.length) {
+          errors.push(`${file.name}: failed to encode image.`);
+          continue;
+        }
+        accepted.push({
+          name: file.name,
+          mimeType: file.type || "image/png",
+          base64: dataUrl.slice(comma + 1),
+          size: file.size,
+        });
+      } catch {
+        errors.push(`${file.name}: failed to read image.`);
+      }
+    }
+
+    if (files.length > remaining) {
+      errors.push(`Only ${remaining} additional image(s) can be attached.`);
+    }
+
+    if (accepted.length) {
+      setPendingImages((prev) => [...prev, ...accepted]);
+    }
+    setAttachmentError(errors.length ? errors.join(" ") : null);
+  };
+
+  const removePendingImage = (idx: number) => {
+    setPendingImages((prev) => prev.filter((_, i) => i !== idx));
+    setAttachmentError(null);
   };
 
   const renderUiBlocks = (blocks: JsonObject[] | undefined) => {
@@ -2347,7 +2458,7 @@ const Create = () => {
           </div>
         </div>
 
-        <div className="mt-auto flex flex-row gap-2">
+        <div className="mt-auto flex flex-col gap-2">
           {pendingHitl ? (
             <div style={{ marginBottom: 12 }}>
               <HitlPanel />
@@ -2369,24 +2480,72 @@ const Create = () => {
               </div>
             </div>
           ) : null}
-          <Input
-            placeholder="Ask Amicable..."
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-            disabled={!isConnected || !iframeReady || !!pendingHitl}
-          />
-          <Button
-            onClick={handleSendMessage}
-            disabled={
-              !isConnected ||
-              !iframeReady ||
-              !!pendingHitl ||
-              !inputValue.trim()
-            }
-          >
-            Send
-          </Button>
+          {attachmentError ? (
+            <div className="text-xs text-destructive">{attachmentError}</div>
+          ) : null}
+          {pendingImages.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {pendingImages.map((img, idx) => (
+                <div
+                  key={`${img.name}-${idx}`}
+                  className="flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-xs"
+                >
+                  <span className="max-w-[180px] truncate">{img.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => removePendingImage(idx)}
+                    className="inline-flex items-center text-muted-foreground hover:text-foreground"
+                    aria-label={`Remove ${img.name}`}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <div className="flex flex-row gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                void handleAttachmentChange(e);
+              }}
+            />
+            <Button
+              variant="outline"
+              onClick={handleAttachClick}
+              disabled={!isConnected || !iframeReady || !!pendingHitl}
+              title="Attach screenshot or diagram image"
+            >
+              <Paperclip size={14} />
+            </Button>
+            <Input
+              placeholder="Ask Amicable..."
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleSendMessage();
+                }
+              }}
+              disabled={!isConnected || !iframeReady || !!pendingHitl}
+            />
+            <Button
+              onClick={handleSendMessage}
+              disabled={
+                !isConnected ||
+                !iframeReady ||
+                !!pendingHitl ||
+                (!inputValue.trim() && pendingImages.length === 0)
+              }
+            >
+              Send
+            </Button>
+          </div>
         </div>
       </div>
     </div>
