@@ -20,6 +20,8 @@ import {
   type JsonObject,
   type RuntimeErrorPayload,
 } from "../../types/messages";
+import { ProjectLockedModal } from "@/components/ProjectLockedModal";
+import { SessionClaimedModal } from "@/components/SessionClaimedModal";
 import {
   useCallback,
   useEffect,
@@ -220,6 +222,13 @@ const Create = () => {
   const [pendingImages, setPendingImages] = useState<PendingImageAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [projectLockedInfo, setProjectLockedInfo] = useState<{
+    email: string;
+    lockedAt?: string;
+  } | null>(null);
+  const [sessionClaimed, setSessionClaimed] = useState<{
+    byEmail?: string;
+  } | null>(null);
 
   type ToolRun = {
     runId: string;
@@ -525,6 +534,16 @@ const Create = () => {
     },
 
     [MessageType.ERROR]: (message: Message) => {
+      // Check for project_locked error
+      const md = asObj(message.data);
+      if (md && md.code === "project_locked") {
+        const lockedBy = md.locked_by as { email?: string; at?: string } | undefined;
+        setProjectLockedInfo({
+          email: lockedBy?.email || "another user",
+          lockedAt: lockedBy?.at,
+        });
+        return;
+      }
       setMessages((prev) => [
         ...prev,
         {
@@ -536,6 +555,13 @@ const Create = () => {
           },
         },
       ]);
+    },
+
+    [MessageType.SESSION_CLAIMED]: (message: Message) => {
+      const md = asObj(message.data);
+      setSessionClaimed({
+        byEmail: md?.claimed_by_email as string | undefined,
+      });
     },
 
     [MessageType.AGENT_PARTIAL]: (message: Message) => {
@@ -1133,6 +1159,22 @@ const Create = () => {
       document.removeEventListener("mouseup", handleMouseUp);
     };
   }, [isChatResizing, chatWidth]);
+
+  const handleTakeOverSession = useCallback(() => {
+    // Reconnect with force=true to take over the session
+    setProjectLockedInfo(null);
+    // Send INIT with force_claim to take over the session
+    send(MessageType.INIT, { force_claim: true });
+  }, [send]);
+
+  const handleGoBackToProjects = useCallback(() => {
+    navigate("/");
+  }, [navigate]);
+
+  const handleSessionClaimedDismiss = useCallback(() => {
+    setSessionClaimed(null);
+    navigate("/");
+  }, [navigate]);
 
   const handleSendMessage = () => {
     const text = inputValue.trim();
@@ -2548,6 +2590,23 @@ const Create = () => {
           </div>
         </div>
       </div>
+
+      {/* Project locking modals */}
+      {projectLockedInfo && (
+        <ProjectLockedModal
+          lockedByEmail={projectLockedInfo.email}
+          lockedAt={projectLockedInfo.lockedAt}
+          onTakeOver={handleTakeOverSession}
+          onGoBack={handleGoBackToProjects}
+        />
+      )}
+
+      {sessionClaimed && (
+        <SessionClaimedModal
+          claimedByEmail={sessionClaimed.byEmail}
+          onDismiss={handleSessionClaimedDismiss}
+        />
+      )}
     </div>
   );
 };
