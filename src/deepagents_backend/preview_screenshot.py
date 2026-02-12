@@ -107,8 +107,9 @@ def capture_preview_screenshot(
     path: str = "/",
     timeout_ms: int = 15_000,
     full_page: bool = True,
-    viewport_width: int = 1440,
-    viewport_height: int = 900,
+    # Align with Anthropic computer-use recommendations (keep resolution <= 1280x800).
+    viewport_width: int = 1280,
+    viewport_height: int = 800,
     capture_fn: Callable[..., tuple[bytes, int | None, int | None]] | None = None,
 ) -> PreviewScreenshotResult:
     normalized_path = normalize_preview_path(path)
