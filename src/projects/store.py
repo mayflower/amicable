@@ -85,16 +85,27 @@ def ensure_projects_schema(client: HasuraClient) -> None:
 
             CREATE TABLE IF NOT EXISTS amicable_meta.project_members (
               project_id text NOT NULL REFERENCES amicable_meta.projects(project_id) ON DELETE CASCADE,
-              user_sub text NOT NULL,
+              user_sub text NULL,
               user_email text NOT NULL,
               added_at timestamptz NOT NULL DEFAULT now(),
               added_by_sub text NULL,
-              PRIMARY KEY (project_id, user_sub)
+              PRIMARY KEY (project_id, user_email)
             );
             CREATE INDEX IF NOT EXISTS idx_project_members_user
               ON amicable_meta.project_members(user_sub);
             CREATE INDEX IF NOT EXISTS idx_project_members_email
               ON amicable_meta.project_members(user_email);
+
+            -- Migration: add existing project owners as members
+            INSERT INTO amicable_meta.project_members (project_id, user_sub, user_email, added_at)
+            SELECT p.project_id, p.owner_sub, p.owner_email, p.created_at
+            FROM amicable_meta.projects p
+            WHERE p.deleted_at IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM amicable_meta.project_members pm
+                WHERE pm.project_id = p.project_id
+              )
+            ON CONFLICT DO NOTHING;
             """.strip()
         )
         _schema_ready = True
@@ -561,8 +572,11 @@ def ensure_project_for_id(
     ensure_projects_schema(client)
     existing = _get_project_by_id_any_owner(client, project_id=project_id)
     if existing:
-        if existing.owner_sub != owner.sub:
-            raise PermissionError("project belongs to a different user")
+        # Check membership instead of ownership
+        if not is_project_member(
+            client, project_id=project_id, user_sub=owner.sub, user_email=owner.email
+        ):
+            raise PermissionError("not a project member")
         return existing
 
     # If a project row exists but was soft-deleted, resurrect it instead of failing
@@ -582,6 +596,14 @@ def ensure_project_for_id(
         )
         revived = _get_project_by_id_any_owner(client, project_id=project_id)
         if revived:
+            # Ensure member record exists after resurrection
+            add_project_member(
+                client,
+                project_id=project_id,
+                user_sub=owner.sub,
+                user_email=owner.email,
+                added_by_sub=None,
+            )
             return revived
 
     short = project_id.replace("-", "")[:8]
@@ -603,6 +625,14 @@ def ensure_project_for_id(
         )
         created = _get_project_by_id_any_owner(client, project_id=project_id)
         if created and created.owner_sub == owner.sub:
+            # Add creator as first member
+            add_project_member(
+                client,
+                project_id=project_id,
+                user_sub=owner.sub,
+                user_email=owner.email,
+                added_by_sub=None,
+            )
             return created
 
     raise RuntimeError("failed to auto-create project")
@@ -720,7 +750,7 @@ def add_project_member(
         f"""
         INSERT INTO amicable_meta.project_members (project_id, user_sub, user_email, added_by_sub)
         VALUES ({_sql_str(project_id)}, {sub_sql}, {_sql_str(user_email)}, {added_by_sql})
-        ON CONFLICT (project_id, user_sub) DO NOTHING;
+        ON CONFLICT (project_id, user_email) DO UPDATE SET user_sub = COALESCE(EXCLUDED.user_sub, amicable_meta.project_members.user_sub);
         """.strip()
     )
     return ProjectMember(
@@ -840,25 +870,41 @@ def acquire_project_lock(
     user_email: str,
     force: bool = False,
 ) -> ProjectLock | None:
-    """Try to acquire lock. Returns None if locked by someone else (unless force=True)."""
+    """Try to acquire lock atomically. Returns None if locked by someone else (unless force=True)."""
     ensure_projects_schema(client)
-    current = get_project_lock(client, project_id=project_id)
-    if current and current.locked_by_sub != user_sub and not force:
-        return None
 
-    client.run_sql(
-        f"""
-        UPDATE amicable_meta.projects
-        SET locked_by_sub = {_sql_str(user_sub)}, locked_at = now(), updated_at = now()
-        WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL;
-        """.strip()
-    )
-    return ProjectLock(
-        project_id=project_id,
-        locked_by_sub=user_sub,
-        locked_by_email=user_email,
-        locked_at="now",
-    )
+    # Atomic conditional update - only acquire if unlocked, held by self, or force
+    if force:
+        # Force always succeeds
+        client.run_sql(
+            f"""
+            UPDATE amicable_meta.projects
+            SET locked_by_sub = {_sql_str(user_sub)}, locked_at = now(), updated_at = now()
+            WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL;
+            """.strip()
+        )
+    else:
+        # Only acquire if unlocked or already held by this user
+        client.run_sql(
+            f"""
+            UPDATE amicable_meta.projects
+            SET locked_by_sub = {_sql_str(user_sub)}, locked_at = now(), updated_at = now()
+            WHERE project_id = {_sql_str(project_id)}
+              AND deleted_at IS NULL
+              AND (locked_by_sub IS NULL OR locked_by_sub = {_sql_str(user_sub)});
+            """.strip()
+        )
+
+    # Check if we actually got the lock
+    lock = get_project_lock(client, project_id=project_id)
+    if lock and lock.locked_by_sub == user_sub:
+        return ProjectLock(
+            project_id=project_id,
+            locked_by_sub=user_sub,
+            locked_by_email=user_email,
+            locked_at=lock.locked_at,
+        )
+    return None
 
 
 def release_project_lock(

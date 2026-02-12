@@ -88,13 +88,25 @@ class FakeHasuraClient:
                             row["locked_by_sub"] = None
                             row["locked_at"] = None
                     else:
-                        # Acquire
+                        # Acquire - extract the new user_sub
                         sub_match = re.search(
                             r"set locked_by_sub\s*=\s*'([^']+)'", sql, flags=re.I
                         )
                         if sub_match:
-                            row["locked_by_sub"] = sub_match.group(1)
-                            row["locked_at"] = "now"
+                            new_sub = sub_match.group(1)
+                            # Check for atomic conditional update pattern:
+                            # (locked_by_sub IS NULL OR locked_by_sub = 'user')
+                            if "locked_by_sub is null or locked_by_sub" in sql_l:
+                                # Conditional acquire - only if unlocked or held by same user
+                                current_holder = row.get("locked_by_sub")
+                                if current_holder is None or current_holder == new_sub:
+                                    row["locked_by_sub"] = new_sub
+                                    row["locked_at"] = "now"
+                                # else: don't update (someone else holds it)
+                            else:
+                                # Unconditional (force) acquire
+                                row["locked_by_sub"] = new_sub
+                                row["locked_at"] = "now"
             return {"result_type": "CommandOk", "result": []}
 
         # SELECT by project_id.
