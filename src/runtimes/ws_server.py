@@ -1116,6 +1116,124 @@ async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
     return JSONResponse({"status": "deleting"}, status_code=202, background=bg)
 
 
+# ---------------------------------------------------------------------------
+# Project Members API
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/projects/{project_id}/members")
+async def api_list_project_members(project_id: str, request: Request) -> JSONResponse:
+    """List all members of a project."""
+    _require_hasura()
+    try:
+        sub, email = _get_owner_from_request(request)
+    except PermissionError:
+        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+
+    from src.db.provisioning import hasura_client_from_env
+    from src.projects.store import ProjectOwner, get_project_by_id, list_project_members
+
+    def _list_sync():
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        project = get_project_by_id(client, owner=owner, project_id=project_id)
+        if not project:
+            return None
+        return list_project_members(client, project_id=project_id)
+
+    members = await asyncio.to_thread(_list_sync)
+    if members is None:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+
+    return JSONResponse({
+        "members": [
+            {
+                "user_sub": m.user_sub,
+                "user_email": m.user_email,
+                "added_at": m.added_at,
+            }
+            for m in members
+        ]
+    })
+
+
+@app.post("/api/projects/{project_id}/members")
+async def api_add_project_member(project_id: str, request: Request) -> JSONResponse:
+    """Add a member to a project by email."""
+    _require_hasura()
+    try:
+        sub, email = _get_owner_from_request(request)
+    except PermissionError:
+        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+
+    body: Any
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    new_email = str(body.get("email") or "").strip().lower()
+    if not new_email or "@" not in new_email:
+        return JSONResponse({"error": "invalid_email"}, status_code=400)
+
+    from src.db.provisioning import hasura_client_from_env
+    from src.projects.store import ProjectOwner, add_project_member, get_project_by_id
+
+    def _add_sync():
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        project = get_project_by_id(client, owner=owner, project_id=project_id)
+        if not project:
+            return None
+        return add_project_member(
+            client,
+            project_id=project_id,
+            user_email=new_email,
+            added_by_sub=sub,
+        )
+
+    member = await asyncio.to_thread(_add_sync)
+    if member is None:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+
+    return JSONResponse({
+        "user_email": member.user_email,
+        "added_at": member.added_at,
+    }, status_code=201)
+
+
+@app.delete("/api/projects/{project_id}/members/{user_sub}")
+async def api_remove_project_member(
+    project_id: str, user_sub: str, request: Request
+) -> JSONResponse:
+    """Remove a member from a project."""
+    _require_hasura()
+    try:
+        sub, email = _get_owner_from_request(request)
+    except PermissionError:
+        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+
+    from src.db.provisioning import hasura_client_from_env
+    from src.projects.store import ProjectOwner, get_project_by_id, remove_project_member
+
+    def _remove_sync():
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        project = get_project_by_id(client, owner=owner, project_id=project_id)
+        if not project:
+            return "not_found"
+        success = remove_project_member(client, project_id=project_id, user_sub=user_sub)
+        return "ok" if success else "last_member"
+
+    result = await asyncio.to_thread(_remove_sync)
+    if result == "not_found":
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    if result == "last_member":
+        return JSONResponse({"error": "cannot_remove_last_member"}, status_code=400)
+
+    return JSONResponse({"ok": True})
+
+
 def _ensure_project_access(request: Request, *, project_id: str):
     """Return the project if the request is allowed to access it, else raise PermissionError."""
     _require_hasura()
