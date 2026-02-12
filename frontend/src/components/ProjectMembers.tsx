@@ -78,19 +78,20 @@ export function ProjectMembers({ projectId, className }: ProjectMembersProps) {
     }
   };
 
-  const handleRemoveMember = async (userSub: string, userEmail: string) => {
+  const handleRemoveMember = async (userSub: string | null, userEmail: string) => {
     if (members.length <= 1) return;
 
     try {
       setRemovingEmail(userEmail);
       setError(null);
-      const res = await fetch(
-        `${AGENT_CONFIG.HTTP_URL}api/projects/${projectId}/members/${encodeURIComponent(userSub)}`,
-        {
-          method: "DELETE",
-          credentials: "include",
-        }
-      );
+      // Use by-email endpoint for pending members (null user_sub), otherwise by user_sub
+      const endpoint = userSub
+        ? `${AGENT_CONFIG.HTTP_URL}api/projects/${projectId}/members/${encodeURIComponent(userSub)}`
+        : `${AGENT_CONFIG.HTTP_URL}api/projects/${projectId}/members/by-email/${encodeURIComponent(userEmail)}`;
+      const res = await fetch(endpoint, {
+        method: "DELETE",
+        credentials: "include",
+      });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to remove member");
@@ -141,22 +142,19 @@ export function ProjectMembers({ projectId, className }: ProjectMembersProps) {
                 <button
                   type="button"
                   onClick={() =>
-                    member.user_sub &&
                     handleRemoveMember(member.user_sub, member.user_email)
                   }
-                  disabled={!canRemove || !member.user_sub || removingEmail === member.user_email}
+                  disabled={!canRemove || removingEmail === member.user_email}
                   className={cn(
                     "p-1.5 rounded-md transition-colors shrink-0",
-                    canRemove && member.user_sub
+                    canRemove
                       ? "hover:bg-red-100 text-gray-400 hover:text-red-600"
                       : "text-gray-300 cursor-not-allowed"
                   )}
                   title={
                     !canRemove
                       ? "Cannot remove the last member"
-                      : !member.user_sub
-                        ? "User hasn't logged in yet"
-                        : "Remove member"
+                      : "Remove member"
                   }
                 >
                   {removingEmail === member.user_email ? (

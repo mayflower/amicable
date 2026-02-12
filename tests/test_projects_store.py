@@ -186,8 +186,8 @@ class FakeHasuraClient:
             ]
             return {"result_type": "TuplesOk", "result": [header, data]}
 
-        # List projects with JOIN on members (new membership-based query)
-        if "join amicable_meta.project_members" in sql_l and "order by" in sql_l:
+        # List projects with EXISTS on members (new membership-based query)
+        if "exists" in sql_l and "project_members" in sql_l and "order by" in sql_l:
             sub_match = re.search(r"pm\.user_sub\s*=\s*'([^']+)'", sql, flags=re.I)
             email_match = re.search(r"pm\.user_email\s*=\s*'([^']+)'", sql, flags=re.I)
             sub = sub_match.group(1) if sub_match else None

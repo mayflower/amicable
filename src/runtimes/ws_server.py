@@ -1210,7 +1210,7 @@ async def api_add_project_member(project_id: str, request: Request) -> JSONRespo
 async def api_remove_project_member(
     project_id: str, user_sub: str, request: Request
 ) -> JSONResponse:
-    """Remove a member from a project."""
+    """Remove a member from a project by user_sub."""
     _require_hasura()
     try:
         sub, email = _get_owner_from_request(request)
@@ -1227,6 +1227,38 @@ async def api_remove_project_member(
         if not project:
             return "not_found"
         success = remove_project_member(client, project_id=project_id, user_sub=user_sub)
+        return "ok" if success else "last_member"
+
+    result = await asyncio.to_thread(_remove_sync)
+    if result == "not_found":
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    if result == "last_member":
+        return JSONResponse({"error": "cannot_remove_last_member"}, status_code=400)
+
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/projects/{project_id}/members/by-email/{user_email:path}")
+async def api_remove_project_member_by_email(
+    project_id: str, user_email: str, request: Request
+) -> JSONResponse:
+    """Remove a pending member from a project by email (for users who haven't logged in yet)."""
+    _require_hasura()
+    try:
+        sub, email = _get_owner_from_request(request)
+    except PermissionError:
+        return JSONResponse({"error": "not_authenticated"}, status_code=401)
+
+    from src.db.provisioning import hasura_client_from_env
+    from src.projects.store import ProjectOwner, get_project_by_id, remove_project_member_by_email
+
+    def _remove_sync():
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        project = get_project_by_id(client, owner=owner, project_id=project_id)
+        if not project:
+            return "not_found"
+        success = remove_project_member_by_email(client, project_id=project_id, user_email=user_email)
         return "ok" if success else "last_member"
 
     result = await asyncio.to_thread(_remove_sync)
@@ -2447,7 +2479,7 @@ async def _handle_ws(ws: WebSocket) -> None:
                 return
 
             # Session locking: check/acquire lock
-            force_claim = bool(data.get("force", False))
+            force_claim = bool(data.get("force_claim", data.get("force", False)))
             from src.projects.store import (
                 acquire_project_lock,
                 get_project_lock,
@@ -2485,7 +2517,7 @@ async def _handle_ws(ws: WebSocket) -> None:
                             await other_ws.send_json(
                                 Message.new(
                                     MessageType.SESSION_CLAIMED,
-                                    {"claimed_by": email},
+                                    {"claimed_by_email": email},
                                     session_id=str(session_id),
                                 ).to_dict()
                             )
@@ -2500,9 +2532,11 @@ async def _handle_ws(ws: WebSocket) -> None:
                     Message.new(
                         MessageType.ERROR,
                         {
-                            "error": "project_locked",
-                            "locked_by": lock_info["locked_by_email"] if lock_info else "unknown",
-                            "locked_at": lock_info["locked_at"] if lock_info else "",
+                            "code": "project_locked",
+                            "locked_by": {
+                                "email": lock_info["locked_by_email"] if lock_info else "unknown",
+                                "at": lock_info["locked_at"] if lock_info else "",
+                            },
                         },
                         session_id=session_id,
                     ).to_dict()

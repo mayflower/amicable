@@ -413,9 +413,12 @@ def list_projects(client: HasuraClient, *, owner: ProjectOwner) -> list[Project]
                p.gitlab_project_id, p.gitlab_path, p.gitlab_web_url,
                p.created_at, p.updated_at
         FROM amicable_meta.projects p
-        JOIN amicable_meta.project_members pm ON pm.project_id = p.project_id
-        WHERE (pm.user_sub = {_sql_str(owner.sub)} OR pm.user_email = {_sql_str(owner.email.lower())})
-          AND p.deleted_at IS NULL
+        WHERE p.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM amicable_meta.project_members pm
+            WHERE pm.project_id = p.project_id
+              AND (pm.user_sub = {_sql_str(owner.sub)} OR pm.user_email = {_sql_str(owner.email.lower())})
+          )
         ORDER BY p.updated_at DESC;
         """.strip(),
         read_only=True,
@@ -463,11 +466,17 @@ def set_project_slug(
     new_slug: str,
 ) -> Project:
     ensure_projects_schema(client)
+    # Check membership before updating
     client.run_sql(
         f"""
-        UPDATE amicable_meta.projects
+        UPDATE amicable_meta.projects p
         SET slug = {_sql_str(new_slug)}, updated_at = now()
-        WHERE project_id = {_sql_str(project_id)} AND owner_sub = {_sql_str(owner.sub)} AND deleted_at IS NULL;
+        WHERE p.project_id = {_sql_str(project_id)} AND p.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM amicable_meta.project_members pm
+            WHERE pm.project_id = p.project_id
+              AND (pm.user_sub = {_sql_str(owner.sub)} OR pm.user_email = {_sql_str(owner.email)})
+          );
         """.strip()
     )
     p = get_project_by_id(client, owner=owner, project_id=project_id)
@@ -486,14 +495,20 @@ def set_gitlab_metadata(
     gitlab_web_url: str | None,
 ) -> Project:
     ensure_projects_schema(client)
+    # Check membership before updating
     client.run_sql(
         f"""
-        UPDATE amicable_meta.projects
+        UPDATE amicable_meta.projects p
         SET gitlab_project_id = {str(int(gitlab_project_id)) if gitlab_project_id is not None else "NULL"},
             gitlab_path = {_sql_str(gitlab_path) if gitlab_path is not None else "NULL"},
             gitlab_web_url = {_sql_str(gitlab_web_url) if gitlab_web_url is not None else "NULL"},
             updated_at = now()
-        WHERE project_id = {_sql_str(project_id)} AND owner_sub = {_sql_str(owner.sub)} AND deleted_at IS NULL;
+        WHERE p.project_id = {_sql_str(project_id)} AND p.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM amicable_meta.project_members pm
+            WHERE pm.project_id = p.project_id
+              AND (pm.user_sub = {_sql_str(owner.sub)} OR pm.user_email = {_sql_str(owner.email)})
+          );
         """.strip()
     )
     p = get_project_by_id(client, owner=owner, project_id=project_id)
@@ -810,6 +825,23 @@ def remove_project_member(
         f"""
         DELETE FROM amicable_meta.project_members
         WHERE project_id = {_sql_str(project_id)} AND user_sub = {_sql_str(user_sub)};
+        """.strip()
+    )
+    return True
+
+
+def remove_project_member_by_email(
+    client: HasuraClient, *, project_id: str, user_email: str
+) -> bool:
+    """Remove a pending member by email. Returns False if they were the last member."""
+    ensure_projects_schema(client)
+    members = list_project_members(client, project_id=project_id)
+    if len(members) <= 1:
+        return False
+    client.run_sql(
+        f"""
+        DELETE FROM amicable_meta.project_members
+        WHERE project_id = {_sql_str(project_id)} AND user_email = {_sql_str(user_email.lower())};
         """.strip()
     )
     return True
