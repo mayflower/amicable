@@ -626,3 +626,42 @@ def test_project_locking() -> None:
     )
     assert lock3 is not None
     assert lock3.locked_by_sub == "u2"
+
+
+def test_project_lock_force_claim() -> None:
+    """Test that force=True allows taking over a lock."""
+    c = FakeHasuraClient()
+    owner1 = ProjectOwner(sub="u1", email="u1@example.com")
+
+    p = create_project(c, owner=owner1, name="Forceable")
+
+    from src.projects.store import add_project_member, acquire_project_lock, get_project_lock
+
+    add_project_member(
+        c,
+        project_id=p.project_id,
+        user_sub="u2",
+        user_email="u2@example.com",
+        added_by_sub="u1",
+    )
+
+    # u1 acquires lock
+    acquire_project_lock(
+        c, project_id=p.project_id, user_sub="u1", user_email="u1@example.com"
+    )
+
+    # u2 force-claims
+    lock = acquire_project_lock(
+        c,
+        project_id=p.project_id,
+        user_sub="u2",
+        user_email="u2@example.com",
+        force=True,
+    )
+    assert lock is not None
+    assert lock.locked_by_sub == "u2"
+
+    # Verify lock is now held by u2
+    current = get_project_lock(c, project_id=p.project_id)
+    assert current is not None
+    assert current.locked_by_sub == "u2"
