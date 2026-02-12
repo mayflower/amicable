@@ -131,6 +131,27 @@ def _fingerprint_fallback(err: dict[str, Any]) -> str:
     return "rt_" + hashlib.sha256(base).hexdigest()[:16]
 
 
+def _runtime_autoheal_user_content_blocks(
+    prompt: str, screenshot: dict[str, Any] | None
+) -> list[dict[str, Any]] | None:
+    image_b64 = ""
+    mime_type = "image/jpeg"
+    if isinstance(screenshot, dict) and screenshot.get("ok"):
+        raw = screenshot.get("image_base64")
+        if isinstance(raw, str) and raw:
+            image_b64 = raw
+        mt = screenshot.get("mime_type")
+        if isinstance(mt, str) and mt:
+            mime_type = mt
+
+    if not image_b64:
+        return None
+    return [
+        {"type": "text", "text": prompt},
+        {"type": "image", "base64": image_b64, "mime_type": mime_type},
+    ]
+
+
 def _get_owner_from_request(request: Request) -> tuple[str, str]:
     """Return (sub, email) for project ownership checks."""
     mode = _auth_mode()
@@ -2239,6 +2260,19 @@ async def _handle_ws(ws: WebSocket) -> None:
             prompt = build_runtime_error_feedback_prompt(
                 err=err, preview_logs=preview_logs
             )
+            screenshot: dict[str, Any] | None = None
+            try:
+                screenshot = await agent.capture_preview_screenshot(
+                    session_id=str(session_id),
+                    path="/",
+                    full_page=True,
+                    timeout_s=12,
+                )
+            except Exception:
+                screenshot = None
+            user_content_blocks = _runtime_autoheal_user_content_blocks(
+                prompt, screenshot
+            )
 
             try:
                 # Avoid queuing auto-heal runs behind user-initiated runs.
@@ -2255,7 +2289,9 @@ async def _handle_ws(ws: WebSocket) -> None:
 
             try:
                 async for out in agent.send_feedback(
-                    session_id=str(session_id), feedback=prompt
+                    session_id=str(session_id),
+                    feedback=prompt,
+                    user_content_blocks=user_content_blocks,
                 ):
                     await ws.send_json(out)
             finally:

@@ -14,6 +14,7 @@ langchain
 langgraph
 langchain-anthropic
 anthropic
+playwright
 langfuse
 python-dotenv
 

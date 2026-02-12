@@ -9,6 +9,7 @@ RUN apt-get update \
 
 COPY k8s/images/amicable-agent/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m playwright install --with-deps chromium
 
 COPY src ./src
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -38,6 +39,35 @@ def _safe_jsonable(obj: Any, *, max_str_len: int = 5000, max_depth: int = 6) -> 
         return out
     # Fallback for non-serializable objects.
     return _safe_jsonable(str(obj), max_str_len=max_str_len, max_depth=max_depth - 1)
+
+
+def _redact_large_media(obj: Any, *, max_depth: int = 8) -> Any:
+    if max_depth <= 0:
+        return "<truncated>"
+    if isinstance(obj, list):
+        return [_redact_large_media(v, max_depth=max_depth - 1) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_redact_large_media(v, max_depth=max_depth - 1) for v in obj)
+    if not isinstance(obj, dict):
+        return obj
+
+    out: dict[str, Any] = {}
+    block_type = str(obj.get("type") or "").lower()
+    for k, v in obj.items():
+        kk = str(k)
+        if (
+            kk in ("base64", "image_base64", "data")
+            and isinstance(v, str)
+            and (kk != "data" or block_type in ("image", "audio", "video", "file"))
+        ):
+            out[kk] = f"<redacted:{len(v)} chars>"
+            continue
+        out[kk] = _redact_large_media(v, max_depth=max_depth - 1)
+    return out
+
+
+def _safe_trace_payload(obj: Any) -> Any:
+    return _redact_large_media(_safe_jsonable(obj))
 
 
 def _pretty_json(obj: Any) -> str:
@@ -190,6 +220,7 @@ Hard rules:
 - Ensure changes render correctly inside an iframe.
 - Always produce responsive layouts.
 - react-router-dom: use Routes (not Switch).
+- For visual/UI bugs, use the `capture_preview_screenshot` tool to inspect the live preview before guessing.
 
 Workflow (always):
 1. Start by writing a short plan.
@@ -674,7 +705,88 @@ class Agent:
             "request": pending.get("request"),
         }
 
-    async def send_feedback(self, *, session_id: str, feedback: str):
+    def _preview_url_candidates(self, session_id: str) -> list[str]:
+        candidates: list[str] = []
+        if self._session_manager is not None:
+            try:
+                internal = self._session_manager.get_internal_preview_url(session_id)
+                if isinstance(internal, str) and internal.strip():
+                    candidates.append(internal.strip())
+            except Exception:
+                pass
+
+        init_data = self.session_data.get(session_id)
+        if isinstance(init_data, dict):
+            public = init_data.get("url")
+            if isinstance(public, str) and public.strip():
+                candidates.append(public.strip())
+
+        # De-dupe while preserving order.
+        seen: set[str] = set()
+        out: list[str] = []
+        for c in candidates:
+            if c not in seen:
+                out.append(c)
+                seen.add(c)
+        return out
+
+    def _capture_preview_screenshot(
+        self,
+        *,
+        session_id: str,
+        path: str = "/",
+        full_page: bool = True,
+        timeout_s: int = 15,
+    ) -> dict[str, Any]:
+        from src.deepagents_backend.preview_screenshot import capture_preview_screenshot
+
+        result = capture_preview_screenshot(
+            source_urls=self._preview_url_candidates(session_id),
+            path=path,
+            timeout_ms=max(1, int(timeout_s)) * 1000,
+            full_page=bool(full_page),
+        )
+
+        payload: dict[str, Any] = {
+            "ok": result.ok,
+            "path": result.path,
+            "target_url": result.target_url,
+            "source_url": result.source_url,
+            "mime_type": result.mime_type,
+            "width": result.width,
+            "height": result.height,
+            "error": result.error,
+            "attempted_urls": result.attempted_urls,
+        }
+        if result.image_bytes is not None:
+            payload["image_base64"] = base64.b64encode(result.image_bytes).decode(
+                "ascii"
+            )
+        return payload
+
+    async def capture_preview_screenshot(
+        self,
+        *,
+        session_id: str,
+        path: str = "/",
+        full_page: bool = True,
+        timeout_s: int = 15,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._capture_preview_screenshot,
+            session_id=session_id,
+            path=path,
+            full_page=full_page,
+            timeout_s=timeout_s,
+        )
+
+    async def send_feedback(
+        self,
+        *,
+        session_id: str,
+        feedback: str,
+        user_content_blocks: list[dict[str, Any]] | None = None,
+    ):
         # Per-run tool journal: cleared at the start so the eventual git commit
         # message only describes this run.
         try:
@@ -768,6 +880,16 @@ class Agent:
             config["callbacks"] = [lf]
 
         user_text = feedback.strip()
+        content_blocks = (
+            [b for b in (user_content_blocks or []) if isinstance(b, dict)]
+            if user_content_blocks
+            else []
+        )
+        if content_blocks and not any(
+            isinstance(block.get("text"), str) and block.get("type") == "text"
+            for block in content_blocks
+        ):
+            content_blocks = [{"type": "text", "text": user_text}, *content_blocks]
 
         def _chunk_text(chunk: Any) -> str:
             if chunk is None:
@@ -819,11 +941,20 @@ class Agent:
             return t in ("ai", "assistant")
 
         try:
+            initial_messages = (
+                [("user", user_text)]
+                if not content_blocks
+                else [
+                    (
+                        "user",
+                        [
+                            *content_blocks,
+                        ],
+                    )
+                ]
+            )
             async for event in self._deep_controller.astream_events(
-                {
-                    "messages": [("user", user_text)],
-                    "attempt": 0,
-                },
+                {"messages": initial_messages, "attempt": 0},
                 config=config,
                 version="v2",
             ):
@@ -928,7 +1059,7 @@ class Agent:
                         ).to_dict()
 
                 if etype == "on_tool_start" and isinstance(name, str) and name:
-                    tool_input = _safe_jsonable(data.get("input"))
+                    tool_input = _safe_trace_payload(data.get("input"))
                     # Minimal tool trace for reasoning summaries. Avoid including raw command strings.
                     if name in ("write_file", "edit_file") and isinstance(
                         tool_input, dict
@@ -956,7 +1087,7 @@ class Agent:
                     ).to_dict()
 
                 if etype == "on_tool_end" and isinstance(name, str) and name:
-                    tool_output = _safe_jsonable(data.get("output"))
+                    tool_output = _safe_trace_payload(data.get("output"))
                     tool_trace_for_reason.append(f"{name}: ok")
                     yield Message.new(
                         MessageType.TRACE_EVENT,
@@ -1001,7 +1132,7 @@ class Agent:
                             ).to_dict()
 
                 if etype == "on_tool_error" and isinstance(name, str) and name:
-                    err = _safe_jsonable(data.get("error"))
+                    err = _safe_trace_payload(data.get("error"))
                     tool_trace_for_reason.append(f"{name}: error")
                     yield Message.new(
                         MessageType.TRACE_EVENT,
@@ -1492,7 +1623,7 @@ class Agent:
                                 break
 
                 if etype == "on_tool_start" and isinstance(name, str) and name:
-                    tool_input = _safe_jsonable(data.get("input"))
+                    tool_input = _safe_trace_payload(data.get("input"))
                     if name in ("write_file", "edit_file") and isinstance(
                         tool_input, dict
                     ):
@@ -1519,7 +1650,7 @@ class Agent:
                     ).to_dict()
 
                 if etype == "on_tool_end" and isinstance(name, str) and name:
-                    tool_output = _safe_jsonable(data.get("output"))
+                    tool_output = _safe_trace_payload(data.get("output"))
                     tool_trace_for_reason.append(f"{name}: ok")
                     yield Message.new(
                         MessageType.TRACE_EVENT,
@@ -1564,7 +1695,7 @@ class Agent:
                             ).to_dict()
 
                 if etype == "on_tool_error" and isinstance(name, str) and name:
-                    err = _safe_jsonable(data.get("error"))
+                    err = _safe_trace_payload(data.get("error"))
                     tool_trace_for_reason.append(f"{name}: error")
                     yield Message.new(
                         MessageType.TRACE_EVENT,
@@ -1785,6 +1916,7 @@ class Agent:
             DangerousExecuteHitlMiddleware,
         )
         from src.deepagents_backend.policy import SandboxPolicyWrapper
+        from src.deepagents_backend.screenshot_tools import get_screenshot_tools
         from src.deepagents_backend.session_sandbox_manager import SessionSandboxManager
         from src.deepagents_backend.tool_journal import append as _append_tool_journal
 
@@ -1849,6 +1981,14 @@ class Agent:
         except Exception:
             logger.exception("DB tools unavailable; continuing without DB tools")
 
+        screenshot_tools = []
+        try:
+            screenshot_tools = get_screenshot_tools(
+                capture_fn=lambda **kwargs: self._capture_preview_screenshot(**kwargs)
+            )
+        except Exception:
+            logger.exception("Screenshot tools unavailable; continuing without them")
+
         memory_sources = _deepagents_memory_sources()
 
         self._deep_agent = create_deep_agent(
@@ -1857,7 +1997,7 @@ class Agent:
             checkpointer=checkpointer or MemorySaver(),
             backend=backend_factory,
             middleware=middleware,
-            tools=db_tools,
+            tools=[*db_tools, *screenshot_tools],
             memory=memory_sources,
             skills=_deepagents_skills_sources(),
             interrupt_on=_deepagents_interrupt_on(),

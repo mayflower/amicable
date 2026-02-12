@@ -93,6 +93,12 @@ class SessionSandboxManager:
         self._backend_by_session[session_id] = backend
         return backend
 
+    def get_internal_preview_url(self, session_id: str) -> str:
+        """Return the in-cluster preview URL for a session's sandbox."""
+        env = self.ensure_session(session_id)
+        host = f"{env.sandbox_id}.{self._k8s_backend.namespace}.svc.cluster.local"
+        return f"http://{host}:{self._k8s_backend.preview_port}/"
+
     def delete_session(self, session_id: str) -> bool:
         """Delete the k8s SandboxClaim/pod for a session (best-effort)."""
         self._env_by_session.pop(session_id, None)
