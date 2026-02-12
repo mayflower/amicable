@@ -62,6 +62,8 @@ def ensure_projects_schema(client: HasuraClient) -> None:
               gitlab_project_id bigint NULL,
               gitlab_path text NULL,
               gitlab_web_url text NULL,
+              locked_by_sub text NULL,
+              locked_at timestamptz NULL,
               created_at timestamptz NOT NULL DEFAULT now(),
               updated_at timestamptz NOT NULL DEFAULT now(),
               deleted_at timestamptz NULL
@@ -76,6 +78,23 @@ def ensure_projects_schema(client: HasuraClient) -> None:
               ADD COLUMN IF NOT EXISTS gitlab_path text NULL;
             ALTER TABLE amicable_meta.projects
               ADD COLUMN IF NOT EXISTS gitlab_web_url text NULL;
+            ALTER TABLE amicable_meta.projects
+              ADD COLUMN IF NOT EXISTS locked_by_sub text NULL;
+            ALTER TABLE amicable_meta.projects
+              ADD COLUMN IF NOT EXISTS locked_at timestamptz NULL;
+
+            CREATE TABLE IF NOT EXISTS amicable_meta.project_members (
+              project_id text NOT NULL REFERENCES amicable_meta.projects(project_id) ON DELETE CASCADE,
+              user_sub text NOT NULL,
+              user_email text NOT NULL,
+              added_at timestamptz NOT NULL DEFAULT now(),
+              added_by_sub text NULL,
+              PRIMARY KEY (project_id, user_sub)
+            );
+            CREATE INDEX IF NOT EXISTS idx_project_members_user
+              ON amicable_meta.project_members(user_sub);
+            CREATE INDEX IF NOT EXISTS idx_project_members_email
+              ON amicable_meta.project_members(user_email);
             """.strip()
         )
         _schema_ready = True

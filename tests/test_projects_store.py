@@ -21,6 +21,8 @@ from src.projects.store import (
 class FakeHasuraClient:
     def __init__(self) -> None:
         self.projects: dict[str, dict] = {}
+        self.members: dict[tuple[str, str], dict] = {}  # (project_id, user_key) -> member
+        self.schema_created_tables: dict[str, bool] = {}
 
         class _Cfg:
             source_name = "default"
@@ -32,10 +34,13 @@ class FakeHasuraClient:
         sql = sql.strip()
         sql_l = sql.lower()
 
-        # Schema creation: ignore.
-        if sql.lower().startswith("create schema") or sql.lower().startswith(
-            "create table"
-        ):
+        # Schema creation: track tables and ignore.
+        # Handle multi-statement SQL for schema migration
+        if "create schema" in sql_l or "create table" in sql_l or "alter table" in sql_l or "create index" in sql_l:
+            if "create table" in sql_l and "project_members" in sql_l:
+                self.schema_created_tables["project_members"] = True
+            if "create table" in sql_l and "amicable_meta.projects" in sql_l:
+                self.schema_created_tables["projects"] = True
             return {"result_type": "CommandOk", "result": []}
 
         # SELECT by project_id.
@@ -287,3 +292,18 @@ def test_ensure_project_for_id_owner_mismatch() -> None:
 
     with pytest.raises(PermissionError):
         ensure_project_for_id(c, owner=owner2, project_id="abc-123")
+
+
+def test_project_members_table_created() -> None:
+    """Verify project_members table is created during schema migration."""
+    from src.projects import store
+
+    # Reset schema state for this test
+    store._schema_ready = False
+
+    c = FakeHasuraClient()
+    from src.projects.store import ensure_projects_schema
+
+    ensure_projects_schema(c)
+    # The fake client should have received CREATE TABLE for project_members
+    assert c.schema_created_tables.get("project_members") is True
