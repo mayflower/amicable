@@ -14,6 +14,13 @@ class QaCommandResult:
     truncated: bool
 
 
+@dataclass(frozen=True)
+class PackageJsonReadResult:
+    exists: bool
+    data: dict[str, Any] | None
+    error: str | None
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = (os.environ.get(name) or "").strip().lower()
     if not raw:
@@ -60,18 +67,38 @@ def _execute_result_output(res: Any) -> str:
     return ""
 
 
-def read_package_json(backend: Any) -> dict[str, Any] | None:
+def read_package_json(backend: Any) -> PackageJsonReadResult:
     # Use execute so we don't depend on deepagents protocol types in this module.
     # Backend already wraps in sh -lc; keep command simple.
+    exists = _exists_in_app(backend, "package.json")
+    if not exists:
+        return PackageJsonReadResult(exists=False, data=None, error=None)
+
     res = backend.execute("cd /app && cat package.json")
     if _execute_result_exit_code(res) != 0:
-        return None
+        return PackageJsonReadResult(
+            exists=True,
+            data=None,
+            error="package.json exists but could not be read",
+        )
+
     raw = _execute_result_output(res)
     try:
         data = json.loads(raw)
     except Exception:
-        return None
-    return data if isinstance(data, dict) else None
+        return PackageJsonReadResult(
+            exists=True,
+            data=None,
+            error="package.json exists but is not valid JSON",
+        )
+
+    if not isinstance(data, dict):
+        return PackageJsonReadResult(
+            exists=True,
+            data=None,
+            error="package.json exists but did not parse to a JSON object",
+        )
+    return PackageJsonReadResult(exists=True, data=data, error=None)
 
 
 def detect_qa_commands(package_json: dict[str, Any]) -> list[str]:
@@ -132,6 +159,63 @@ def python_qa_commands(*, run_tests: bool) -> list[str]:
     return cmds
 
 
+def _tsconfig_present(backend: Any) -> bool:
+    return _exists_in_app(backend, "tsconfig.json")
+
+
+def _vite_present(backend: Any, package_json: dict[str, Any] | None) -> bool:
+    # Prefer an explicit dependency check, but allow config-file hints for minimal projects.
+    if isinstance(package_json, dict):
+        for key in ("dependencies", "devDependencies"):
+            deps = package_json.get(key)
+            if isinstance(deps, dict) and isinstance(deps.get("vite"), str):
+                return True
+    return any(
+        _exists_in_app(backend, fp)
+        for fp in (
+            "vite.config.ts",
+            "vite.config.js",
+            "vite.config.mjs",
+            "vite.config.cjs",
+        )
+    )
+
+
+def fallback_qa_commands(
+    backend: Any, *, package_json: dict[str, Any] | None
+) -> list[str]:
+    cmds: list[str] = []
+    if _tsconfig_present(backend):
+        cmds.append("npx --no-install tsc --noEmit")
+    if _vite_present(backend, package_json):
+        cmds.append("npx --no-install vite build")
+    return cmds
+
+
+def effective_qa_commands_for_backend(
+    backend: Any, pkg: PackageJsonReadResult
+) -> list[str]:
+    # package.json parse errors should be treated as QA failures by the caller,
+    # not silently ignored.
+    if pkg.exists and pkg.error:
+        return []
+
+    override = (os.environ.get("DEEPAGENTS_QA_COMMANDS") or "").strip()
+    if override:
+        return [c.strip() for c in override.split(",") if c.strip()]
+
+    cmds = detect_qa_commands(pkg.data or {})
+    if cmds:
+        return cmds
+
+    # package.json exists but provides no scripts; attempt a minimal fallback to
+    # catch syntax/type/build errors in common stacks.
+    if pkg.exists:
+        return fallback_qa_commands(backend, package_json=pkg.data)
+
+    return []
+
+
 def run_qa(
     backend: Any,
     commands: list[str],
@@ -160,8 +244,12 @@ def run_qa(
 
 def qa_enabled_from_env(*, legacy_validate_env: bool) -> bool:
     # Backwards compatible: existing clusters set DEEPAGENTS_VALIDATE=1.
-    enabled = _env_bool("DEEPAGENTS_QA", default=legacy_validate_env)
-    return enabled
+    raw = (os.environ.get("DEEPAGENTS_QA") or "").strip()
+    if raw:
+        return _env_bool("DEEPAGENTS_QA", default=True)
+    if legacy_validate_env:
+        return True
+    return True
 
 
 def qa_run_tests_enabled() -> bool:

@@ -852,6 +852,7 @@ class Agent:
         interrupted = False
         saw_git_sync = False
         controller_failed = False
+        sent_qa_failed_error = False
         tool_trace_for_reason: list[str] = []
 
         config: dict[str, Any] = {
@@ -1221,6 +1222,51 @@ class Agent:
                             last_partial_at = now
 
                 if etype == "on_chain_end":
+                    if name == "qa_validate" and not sent_qa_failed_error:
+                        out = data.get("output")
+                        if isinstance(out, dict) and out.get("qa_passed") is False:
+                            qa_results = out.get("qa_results")
+                            results_for_ui: list[dict[str, Any]] = []
+                            if isinstance(qa_results, list):
+                                for r in qa_results:
+                                    if not isinstance(r, dict):
+                                        continue
+                                    results_for_ui.append(
+                                        {
+                                            "command": r.get("command"),
+                                            "exit_code": r.get("exit_code"),
+                                            "truncated": r.get("truncated"),
+                                        }
+                                    )
+
+                            last_detail = ""
+                            if isinstance(qa_results, list) and qa_results:
+                                last = qa_results[-1]
+                                if isinstance(last, dict):
+                                    cmd = last.get("command", "<unknown>")
+                                    code = last.get("exit_code", "<unknown>")
+                                    o = last.get("output", "")
+                                    if not isinstance(o, str):
+                                        o = str(o)
+                                    if len(o) > 8000:
+                                        o = o[:8000]
+                                    last_detail = (
+                                        f"QA failed on `{cmd}` (exit {code}). Output:\n\n{o}"
+                                    )
+                            if not last_detail:
+                                last_detail = "QA failed (no output captured)."
+
+                            yield Message.new(
+                                MessageType.ERROR,
+                                {
+                                    "error": "qa_failed",
+                                    "detail": last_detail,
+                                    "qa_results": results_for_ui,
+                                },
+                                session_id=session_id,
+                            ).to_dict()
+                            sent_qa_failed_error = True
+
                     # Try to extract the final assistant message even when the provider
                     # does not emit token stream events.
                     output = data.get("output")
@@ -1472,6 +1518,7 @@ class Agent:
         interrupted = False
         saw_git_sync = False
         controller_failed = False
+        sent_qa_failed_error = False
         tool_trace_for_reason: list[str] = []
 
         config: dict[str, Any] = {
@@ -1784,6 +1831,51 @@ class Agent:
                             last_partial_at = now
 
                 if etype == "on_chain_end":
+                    if name == "qa_validate" and not sent_qa_failed_error:
+                        out = data.get("output")
+                        if isinstance(out, dict) and out.get("qa_passed") is False:
+                            qa_results = out.get("qa_results")
+                            results_for_ui: list[dict[str, Any]] = []
+                            if isinstance(qa_results, list):
+                                for r in qa_results:
+                                    if not isinstance(r, dict):
+                                        continue
+                                    results_for_ui.append(
+                                        {
+                                            "command": r.get("command"),
+                                            "exit_code": r.get("exit_code"),
+                                            "truncated": r.get("truncated"),
+                                        }
+                                    )
+
+                            last_detail = ""
+                            if isinstance(qa_results, list) and qa_results:
+                                last = qa_results[-1]
+                                if isinstance(last, dict):
+                                    cmd = last.get("command", "<unknown>")
+                                    code = last.get("exit_code", "<unknown>")
+                                    o = last.get("output", "")
+                                    if not isinstance(o, str):
+                                        o = str(o)
+                                    if len(o) > 8000:
+                                        o = o[:8000]
+                                    last_detail = (
+                                        f"QA failed on `{cmd}` (exit {code}). Output:\n\n{o}"
+                                    )
+                            if not last_detail:
+                                last_detail = "QA failed (no output captured)."
+
+                            yield Message.new(
+                                MessageType.ERROR,
+                                {
+                                    "error": "qa_failed",
+                                    "detail": last_detail,
+                                    "qa_results": results_for_ui,
+                                },
+                                session_id=session_id,
+                            ).to_dict()
+                            sent_qa_failed_error = True
+
                     output = data.get("output")
                     if isinstance(output, dict):
                         msgs = output.get("messages")

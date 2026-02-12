@@ -8,8 +8,9 @@ from collections.abc import Callable
 from typing import Any, Literal, TypedDict
 
 from src.deepagents_backend.qa import (
+    PackageJsonReadResult,
     QaCommandResult,
-    effective_qa_commands,
+    effective_qa_commands_for_backend,
     python_project_present,
     python_qa_commands,
     qa_run_tests_enabled,
@@ -144,9 +145,22 @@ def build_controller_graph(
         thread_id = _thread_id_from_config(config)
         backend = get_backend(thread_id)
 
-        pkg = await asyncio.to_thread(read_package_json, backend)
-        commands = effective_qa_commands(pkg)
-        if not commands and pkg is None and python_project_present(backend):
+        pkg: PackageJsonReadResult = await asyncio.to_thread(read_package_json, backend)
+        if pkg.exists and pkg.error:
+            return {
+                "qa_passed": False,
+                "qa_results": [
+                    {
+                        "command": "<parse package.json>",
+                        "exit_code": 2,
+                        "output": pkg.error,
+                        "truncated": False,
+                    }
+                ],
+            }
+
+        commands = effective_qa_commands_for_backend(backend, pkg)
+        if not commands and not pkg.exists and python_project_present(backend):
             commands = python_qa_commands(run_tests=qa_run_tests_enabled())
         if not commands:
             # No scripts defined; treat as pass but record a note.
@@ -156,7 +170,7 @@ def build_controller_graph(
                     {
                         "command": "<none>",
                         "exit_code": 0,
-                        "output": "No QA scripts found in package.json",
+                        "output": "No QA commands detected (no scripts, no fallbacks).",
                         "truncated": False,
                     }
                 ],

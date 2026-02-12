@@ -1,9 +1,13 @@
 import unittest
 
 from src.deepagents_backend.qa import (
+    PackageJsonReadResult,
     detect_qa_commands,
+    effective_qa_commands_for_backend,
     python_project_present,
     python_qa_commands,
+    qa_enabled_from_env,
+    read_package_json,
     run_qa,
 )
 
@@ -23,6 +27,35 @@ class _FakeBackend:
 
 
 class TestDeepAgentsQa(unittest.TestCase):
+    def test_qa_enabled_default_on(self):
+        # Default behavior: QA enabled unless explicitly disabled.
+        import os
+
+        old = os.environ.get("DEEPAGENTS_QA")
+        try:
+            if "DEEPAGENTS_QA" in os.environ:
+                del os.environ["DEEPAGENTS_QA"]
+            self.assertTrue(qa_enabled_from_env(legacy_validate_env=False))
+        finally:
+            if old is None:
+                os.environ.pop("DEEPAGENTS_QA", None)
+            else:
+                os.environ["DEEPAGENTS_QA"] = old
+
+    def test_qa_enabled_can_be_disabled(self):
+        import os
+
+        old = os.environ.get("DEEPAGENTS_QA")
+        try:
+            os.environ["DEEPAGENTS_QA"] = "0"
+            self.assertFalse(qa_enabled_from_env(legacy_validate_env=True))
+            self.assertFalse(qa_enabled_from_env(legacy_validate_env=False))
+        finally:
+            if old is None:
+                os.environ.pop("DEEPAGENTS_QA", None)
+            else:
+                os.environ["DEEPAGENTS_QA"] = old
+
     def test_detects_commands_from_scripts(self):
         pkg = {
             "scripts": {
@@ -52,6 +85,38 @@ class TestDeepAgentsQa(unittest.TestCase):
         self.assertEqual(
             [r.command for r in results], ["npm run -s lint", "npm run -s build"]
         )
+
+    def test_read_package_json_invalid_json_is_error(self):
+        class _Backend:
+            def execute(self, command: str):
+                if "test -e package.json" in command:
+                    return {"exit_code": 0, "output": "", "truncated": False}
+                if "cat package.json" in command:
+                    return {"exit_code": 0, "output": "{not json", "truncated": False}
+                return {"exit_code": 1, "output": "", "truncated": False}
+
+        res = read_package_json(_Backend())
+        self.assertTrue(res.exists)
+        self.assertIsNone(res.data)
+        self.assertIsInstance(res.error, str)
+        self.assertTrue("not valid JSON" in (res.error or ""))
+
+    def test_effective_qa_commands_falls_back_for_tsconfig(self):
+        class _Backend:
+            def execute(self, command: str):
+                if "test -e package.json" in command:
+                    return {"exit_code": 0, "output": "", "truncated": False}
+                if "cat package.json" in command:
+                    return {"exit_code": 0, "output": "{}", "truncated": False}
+                if "test -e tsconfig.json" in command:
+                    return {"exit_code": 0, "output": "", "truncated": False}
+                if "test -e vite.config" in command:
+                    return {"exit_code": 1, "output": "", "truncated": False}
+                return {"exit_code": 1, "output": "", "truncated": False}
+
+        pkg = PackageJsonReadResult(exists=True, data={}, error=None)
+        cmds = effective_qa_commands_for_backend(_Backend(), pkg)
+        self.assertEqual(cmds, ["npx --no-install tsc --noEmit"])
 
     def test_python_project_present_detects_markers(self):
         class _ExistsBackend:

@@ -109,7 +109,10 @@ Preview URLs are generally `https://<sandbox_id>.<PREVIEW_BASE_DOMAIN>/`. In clu
 - `PREVIEW_BASE_DOMAIN`, `PREVIEW_SCHEME`
 - `PREVIEW_RESOLVER_TOKEN` — optional shared token for the in-cluster preview-router → agent resolver (`/internal/preview/resolve`)
 - `AMICABLE_TEMPLATE_K8S_TEMPLATE_MAP_JSON` — optional JSON map of `template_id` → K8s SandboxTemplate name (override defaults)
-- `DEEPAGENTS_QA`, `DEEPAGENTS_QA_TIMEOUT_S`, `DEEPAGENTS_QA_COMMANDS`, `DEEPAGENTS_QA_RUN_TESTS`
+- `DEEPAGENTS_QA` — deterministic QA after agent edits. Default: enabled. Disable via `DEEPAGENTS_QA=0`.
+- `DEEPAGENTS_QA_TIMEOUT_S` — QA timeout in seconds (default 600)
+- `DEEPAGENTS_QA_COMMANDS` — override QA command list (CSV). Example: `npm run -s lint,npm run -s build`
+- `DEEPAGENTS_QA_RUN_TESTS` — include `npm test` / `pytest` in QA (default off)
 - `DEEPAGENTS_SELF_HEAL_MAX_ROUNDS` (default 2)
 - `DEEPAGENTS_MEMORY_SOURCES` (default `"/AGENTS.md,/.deepagents/AGENTS.md"`)
 - `DEEPAGENTS_SKILLS_SOURCES` (default `"/.deepagents/skills,/skills"`)
