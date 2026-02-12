@@ -260,7 +260,9 @@ def get_project_by_id(
     p = _get_project_by_id_any_owner(client, project_id=project_id)
     if not p:
         return None
-    if p.owner_sub != owner.sub:
+    if not is_project_member(
+        client, project_id=project_id, user_sub=owner.sub, user_email=owner.email
+    ):
         return None
     return p
 
@@ -284,10 +286,13 @@ def get_project_by_slug(
     if not rows:
         return None
     r = rows[0]
-    if str(r.get("owner_sub")) != owner.sub:
+    project_id = str(r["project_id"])
+    if not is_project_member(
+        client, project_id=project_id, user_sub=owner.sub, user_email=owner.email
+    ):
         return None
     return Project(
-        project_id=str(r["project_id"]),
+        project_id=project_id,
         owner_sub=str(r["owner_sub"]),
         owner_email=str(r["owner_email"]),
         name=str(r["name"]),
@@ -385,12 +390,14 @@ def list_projects(client: HasuraClient, *, owner: ProjectOwner) -> list[Project]
     ensure_projects_schema(client)
     res = client.run_sql(
         f"""
-        SELECT project_id, owner_sub, owner_email, name, slug, sandbox_id, template_id,
-               gitlab_project_id, gitlab_path, gitlab_web_url,
-               created_at, updated_at
-        FROM amicable_meta.projects
-        WHERE owner_sub = {_sql_str(owner.sub)} AND deleted_at IS NULL
-        ORDER BY updated_at DESC;
+        SELECT p.project_id, p.owner_sub, p.owner_email, p.name, p.slug, p.sandbox_id, p.template_id,
+               p.gitlab_project_id, p.gitlab_path, p.gitlab_web_url,
+               p.created_at, p.updated_at
+        FROM amicable_meta.projects p
+        JOIN amicable_meta.project_members pm ON pm.project_id = p.project_id
+        WHERE (pm.user_sub = {_sql_str(owner.sub)} OR pm.user_email = {_sql_str(owner.email.lower())})
+          AND p.deleted_at IS NULL
+        ORDER BY p.updated_at DESC;
         """.strip(),
         read_only=True,
     )

@@ -120,7 +120,60 @@ class FakeHasuraClient:
             ]
             return {"result_type": "TuplesOk", "result": [header, data]}
 
-        # List by owner_sub.
+        # List projects with JOIN on members (new membership-based query)
+        if "join amicable_meta.project_members" in sql_l and "order by" in sql_l:
+            sub_match = re.search(r"pm\.user_sub\s*=\s*'([^']+)'", sql, flags=re.I)
+            email_match = re.search(r"pm\.user_email\s*=\s*'([^']+)'", sql, flags=re.I)
+            sub = sub_match.group(1) if sub_match else None
+            email = email_match.group(1).lower() if email_match else None
+
+            # Find projects where user is a member
+            member_project_ids = set()
+            for m in self.members.values():
+                if m.get("user_sub") == sub or m.get("user_email") == email:
+                    member_project_ids.add(m["project_id"])
+
+            rows = [
+                p
+                for p in self.projects.values()
+                if p["project_id"] in member_project_ids and not p.get("deleted_at")
+            ]
+
+            header = [
+                "project_id",
+                "owner_sub",
+                "owner_email",
+                "name",
+                "slug",
+                "sandbox_id",
+                "template_id",
+                "gitlab_project_id",
+                "gitlab_path",
+                "gitlab_web_url",
+                "created_at",
+                "updated_at",
+            ]
+            out = [header]
+            for r in rows:
+                out.append(
+                    [
+                        r["project_id"],
+                        r["owner_sub"],
+                        r["owner_email"],
+                        r["name"],
+                        r["slug"],
+                        r.get("sandbox_id"),
+                        r.get("template_id"),
+                        r.get("gitlab_project_id"),
+                        r.get("gitlab_path"),
+                        r.get("gitlab_web_url"),
+                        r.get("created_at"),
+                        r.get("updated_at"),
+                    ]
+                )
+            return {"result_type": "TuplesOk", "result": out}
+
+        # List by owner_sub (legacy - but still needed for backward compatibility in tests).
         m = re.search(r"where owner_sub\s*=\s*'([^']+)'", sql, flags=re.I)
         if m and "order by updated_at" in sql_l:
             sub = m.group(1)
@@ -274,6 +327,27 @@ class FakeHasuraClient:
             pid_match = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I)
             if pid_match:
                 pid = pid_match.group(1)
+
+                # Check for is_project_member query (SELECT 1 with user_sub/email OR)
+                if sql_l.startswith("select 1") and "(user_sub" in sql_l:
+                    # Parse the user_sub and user_email from the OR clause
+                    sub_match = re.search(r"user_sub\s*=\s*'([^']+)'", sql, flags=re.I)
+                    email_or_match = re.search(
+                        r"or user_email\s*=\s*'([^']+)'", sql, flags=re.I
+                    )
+                    user_sub = sub_match.group(1) if sub_match else None
+                    user_email = email_or_match.group(1).lower() if email_or_match else None
+
+                    # Check if user is a member (by sub or email)
+                    is_member = any(
+                        m["project_id"] == pid
+                        and (m.get("user_sub") == user_sub or m.get("user_email") == user_email)
+                        for m in self.members.values()
+                    )
+                    if is_member:
+                        return {"result_type": "TuplesOk", "result": [["1"], [1]]}
+                    return {"result_type": "TuplesOk", "result": [["1"]]}
+
                 # Check for email filter (for _get_member_by_email)
                 email_match = re.search(
                     r"and user_email\s*=\s*'([^']+)'", sql, flags=re.I
@@ -288,7 +362,7 @@ class FakeHasuraClient:
                 else:
                     rows = [m for m in self.members.values() if m["project_id"] == pid]
 
-                # SELECT 1 for is_project_member
+                # SELECT 1 without complex filter (simple membership check)
                 if sql_l.startswith("select 1"):
                     if rows:
                         return {"result_type": "TuplesOk", "result": [["1"], [1]]}
@@ -413,3 +487,35 @@ def test_add_and_list_project_members() -> None:
     assert len(members) == 2
     emails = {m.user_email for m in members}
     assert emails == {"u1@example.com", "u2@example.com"}
+
+
+def test_shared_project_access() -> None:
+    """Users can access projects they're members of, even if not the creator."""
+    c = FakeHasuraClient()
+    owner = ProjectOwner(sub="u1", email="u1@example.com")
+    other = ProjectOwner(sub="u2", email="u2@example.com")
+
+    p = create_project(c, owner=owner, name="Shared Project")
+
+    # Other user cannot access yet
+    assert get_project_by_id(c, owner=other, project_id=p.project_id) is None
+
+    # Add other as member
+    from src.projects.store import add_project_member
+
+    add_project_member(
+        c,
+        project_id=p.project_id,
+        user_sub="u2",
+        user_email="u2@example.com",
+        added_by_sub="u1",
+    )
+
+    # Now other can access
+    got = get_project_by_id(c, owner=other, project_id=p.project_id)
+    assert got is not None
+    assert got.project_id == p.project_id
+
+    # And it appears in their list
+    lst = list_projects(c, owner=other)
+    assert any(proj.project_id == p.project_id for proj in lst)
