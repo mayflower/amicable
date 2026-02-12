@@ -28,6 +28,8 @@ import {
 } from "react";
 
 import { AGENT_CONFIG } from "../../config/agent";
+import { AgentAuthStatus } from "../../components/AgentAuthStatus";
+import { ChatMarkdown } from "../../components/ChatMarkdown";
 import { Button } from "@/components/ui/button";
 import { CodePane } from "@/components/CodePane";
 import { DatabasePane } from "@/components/DatabasePane";
@@ -36,7 +38,6 @@ import type { Message } from "../../types/messages";
 import { cn } from "@/lib/utils";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMessageBus } from "../../hooks/useMessageBus";
-import { AgentAuthStatus } from "../../components/AgentAuthStatus";
 import { useAgentAuth } from "../../hooks/useAgentAuth";
 
 const DEVICE_SPECS = {
@@ -2297,25 +2298,30 @@ const Create = () => {
 	                          }
 	                          // text
 	                          return (
-	                            <div
+	                            <ChatMarkdown
 	                              key={it.key}
+	                              markdown={it.text}
 	                              className="text-foreground"
-	                              style={{ whiteSpace: "pre-wrap" }}
-	                            >
-	                              {it.text}
-	                            </div>
+	                            />
 	                          );
 	                        })}
 	                      </div>
 	                    ) : msg.data.text && typeof msg.data.text === "string" && msg.data.text.trim() ? (
-	                      <p
-	                        style={{
-	                          whiteSpace: "pre-wrap",
-	                        }}
-	                        className={isUser ? "text-white" : "text-foreground"}
-	                      >
-	                        {String(msg.data.text || "")}
-	                      </p>
+	                      isUser ? (
+	                        <p
+	                          style={{
+	                            whiteSpace: "pre-wrap",
+	                          }}
+	                          className="text-white"
+	                        >
+	                          {String(msg.data.text || "")}
+	                        </p>
+	                      ) : (
+	                        <ChatMarkdown
+	                          markdown={String(msg.data.text || "")}
+	                          className="text-foreground"
+	                        />
+	                      )
 	                    ) : null}
 
 	                    {msg.data.isStreaming && (
