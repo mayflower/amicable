@@ -13,6 +13,7 @@ export enum MessageType {
   HITL_REQUEST = "hitl_request",
   HITL_RESPONSE = "hitl_response",
   RUNTIME_ERROR = "runtime_error",
+  SESSION_CLAIMED = "session_claimed",
 }
 
 export enum Sender {

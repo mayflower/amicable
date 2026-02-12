@@ -46,6 +46,10 @@ _agent_run_lock_by_project: dict[str, asyncio.Lock] = {}
 # Best-effort in-memory limiter for runtime error auto-heal.
 _runtime_autoheal_state_by_project: dict[str, Any] = {}
 
+# Track active WebSocket connections for session locking.
+# Maps WebSocket -> (project_id, user_sub) for lock release on disconnect.
+_ws_session_map: dict[WebSocket, tuple[str, str]] = {}
+
 _naming_llm: Any = None
 
 
@@ -2344,6 +2348,23 @@ async def _handle_ws(ws: WebSocket) -> None:
         try:
             raw = await ws.receive_text()
         except WebSocketDisconnect:
+            # Release session lock on disconnect
+            conn_info = _ws_session_map.pop(ws, None)
+            if conn_info:
+                sess_id, u_sub = conn_info
+
+                def _release_lock_on_disconnect() -> None:
+                    try:
+                        from src.db.provisioning import hasura_client_from_env
+                        from src.projects.store import release_project_lock
+
+                        client = hasura_client_from_env()
+                        release_project_lock(client, project_id=sess_id, user_sub=u_sub)
+                    except Exception:
+                        pass
+
+                # Run lock release in background to avoid blocking
+                asyncio.create_task(asyncio.to_thread(_release_lock_on_disconnect))
             return
 
         msg: dict[str, Any]
@@ -2424,6 +2445,74 @@ async def _handle_ws(ws: WebSocket) -> None:
                 )
                 await ws.close(code=1011)
                 return
+
+            # Session locking: check/acquire lock
+            force_claim = bool(data.get("force", False))
+            from src.projects.store import (
+                acquire_project_lock,
+                get_project_lock,
+            )
+
+            def _check_and_acquire_lock() -> tuple[str, dict[str, Any] | None]:
+                client = hasura_client_from_env()
+                current_lock = get_project_lock(client, project_id=str(session_id))
+                if current_lock and current_lock.locked_by_sub != sub and not force_claim:
+                    return "locked", {
+                        "locked_by_email": current_lock.locked_by_email,
+                        "locked_at": current_lock.locked_at,
+                    }
+                lock = acquire_project_lock(
+                    client,
+                    project_id=str(session_id),
+                    user_sub=sub,
+                    user_email=email,
+                    force=force_claim,
+                )
+                if not lock:
+                    # Race: someone else acquired it between check and acquire
+                    current = get_project_lock(client, project_id=str(session_id))
+                    return "locked", {
+                        "locked_by_email": current.locked_by_email if current else "unknown",
+                        "locked_at": current.locked_at if current else "",
+                    }
+                return "ok", None
+
+            # If force-claiming, notify the previous session holder first
+            if force_claim:
+                for other_ws, (other_sess, other_sub) in list(_ws_session_map.items()):
+                    if other_sess == str(session_id) and other_sub != sub:
+                        try:
+                            await other_ws.send_json(
+                                Message.new(
+                                    MessageType.SESSION_CLAIMED,
+                                    {"claimed_by": email},
+                                    session_id=str(session_id),
+                                ).to_dict()
+                            )
+                            await other_ws.close(code=1000)
+                        except Exception:
+                            pass
+                        _ws_session_map.pop(other_ws, None)
+
+            lock_status, lock_info = await asyncio.to_thread(_check_and_acquire_lock)
+            if lock_status == "locked":
+                await ws.send_json(
+                    Message.new(
+                        MessageType.ERROR,
+                        {
+                            "error": "project_locked",
+                            "locked_by": lock_info["locked_by_email"] if lock_info else "unknown",
+                            "locked_at": lock_info["locked_at"] if lock_info else "",
+                        },
+                        session_id=session_id,
+                    ).to_dict()
+                )
+                await ws.close(code=1008)
+                return
+
+            # Register this websocket for lock tracking
+            _ws_session_map[ws] = (str(session_id), sub)
+
             template_id = (
                 getattr(project, "template_id", None) if project is not None else None
             )
