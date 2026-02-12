@@ -131,6 +131,14 @@ class ProjectMember:
     added_by_sub: str | None = None
 
 
+@dataclass(frozen=True)
+class ProjectLock:
+    project_id: str
+    locked_by_sub: str
+    locked_by_email: str
+    locked_at: str
+
+
 def _tuples_to_dicts(res: dict[str, Any]) -> list[dict[str, Any]]:
     rows = res.get("result")
     if not isinstance(rows, list) or len(rows) < 2:
@@ -782,3 +790,86 @@ def is_project_member(
     )
     rows = _tuples_to_dicts(res)
     return bool(rows)
+
+
+# ---------------------------------------------------------------------------
+# Session Locking
+# ---------------------------------------------------------------------------
+
+
+def get_project_lock(client: HasuraClient, *, project_id: str) -> ProjectLock | None:
+    """Get current lock info for a project."""
+    ensure_projects_schema(client)
+    res = client.run_sql(
+        f"""
+        SELECT locked_by_sub, locked_at
+        FROM amicable_meta.projects
+        WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL AND locked_by_sub IS NOT NULL
+        LIMIT 1;
+        """.strip(),
+        read_only=True,
+    )
+    rows = _tuples_to_dicts(res)
+    if not rows or not rows[0].get("locked_by_sub"):
+        return None
+    r = rows[0]
+    # Get email from members table
+    email_res = client.run_sql(
+        f"""
+        SELECT user_email FROM amicable_meta.project_members
+        WHERE project_id = {_sql_str(project_id)} AND user_sub = {_sql_str(str(r["locked_by_sub"]))}
+        LIMIT 1;
+        """.strip(),
+        read_only=True,
+    )
+    email_rows = _tuples_to_dicts(email_res)
+    email = str(email_rows[0]["user_email"]) if email_rows else ""
+    return ProjectLock(
+        project_id=project_id,
+        locked_by_sub=str(r["locked_by_sub"]),
+        locked_by_email=email,
+        locked_at=str(r.get("locked_at") or ""),
+    )
+
+
+def acquire_project_lock(
+    client: HasuraClient,
+    *,
+    project_id: str,
+    user_sub: str,
+    user_email: str,
+    force: bool = False,
+) -> ProjectLock | None:
+    """Try to acquire lock. Returns None if locked by someone else (unless force=True)."""
+    ensure_projects_schema(client)
+    current = get_project_lock(client, project_id=project_id)
+    if current and current.locked_by_sub != user_sub and not force:
+        return None
+
+    client.run_sql(
+        f"""
+        UPDATE amicable_meta.projects
+        SET locked_by_sub = {_sql_str(user_sub)}, locked_at = now(), updated_at = now()
+        WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL;
+        """.strip()
+    )
+    return ProjectLock(
+        project_id=project_id,
+        locked_by_sub=user_sub,
+        locked_by_email=user_email,
+        locked_at="now",
+    )
+
+
+def release_project_lock(
+    client: HasuraClient, *, project_id: str, user_sub: str
+) -> None:
+    """Release lock if held by user_sub."""
+    ensure_projects_schema(client)
+    client.run_sql(
+        f"""
+        UPDATE amicable_meta.projects
+        SET locked_by_sub = NULL, locked_at = NULL, updated_at = now()
+        WHERE project_id = {_sql_str(project_id)} AND locked_by_sub = {_sql_str(user_sub)} AND deleted_at IS NULL;
+        """.strip()
+    )

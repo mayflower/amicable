@@ -43,6 +43,60 @@ class FakeHasuraClient:
                 self.schema_created_tables["projects"] = True
             return {"result_type": "CommandOk", "result": []}
 
+        # ---------------------------------------------------------------
+        # Session Locking (must come before generic project SELECT)
+        # ---------------------------------------------------------------
+
+        # SELECT lock info (get_project_lock) - check for "locked_by_sub is not null"
+        if (
+            "locked_by_sub" in sql_l
+            and "locked_by_sub is not null" in sql_l
+            and "from amicable_meta.projects" in sql_l
+            and sql_l.startswith("select")
+        ):
+            pid_match = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I)
+            if pid_match:
+                row = self.projects.get(pid_match.group(1))
+                if row and not row.get("deleted_at") and row.get("locked_by_sub"):
+                    return {
+                        "result_type": "TuplesOk",
+                        "result": [
+                            ["locked_by_sub", "locked_at"],
+                            [row["locked_by_sub"], row.get("locked_at")],
+                        ],
+                    }
+                return {
+                    "result_type": "TuplesOk",
+                    "result": [["locked_by_sub", "locked_at"]],
+                }
+
+        # UPDATE lock (acquire/release) - check for "set locked_by_sub"
+        if (
+            sql_l.startswith("update amicable_meta.projects")
+            and "set locked_by_sub" in sql_l
+        ):
+            pid_match = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I)
+            if pid_match:
+                row = self.projects.get(pid_match.group(1))
+                if row and not row.get("deleted_at"):
+                    if "locked_by_sub = null" in sql_l.lower():
+                        # Release - check user matches
+                        sub_match = re.search(
+                            r"and locked_by_sub\s*=\s*'([^']+)'", sql, flags=re.I
+                        )
+                        if sub_match and row.get("locked_by_sub") == sub_match.group(1):
+                            row["locked_by_sub"] = None
+                            row["locked_at"] = None
+                    else:
+                        # Acquire
+                        sub_match = re.search(
+                            r"set locked_by_sub\s*=\s*'([^']+)'", sql, flags=re.I
+                        )
+                        if sub_match:
+                            row["locked_by_sub"] = sub_match.group(1)
+                            row["locked_at"] = "now"
+            return {"result_type": "CommandOk", "result": []}
+
         # SELECT by project_id.
         m = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I)
         if m and sql_l.startswith("select") and "from amicable_meta.projects" in sql_l:
@@ -519,3 +573,56 @@ def test_shared_project_access() -> None:
     # And it appears in their list
     lst = list_projects(c, owner=other)
     assert any(proj.project_id == p.project_id for proj in lst)
+
+
+def test_project_locking() -> None:
+    """Test session locking prevents concurrent access."""
+    c = FakeHasuraClient()
+    owner1 = ProjectOwner(sub="u1", email="u1@example.com")
+    owner2 = ProjectOwner(sub="u2", email="u2@example.com")
+
+    p = create_project(c, owner=owner1, name="Lockable")
+
+    # Add u2 as member
+    from src.projects.store import (
+        add_project_member,
+        acquire_project_lock,
+        get_project_lock,
+        release_project_lock,
+    )
+
+    add_project_member(
+        c,
+        project_id=p.project_id,
+        user_sub="u2",
+        user_email="u2@example.com",
+        added_by_sub="u1",
+    )
+
+    # u1 acquires lock
+    lock = acquire_project_lock(
+        c, project_id=p.project_id, user_sub="u1", user_email="u1@example.com"
+    )
+    assert lock is not None
+    assert lock.locked_by_sub == "u1"
+
+    # u2 cannot acquire (without force)
+    lock2 = acquire_project_lock(
+        c, project_id=p.project_id, user_sub="u2", user_email="u2@example.com"
+    )
+    assert lock2 is None
+
+    # Check who has lock
+    current = get_project_lock(c, project_id=p.project_id)
+    assert current is not None
+    assert current.locked_by_sub == "u1"
+
+    # u1 releases
+    release_project_lock(c, project_id=p.project_id, user_sub="u1")
+
+    # Now u2 can acquire
+    lock3 = acquire_project_lock(
+        c, project_id=p.project_id, user_sub="u2", user_email="u2@example.com"
+    )
+    assert lock3 is not None
+    assert lock3.locked_by_sub == "u2"
