@@ -304,6 +304,17 @@ class Agent:
         self._lg_checkpointer_ctx = None
         self._lg_checkpointer = None
 
+        # Avoid double-provisioning or double-injection for the same session_id when multiple
+        # concurrent WS/HTTP requests hit init paths.
+        self._ensure_env_lock_by_session: dict[str, asyncio.Lock] = {}
+
+    def _ensure_env_lock(self, session_id: str) -> asyncio.Lock:
+        lock = self._ensure_env_lock_by_session.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._ensure_env_lock_by_session[session_id] = lock
+        return lock
+
     async def _get_langgraph_checkpointer(self):
         """Return an AsyncPostgresSaver if configured, else None."""
         if self._lg_checkpointer is not None:
@@ -375,9 +386,27 @@ class Agent:
         template_id: str | None = None,
         slug: str | None = None,
     ) -> bool:
-        if session_id in self.session_data:
-            return True
+        # This method does a lot of synchronous I/O (Hasura, k8s, sandbox runtime).
+        # Run the heavy lifting in a background thread so we never block the main
+        # event loop (otherwise /healthz and websockets will stall and readiness will fail).
+        lock = self._ensure_env_lock(session_id)
+        async with lock:
+            if session_id in self.session_data:
+                return True
+            return await asyncio.to_thread(
+                self._ensure_app_environment_sync,
+                session_id,
+                template_id=template_id,
+                slug=slug,
+            )
 
+    def _ensure_app_environment_sync(
+        self,
+        session_id: str,
+        *,
+        template_id: str | None = None,
+        slug: str | None = None,
+    ) -> bool:
         from src.db.provisioning import hasura_client_from_env, require_hasura_from_env
         from src.deepagents_backend.session_sandbox_manager import SessionSandboxManager
         from src.templates.registry import (

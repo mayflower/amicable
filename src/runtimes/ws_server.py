@@ -414,41 +414,45 @@ async def internal_preview_resolve(
     if not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?", label):
         return Response(status_code=404)
 
-    # If the label isn't a project slug, it may still be a direct sandbox_id
-    # (e.g. older hashed hostnames). In that case, route directly.
-    try:
-        from src.sandbox_backends.k8s_backend import K8sAgentSandboxBackend
+    # WARNING: This endpoint is called frequently by the preview-router. It must never
+    # block the main event loop with synchronous network I/O (k8s/Hasura), otherwise
+    # the whole agent becomes unresponsive and readiness (/healthz) will fail.
 
-        k8s = K8sAgentSandboxBackend()
-        # Fast-path: treat direct SandboxClaim names as routable ids.
-        if k8s._claim_exists(label):
-            return Response(status_code=200, headers={"X-Amicable-Sandbox-Id": label})
-    except Exception:
-        k8s = None  # type: ignore[assignment]
+    def _resolve_label_to_sandbox_id_sync(label_: str) -> str | None:
+        # If the label isn't a project slug, it may still be a direct sandbox_id
+        # (e.g. older hashed hostnames). In that case, route directly.
+        try:
+            from src.sandbox_backends.k8s_backend import K8sAgentSandboxBackend
 
-    from src.db.provisioning import hasura_client_from_env
-    from src.projects.store import (
-        get_project_by_slug_any_owner,
-        set_project_sandbox_id_any_owner,
-    )
+            k8s = K8sAgentSandboxBackend()
+            if k8s._claim_exists(label_):
+                return label_
+        except Exception:
+            k8s = None  # type: ignore[assignment]
 
-    client = hasura_client_from_env()
-    p = get_project_by_slug_any_owner(client, slug=label)
-    if p is None:
-        # Not a known slug; if k8s is available, allow direct sandbox ids.
-        if k8s is not None:
-            try:
-                if k8s._claim_exists(label):
-                    return Response(
-                        status_code=200, headers={"X-Amicable-Sandbox-Id": label}
-                    )
-            except Exception:
-                pass
-        return Response(status_code=404)
+        from src.db.provisioning import hasura_client_from_env
+        from src.projects.store import (
+            get_project_by_slug_any_owner,
+            set_project_sandbox_id_any_owner,
+        )
 
-    # Prefer the persisted sandbox_id (stable across slug changes).
-    sandbox_id = (p.sandbox_id or "").strip()
-    if not sandbox_id:
+        client = hasura_client_from_env()
+        p = get_project_by_slug_any_owner(client, slug=label_)
+        if p is None:
+            # Not a known slug; if k8s is available, allow direct sandbox ids.
+            if k8s is not None:
+                try:
+                    if k8s._claim_exists(label_):
+                        return label_
+                except Exception:
+                    pass
+            return None
+
+        # Prefer the persisted sandbox_id (stable across slug changes).
+        sandbox_id = (p.sandbox_id or "").strip()
+        if sandbox_id:
+            return sandbox_id
+
         # Fallback: pick an existing claim name based on current conventions.
         from src.sandbox_backends.k8s_backend import (
             K8sAgentSandboxBackend,
@@ -459,15 +463,14 @@ async def internal_preview_resolve(
         hash_candidate = _dns_safe_claim_name(p.project_id, slug=None)
 
         try:
-            k8s = K8sAgentSandboxBackend()
-            if k8s._claim_exists(slug_candidate):
+            k8s2 = K8sAgentSandboxBackend()
+            if k8s2._claim_exists(slug_candidate):
                 sandbox_id = slug_candidate
-            elif k8s._claim_exists(hash_candidate):
+            elif k8s2._claim_exists(hash_candidate):
                 sandbox_id = hash_candidate
             else:
                 sandbox_id = hash_candidate
         except Exception:
-            # If k8s API isn't available, fall back deterministically.
             sandbox_id = hash_candidate
 
         # Best-effort persist for future fast-path.
@@ -476,6 +479,11 @@ async def internal_preview_resolve(
                 client, project_id=p.project_id, sandbox_id=sandbox_id
             )
 
+        return sandbox_id
+
+    sandbox_id = await asyncio.to_thread(_resolve_label_to_sandbox_id_sync, label)
+    if not sandbox_id:
+        return Response(status_code=404)
     return Response(status_code=200, headers={"X-Amicable-Sandbox-Id": sandbox_id})
 
 
@@ -490,9 +498,12 @@ async def api_list_projects(request: Request) -> JSONResponse:
     from src.db.provisioning import hasura_client_from_env
     from src.projects.store import ProjectOwner, list_projects
 
-    client = hasura_client_from_env()
-    owner = ProjectOwner(sub=sub, email=email)
-    items = list_projects(client, owner=owner)
+    def _list_sync():
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        return list_projects(client, owner=owner)
+
+    items = await asyncio.to_thread(_list_sync)
     return JSONResponse(
         {
             "projects": [
@@ -546,18 +557,31 @@ async def api_create_project(request: Request) -> JSONResponse:
     from src.gitlab.integration import ensure_gitlab_repo_for_project
     from src.projects.store import ProjectOwner, create_project, hard_delete_project_row
 
-    client = hasura_client_from_env()
-    owner = ProjectOwner(sub=sub, email=email)
-    p = create_project(
-        client, owner=owner, name=name, template_id=effective_template_id
-    )
+    def _create_sync():
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        return create_project(
+            client, owner=owner, name=name, template_id=effective_template_id
+        )
+
+    p = await asyncio.to_thread(_create_sync)
 
     try:
-        p, _git = ensure_gitlab_repo_for_project(client, owner=owner, project=p)
+        def _ensure_git_sync():
+            client = hasura_client_from_env()
+            owner = ProjectOwner(sub=sub, email=email)
+            return ensure_gitlab_repo_for_project(client, owner=owner, project=p)
+
+        p, _git = await asyncio.to_thread(_ensure_git_sync)
     except Exception as e:
         # Roll back the project row if GitLab provisioning fails; Amicable requires GitLab.
-        with contextlib.suppress(Exception):
+        def _rollback_sync() -> None:
+            client = hasura_client_from_env()
+            owner = ProjectOwner(sub=sub, email=email)
             hard_delete_project_row(client, owner=owner, project_id=p.project_id)
+
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(_rollback_sync)
         detail = str(e)
         status = 503 if ("GITLAB_TOKEN" in detail or "required" in detail) else 502
         return JSONResponse(
@@ -591,9 +615,12 @@ async def api_get_project_by_slug(slug: str, request: Request) -> JSONResponse:
     from src.db.provisioning import hasura_client_from_env
     from src.projects.store import ProjectOwner, get_project_by_slug
 
-    client = hasura_client_from_env()
-    owner = ProjectOwner(sub=sub, email=email)
-    p = get_project_by_slug(client, owner=owner, slug=slug)
+    def _get_sync():
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        return get_project_by_slug(client, owner=owner, slug=slug)
+
+    p = await asyncio.to_thread(_get_sync)
     if not p:
         return JSONResponse({"error": "not_found"}, status_code=404)
     return JSONResponse(
@@ -622,9 +649,12 @@ async def api_get_project_by_id(project_id: str, request: Request) -> JSONRespon
     from src.db.provisioning import hasura_client_from_env
     from src.projects.store import ProjectOwner, get_project_by_id
 
-    client = hasura_client_from_env()
-    owner = ProjectOwner(sub=sub, email=email)
-    p = get_project_by_id(client, owner=owner, project_id=project_id)
+    def _get_sync():
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        return get_project_by_id(client, owner=owner, project_id=project_id)
+
+    p = await asyncio.to_thread(_get_sync)
     if not p:
         return JSONResponse({"error": "not_found"}, status_code=404)
     return JSONResponse(
@@ -662,17 +692,27 @@ async def api_rename_project(project_id: str, request: Request) -> JSONResponse:
     from src.gitlab.integration import rename_gitlab_repo_to_match_project_slug
     from src.projects.store import ProjectOwner, rename_project
 
-    client = hasura_client_from_env()
-    owner = ProjectOwner(sub=sub, email=email)
     try:
-        p = rename_project(client, owner=owner, project_id=project_id, new_name=name)
+        def _rename_sync():
+            client = hasura_client_from_env()
+            owner = ProjectOwner(sub=sub, email=email)
+            return rename_project(
+                client, owner=owner, project_id=project_id, new_name=name
+            )
+
+        p = await asyncio.to_thread(_rename_sync)
     except PermissionError:
         return JSONResponse({"error": "not_found"}, status_code=404)
 
     try:
-        p, _git = rename_gitlab_repo_to_match_project_slug(
-            client, owner=owner, project=p, new_name=name
-        )
+        def _rename_git_sync():
+            client = hasura_client_from_env()
+            owner = ProjectOwner(sub=sub, email=email)
+            return rename_gitlab_repo_to_match_project_slug(
+                client, owner=owner, project=p, new_name=name
+            )
+
+        p, _git = await asyncio.to_thread(_rename_git_sync)
     except Exception:
         return JSONResponse({"error": "gitlab_error"}, status_code=502)
     return JSONResponse(
@@ -1935,18 +1975,28 @@ async def _ensure_project_context_for_session(
     from src.gitlab.integration import ensure_gitlab_repo_for_project
     from src.projects.store import ProjectOwner, get_project_by_id
 
-    client = hasura_client_from_env()
-    owner = ProjectOwner(sub=sub, email=email)
-    project = get_project_by_id(client, owner=owner, project_id=str(session_id))
-    if not project:
-        raise PermissionError("not_found")
+    def _load_project_sync():
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        project = get_project_by_id(client, owner=owner, project_id=str(session_id))
+        if not project:
+            raise PermissionError("not_found")
+        return project
+
+    project = await asyncio.to_thread(_load_project_sync)
 
     await agent.init(
         session_id=session_id,
         template_id=getattr(project, "template_id", None),
         slug=getattr(project, "slug", None),
     )
-    project, git = ensure_gitlab_repo_for_project(client, owner=owner, project=project)
+
+    def _ensure_git_sync():
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        return ensure_gitlab_repo_for_project(client, owner=owner, project=project)
+
+    project, git = await asyncio.to_thread(_ensure_git_sync)
 
     init_data = agent.session_data.get(session_id) or {}
     if isinstance(init_data, dict):
@@ -2018,17 +2068,20 @@ async def _handle_ws(ws: WebSocket) -> None:
                 from src.gitlab.integration import ensure_gitlab_repo_for_project
                 from src.projects.store import ProjectOwner, get_project_by_id
 
-                client = hasura_client_from_env()
-                owner = ProjectOwner(sub=sub, email=email)
-                project = get_project_by_id(
-                    client, owner=owner, project_id=str(session_id)
-                )
-                if not project:
-                    raise PermissionError("not_found")
+                def _load_sync():
+                    client = hasura_client_from_env()
+                    owner = ProjectOwner(sub=sub, email=email)
+                    project = get_project_by_id(
+                        client, owner=owner, project_id=str(session_id)
+                    )
+                    if not project:
+                        raise PermissionError("not_found")
+                    project2, git2 = ensure_gitlab_repo_for_project(
+                        client, owner=owner, project=project
+                    )
+                    return project2, git2
 
-                project, git = ensure_gitlab_repo_for_project(
-                    client, owner=owner, project=project
-                )
+                project, git = await asyncio.to_thread(_load_sync)
             except PermissionError as e:
                 # Most common cause: user mismatch between cookie/session and session_id.
                 logger.warning(
