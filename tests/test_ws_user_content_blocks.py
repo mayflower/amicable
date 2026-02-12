@@ -39,12 +39,12 @@ def test_sanitize_user_content_blocks_rejects_invalid_mime_type():
 
 
 def test_sanitize_user_content_blocks_rejects_oversized_base64(monkeypatch):
-    monkeypatch.setenv("AMICABLE_USER_IMAGE_MAX_BASE64_CHARS", "8")
+    monkeypatch.setenv("AMICABLE_USER_IMAGE_MAX_BASE64_CHARS", "1500")
     blocks, err = _sanitize_user_content_blocks(
         [
             {
                 "type": "image",
-                "base64": "0123456789",
+                "base64": "x" * 2000,
                 "mime_type": "image/png",
             }
         ]
