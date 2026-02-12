@@ -3,7 +3,7 @@ FROM php:8.3-cli-bookworm
 # Install system deps: python for runtime API, node/npm for Laravel tooling, git/curl for scaffolding.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     python3 python3-pip git curl ca-certificates unzip \
+     python3 python3-pip git curl ca-certificates unzip tini \
   && rm -rf /var/lib/apt/lists/*
 
 # Install Node 20 (for Laravel's package.json tooling)
@@ -68,4 +68,5 @@ ENV AMICABLE_PREVIEW_CMD="php artisan serve --host 0.0.0.0 --port 3000"
 EXPOSE 8888
 EXPOSE 3000
 
+ENTRYPOINT ["tini", "--"]
 CMD ["uvicorn", "runtime:app", "--host", "0.0.0.0", "--port", "8888"]

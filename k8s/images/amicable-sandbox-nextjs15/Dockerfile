@@ -2,7 +2,7 @@ FROM node:20-bookworm
 
 # Install Python for the runtime API.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 python3-pip git curl ca-certificates \
+  && apt-get install -y --no-install-recommends python3 python3-pip git curl ca-certificates tini \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /runtime
@@ -80,4 +80,5 @@ ENV AMICABLE_PREVIEW_CMD="npm run dev -- -H 0.0.0.0 -p 3000"
 EXPOSE 8888
 EXPOSE 3000
 
+ENTRYPOINT ["tini", "--"]
 CMD ["uvicorn", "runtime:app", "--host", "0.0.0.0", "--port", "8888"]

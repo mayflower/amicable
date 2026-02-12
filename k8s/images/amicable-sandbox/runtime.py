@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import shlex
@@ -89,6 +90,7 @@ def _start_preview() -> None:
                     Path(pid_path).write_text(str(proc.pid), encoding="utf-8")
                 except Exception:
                     pass
+                proc.wait()
             finally:
                 try:
                     if logf is not None:
@@ -113,15 +115,24 @@ async def healthz() -> dict:
 
 @app.post("/exec", response_model=ExecResponse)
 async def exec_cmd(req: ExecRequest) -> ExecResponse:
+    timeout = int(os.environ.get("SANDBOX_EXEC_TIMEOUT_S", "600"))
     try:
         args = shlex.split(req.command)
-        proc = subprocess.run(
+        proc = await asyncio.to_thread(
+            subprocess.run,
             args,
             capture_output=True,
             text=True,
             cwd=str(APP_ROOT),
+            timeout=timeout,
         )
         return ExecResponse(stdout=proc.stdout, stderr=proc.stderr, exit_code=proc.returncode)
+    except subprocess.TimeoutExpired as exc:
+        return ExecResponse(
+            stdout=exc.stdout or "",
+            stderr=exc.stderr or f"Command timed out after {timeout}s",
+            exit_code=124,
+        )
     except Exception as exc:
         return ExecResponse(stdout="", stderr=f"Failed to execute command: {exc}", exit_code=1)
 
