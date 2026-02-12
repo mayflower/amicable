@@ -308,16 +308,15 @@ class FakeHasuraClient:
             }
             return {"result_type": "CommandOk", "result": []}
 
-        # UPDATE rename.
+        # UPDATE rename (membership is checked before SQL call, so no owner_sub in WHERE).
         if sql_l.startswith("update amicable_meta.projects") and "set name" in sql_l:
             pid = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I).group(
                 1
             )  # type: ignore[union-attr]
-            sub = re.search(r"and owner_sub\s*=\s*'([^']+)'", sql, flags=re.I).group(1)  # type: ignore[union-attr]
             name = re.search(r"set name\s*=\s*'([^']*)'", sql, flags=re.I).group(1)  # type: ignore[union-attr]
             slug = re.search(r"slug\s*=\s*'([^']*)'", sql, flags=re.I).group(1)  # type: ignore[union-attr]
             row = self.projects.get(pid)
-            if row and row["owner_sub"] == sub and not row.get("deleted_at"):
+            if row and not row.get("deleted_at"):
                 # enforce slug uniqueness
                 if any(
                     (
@@ -333,7 +332,7 @@ class FakeHasuraClient:
                 row["updated_at"] = "t1"
             return {"result_type": "CommandOk", "result": []}
 
-        # UPDATE mark deleted.
+        # UPDATE mark deleted (membership is checked before SQL call, so no owner_sub in WHERE).
         if (
             sql_l.startswith("update amicable_meta.projects")
             and "set deleted_at" in sql_l
@@ -341,21 +340,19 @@ class FakeHasuraClient:
             pid = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I).group(
                 1
             )  # type: ignore[union-attr]
-            sub = re.search(r"and owner_sub\s*=\s*'([^']+)'", sql, flags=re.I).group(1)  # type: ignore[union-attr]
             row = self.projects.get(pid)
-            if row and row["owner_sub"] == sub and not row.get("deleted_at"):
+            if row and not row.get("deleted_at"):
                 row["deleted_at"] = "t_del"
                 row["updated_at"] = "t_del"
             return {"result_type": "CommandOk", "result": []}
 
-        # DELETE project.
+        # DELETE project (membership is checked before SQL call, so no owner_sub in WHERE).
         if sql_l.startswith("delete from amicable_meta.projects"):
             pid = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I).group(
                 1
             )  # type: ignore[union-attr]
-            sub = re.search(r"and owner_sub\s*=\s*'([^']+)'", sql, flags=re.I).group(1)  # type: ignore[union-attr]
             row = self.projects.get(pid)
-            if row and row["owner_sub"] == sub:
+            if row:
                 self.projects.pop(pid, None)
             return {"result_type": "CommandOk", "result": []}
 
@@ -677,3 +674,43 @@ def test_project_lock_force_claim() -> None:
     current = get_project_lock(c, project_id=p.project_id)
     assert current is not None
     assert current.locked_by_sub == "u2"
+
+
+def test_member_can_delete_project() -> None:
+    """Any member can delete a project."""
+    c = FakeHasuraClient()
+    owner = ProjectOwner(sub="u1", email="u1@example.com")
+    other = ProjectOwner(sub="u2", email="u2@example.com")
+
+    from src.projects.store import add_project_member
+
+    p = create_project(c, owner=owner, name="Deletable")
+    add_project_member(
+        c,
+        project_id=p.project_id,
+        user_sub="u2",
+        user_email="u2@example.com",
+        added_by_sub="u1",
+    )
+
+    # u2 (not creator) deletes
+    mark_project_deleted(c, owner=other, project_id=p.project_id)
+
+    # Verify deleted
+    assert get_project_by_id(c, owner=owner, project_id=p.project_id) is None
+
+
+def test_non_member_cannot_delete_project() -> None:
+    """Non-members cannot delete a project."""
+    c = FakeHasuraClient()
+    owner = ProjectOwner(sub="u1", email="u1@example.com")
+    non_member = ProjectOwner(sub="u3", email="u3@example.com")
+
+    p = create_project(c, owner=owner, name="Protected")
+
+    # u3 (not a member) tries to delete
+    with pytest.raises(PermissionError):
+        mark_project_deleted(c, owner=non_member, project_id=p.project_id)
+
+    # Verify not deleted
+    assert get_project_by_id(c, owner=owner, project_id=p.project_id) is not None

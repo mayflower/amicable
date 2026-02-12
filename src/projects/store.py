@@ -644,7 +644,7 @@ def rename_project(
     ensure_projects_schema(client)
     base = slugify(new_name)
 
-    # Ensure project exists and is owned.
+    # Ensure project exists and user is a member (membership checked by get_project_by_id)
     existing = get_project_by_id(client, owner=owner, project_id=project_id)
     if not existing:
         raise PermissionError("project not found")
@@ -656,11 +656,12 @@ def rename_project(
         slug = _candidate_slug(base, suffix=suffix)
         if slug != existing.slug and not _slug_available(client, slug=slug):
             continue
+        # Update without owner_sub check since membership is already verified
         client.run_sql(
             f"""
             UPDATE amicable_meta.projects
             SET name = {_sql_str(new_name)}, slug = {_sql_str(slug)}, updated_at = now()
-            WHERE project_id = {_sql_str(project_id)} AND owner_sub = {_sql_str(owner.sub)} AND deleted_at IS NULL;
+            WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL;
             """.strip()
         )
         updated = get_project_by_id(client, owner=owner, project_id=project_id)
@@ -674,12 +675,17 @@ def mark_project_deleted(
     client: HasuraClient, *, owner: ProjectOwner, project_id: str
 ) -> None:
     ensure_projects_schema(client)
-    # Mark deleted first so it disappears from lists immediately.
+    # Verify user is a member before allowing delete
+    if not is_project_member(
+        client, project_id=project_id, user_sub=owner.sub, user_email=owner.email
+    ):
+        raise PermissionError("not a member")
+    # Mark deleted so it disappears from lists immediately.
     client.run_sql(
         f"""
         UPDATE amicable_meta.projects
         SET deleted_at = now(), updated_at = now()
-        WHERE project_id = {_sql_str(project_id)} AND owner_sub = {_sql_str(owner.sub)} AND deleted_at IS NULL;
+        WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL;
         """.strip()
     )
 
@@ -688,10 +694,15 @@ def hard_delete_project_row(
     client: HasuraClient, *, owner: ProjectOwner, project_id: str
 ) -> None:
     ensure_projects_schema(client)
+    # Verify user is a member before allowing hard delete
+    if not is_project_member(
+        client, project_id=project_id, user_sub=owner.sub, user_email=owner.email
+    ):
+        raise PermissionError("not a member")
     client.run_sql(
         f"""
         DELETE FROM amicable_meta.projects
-        WHERE project_id = {_sql_str(project_id)} AND owner_sub = {_sql_str(owner.sub)};
+        WHERE project_id = {_sql_str(project_id)};
         """.strip()
     )
 
