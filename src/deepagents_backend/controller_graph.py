@@ -199,7 +199,7 @@ def build_controller_graph(
             "qa_results": _qa_results_to_dicts(results),
         }
 
-    async def self_heal_message(state: ControllerState, _config: Any) -> dict[str, Any]:
+    async def self_heal_message(state: ControllerState, config: Any) -> dict[str, Any]:
         attempt = int(state.get("attempt") or 0) + 1
         qa_results = state.get("qa_results") or []
         msg = _format_last_failure(qa_results)
@@ -209,7 +209,7 @@ def build_controller_graph(
             "After edits, ensure `npm run -s build` succeeds."
         )
         try:
-            thread_id = _thread_id_from_config(_config)
+            thread_id = _thread_id_from_config(config)
             backend = get_backend(thread_id)
             pkg = await asyncio.to_thread(read_package_json, backend)
             if pkg is None and python_project_present(backend):
@@ -226,7 +226,7 @@ def build_controller_graph(
         messages.append(HumanMessage(content=msg))
         return {"attempt": attempt, "messages": messages}
 
-    async def qa_fail_summary(state: ControllerState, _config: Any) -> dict[str, Any]:
+    async def qa_fail_summary(state: ControllerState, config: Any) -> dict[str, Any]:
         qa_results = state.get("qa_results") or []
         attempt = int(state.get("attempt") or 0)
         max_rounds = self_heal_max_rounds()
