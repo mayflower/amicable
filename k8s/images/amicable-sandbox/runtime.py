@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import os
+import selectors
 import shlex
+import signal
 import subprocess
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -18,6 +22,159 @@ from pydantic import BaseModel
 APP_ROOT = Path("/app")
 
 app = FastAPI(title="Amicable Sandbox Runtime", version="1.0.0")
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return int(default)
+    try:
+        return int(raw)
+    except Exception:
+        return int(default)
+
+
+def _exec_timeout_s() -> int:
+    return max(1, _env_int("SANDBOX_EXEC_TIMEOUT_S", 600))
+
+
+def _exec_max_output_chars() -> int:
+    # Bound stdout/stderr so a noisy command can't OOM the runtime.
+    return max(10_000, _env_int("SANDBOX_EXEC_MAX_OUTPUT_CHARS", 200_000))
+
+
+def _decode_output(b: bytes) -> str:
+    try:
+        return b.decode("utf-8", errors="replace")
+    except Exception:
+        return b.decode(errors="replace")
+
+
+def _kill_process_tree(proc: subprocess.Popen[bytes]) -> None:
+    # `start_new_session=True` makes proc.pid the process group id on Linux.
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except Exception:
+        with contextlib.suppress(Exception):
+            proc.terminate()
+    try:
+        proc.wait(timeout=1.0)
+        return
+    except Exception:
+        pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        with contextlib.suppress(Exception):
+            proc.kill()
+
+
+def _run_command_limited(
+    *, args: list[str], cwd: str, timeout_s: int, max_output_chars: int
+) -> tuple[str, str, int]:
+    # Run without shell; capture stdout/stderr with truncation and a hard timeout.
+    max_bytes = max_output_chars * 4  # worst-case utf-8 expansion
+    proc: subprocess.Popen[bytes] = subprocess.Popen(
+        args,
+        cwd=cwd,
+        env=os.environ.copy(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    assert proc.stdout is not None
+    assert proc.stderr is not None
+
+    sel = selectors.DefaultSelector()
+    sel.register(proc.stdout, selectors.EVENT_READ, data="stdout")
+    sel.register(proc.stderr, selectors.EVENT_READ, data="stderr")
+
+    out = bytearray()
+    err = bytearray()
+    out_trunc = False
+    err_trunc = False
+
+    deadline = time.monotonic() + float(timeout_s)
+    while True:
+        # Drain pipes until EOF and process exit.
+        if proc.poll() is not None and not sel.get_map():
+            break
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _kill_process_tree(proc)
+            # Best-effort drain any remaining output quickly.
+            with contextlib.suppress(Exception):
+                while sel.get_map():
+                    for key, _ in sel.select(timeout=0):
+                        chunk = key.fileobj.read1(8192)  # type: ignore[attr-defined]
+                        if not chunk:
+                            sel.unregister(key.fileobj)
+                            with contextlib.suppress(Exception):
+                                key.fileobj.close()
+                            continue
+                        if key.data == "stdout":
+                            if len(out) < max_bytes:
+                                take = min(len(chunk), max_bytes - len(out))
+                                out.extend(chunk[:take])
+                                if take < len(chunk):
+                                    out_trunc = True
+                            else:
+                                out_trunc = True
+                        else:
+                            if len(err) < max_bytes:
+                                take = min(len(chunk), max_bytes - len(err))
+                                err.extend(chunk[:take])
+                                if take < len(chunk):
+                                    err_trunc = True
+                            else:
+                                err_trunc = True
+            stdout = _decode_output(bytes(out))
+            stderr = _decode_output(bytes(err)) or f"Command timed out after {timeout_s}s"
+            if out_trunc:
+                stdout = stdout[:max_output_chars] + "\n<output truncated>"
+            if err_trunc:
+                stderr = stderr[:max_output_chars] + "\n<output truncated>"
+            return stdout, stderr, 124
+
+        for key, _ in sel.select(timeout=min(0.2, remaining)):
+            stream = key.fileobj
+            try:
+                chunk = stream.read1(8192)  # type: ignore[attr-defined]
+            except Exception:
+                chunk = b""
+            if not chunk:
+                with contextlib.suppress(Exception):
+                    sel.unregister(stream)
+                with contextlib.suppress(Exception):
+                    stream.close()
+                continue
+
+            if key.data == "stdout":
+                if len(out) < max_bytes:
+                    take = min(len(chunk), max_bytes - len(out))
+                    out.extend(chunk[:take])
+                    if take < len(chunk):
+                        out_trunc = True
+                else:
+                    out_trunc = True
+            else:
+                if len(err) < max_bytes:
+                    take = min(len(chunk), max_bytes - len(err))
+                    err.extend(chunk[:take])
+                    if take < len(chunk):
+                        err_trunc = True
+                else:
+                    err_trunc = True
+
+    rc = int(proc.returncode or 0)
+    stdout = _decode_output(bytes(out))
+    stderr = _decode_output(bytes(err))
+    if out_trunc:
+        stdout = stdout[:max_output_chars] + "\n<output truncated>"
+    if err_trunc:
+        stderr = stderr[:max_output_chars] + "\n<output truncated>"
+    return stdout, stderr, rc
 
 
 class ExecRequest(BaseModel):
@@ -115,24 +272,18 @@ async def healthz() -> dict:
 
 @app.post("/exec", response_model=ExecResponse)
 async def exec_cmd(req: ExecRequest) -> ExecResponse:
-    timeout = int(os.environ.get("SANDBOX_EXEC_TIMEOUT_S", "600"))
     try:
         args = shlex.split(req.command)
-        proc = await asyncio.to_thread(
-            subprocess.run,
-            args,
-            capture_output=True,
-            text=True,
+        stdout, stderr, code = await asyncio.to_thread(
+            _run_command_limited,
+            args=args,
             cwd=str(APP_ROOT),
-            timeout=timeout,
+            timeout_s=_exec_timeout_s(),
+            max_output_chars=_exec_max_output_chars(),
         )
-        return ExecResponse(stdout=proc.stdout, stderr=proc.stderr, exit_code=proc.returncode)
-    except subprocess.TimeoutExpired as exc:
-        return ExecResponse(
-            stdout=exc.stdout or "",
-            stderr=exc.stderr or f"Command timed out after {timeout}s",
-            exit_code=124,
-        )
+        return ExecResponse(stdout=stdout, stderr=stderr, exit_code=code)
+    except ValueError as exc:
+        return ExecResponse(stdout="", stderr=f"Invalid command: {exc}", exit_code=2)
     except Exception as exc:
         return ExecResponse(stdout="", stderr=f"Failed to execute command: {exc}", exit_code=1)
 
@@ -153,19 +304,24 @@ async def list_files(dir: str = "src") -> dict:
     if not base.exists() or not base.is_dir():
         raise HTTPException(status_code=404, detail="dir not found")
 
-    out: list[str] = []
-    for root, dirs, files in os.walk(base):
-        # Skip node_modules for performance
-        dirs[:] = [d for d in dirs if d != "node_modules" and not d.startswith(".")]
-        for fn in files:
-            if fn.startswith("."):
-                continue
-            full = Path(root) / fn
-            rel = full.relative_to(APP_ROOT)
-            out.append(str(rel))
+    def _list_sync() -> list[str]:
+        out: list[str] = []
+        for root, dirs, files in os.walk(base):
+            # Skip node_modules for performance
+            dirs[:] = [
+                d for d in dirs if d != "node_modules" and not d.startswith(".")
+            ]
+            for fn in files:
+                if fn.startswith("."):
+                    continue
+                full = Path(root) / fn
+                rel = full.relative_to(APP_ROOT)
+                out.append(str(rel))
 
-    out.sort()
-    return {"files": out}
+        out.sort()
+        return out
+
+    return {"files": await asyncio.to_thread(_list_sync)}
 
 
 @app.get("/download/{file_path:path}")
@@ -178,42 +334,46 @@ async def download(file_path: str):
     if not full.exists() or not full.is_file():
         raise HTTPException(status_code=404, detail="file not found")
 
-    return Response(content=full.read_bytes(), media_type="application/octet-stream")
+    payload = await asyncio.to_thread(full.read_bytes)
+    return Response(content=payload, media_type="application/octet-stream")
 
 
 @app.post("/download_many")
 async def download_many(req: DownloadManyRequest) -> dict:
-    files: list[dict] = []
-    paths = req.paths if isinstance(req.paths, list) else []
-    for raw in paths:
-        p = str(raw or "")
-        try:
-            full = _safe_path(p)
-        except ValueError:
-            files.append({"path": p, "content_b64": None, "error": "invalid_path"})
-            continue
+    def _download_many_sync() -> dict:
+        files: list[dict] = []
+        paths = req.paths if isinstance(req.paths, list) else []
+        for raw in paths:
+            p = str(raw or "")
+            try:
+                full = _safe_path(p)
+            except ValueError:
+                files.append({"path": p, "content_b64": None, "error": "invalid_path"})
+                continue
 
-        if not full.exists():
-            files.append({"path": p, "content_b64": None, "error": "file_not_found"})
-            continue
-        if full.is_dir():
-            files.append({"path": p, "content_b64": None, "error": "is_directory"})
-            continue
-        try:
-            payload = full.read_bytes()
-        except PermissionError:
-            files.append({"path": p, "content_b64": None, "error": "permission_denied"})
-            continue
+            if not full.exists():
+                files.append({"path": p, "content_b64": None, "error": "file_not_found"})
+                continue
+            if full.is_dir():
+                files.append({"path": p, "content_b64": None, "error": "is_directory"})
+                continue
+            try:
+                payload = full.read_bytes()
+            except PermissionError:
+                files.append({"path": p, "content_b64": None, "error": "permission_denied"})
+                continue
 
-        files.append(
-            {
-                "path": p,
-                "content_b64": base64.b64encode(payload).decode("ascii"),
-                "error": None,
-            }
-        )
+            files.append(
+                {
+                    "path": p,
+                    "content_b64": base64.b64encode(payload).decode("ascii"),
+                    "error": None,
+                }
+            )
 
-    return {"files": files}
+        return {"files": files}
+
+    return await asyncio.to_thread(_download_many_sync)
 
 
 def _walk_manifest(base: Path, *, include_hidden: bool) -> list[_ManifestEntry]:
@@ -312,7 +472,9 @@ async def manifest(dir: str = ".", include_hidden: int = 1) -> dict:
     if not base.exists() or not base.is_dir():
         raise HTTPException(status_code=404, detail="dir not found")
 
-    entries = _walk_manifest(base, include_hidden=bool(int(include_hidden or 0)))
+    entries = await asyncio.to_thread(
+        _walk_manifest, base, include_hidden=bool(int(include_hidden or 0))
+    )
     payload = [
         {
             "path": e.path,
@@ -339,6 +501,9 @@ async def write_b64(req: WriteB64Request) -> dict:
     except Exception:
         raise HTTPException(status_code=400, detail="invalid base64")
 
-    full.parent.mkdir(parents=True, exist_ok=True)
-    full.write_bytes(payload)
+    def _write_sync() -> None:
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_bytes(payload)
+
+    await asyncio.to_thread(_write_sync)
     return {"ok": True, "path": str(req.path)}

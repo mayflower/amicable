@@ -122,6 +122,15 @@ def _runtime_auto_heal_max_attempts_per_fingerprint() -> int:
     return max(0, _env_int("AMICABLE_RUNTIME_AUTO_HEAL_MAX_ATTEMPTS_PER_FINGERPRINT", 2))
 
 
+def _autoheal_screenshot_enabled() -> bool:
+    return _env_bool("AMICABLE_AUTOHEAL_SCREENSHOT", True)
+
+
+def _autoheal_screenshot_max_base64_chars() -> int:
+    # Keep the auto-heal payload bounded; screenshots can get very large (especially full-page).
+    return max(50_000, _env_int("AMICABLE_AUTOHEAL_SCREENSHOT_MAX_BASE64_CHARS", 2_000_000))
+
+
 def _fingerprint_fallback(err: dict[str, Any]) -> str:
     kind = str(err.get("kind") or "")
     msg = str(err.get("message") or "")
@@ -146,6 +155,8 @@ def _runtime_autoheal_user_content_blocks(
 
     if not image_b64:
         return None
+    if len(image_b64) > _autoheal_screenshot_max_base64_chars():
+        return None
     return [
         {"type": "text", "text": prompt},
         {"type": "image", "base64": image_b64, "mime_type": mime_type},
@@ -161,6 +172,11 @@ def _max_user_image_base64_chars() -> int:
     return max(1_000, _env_int("AMICABLE_USER_IMAGE_MAX_BASE64_CHARS", 7_000_000))
 
 
+def _max_user_total_image_base64_chars() -> int:
+    # Total cap across all image blocks in one message.
+    return max(10_000, _env_int("AMICABLE_USER_IMAGE_MAX_TOTAL_BASE64_CHARS", 10_000_000))
+
+
 def _sanitize_user_content_blocks(
     raw_blocks: Any,
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
@@ -172,7 +188,9 @@ def _sanitize_user_content_blocks(
     out: list[dict[str, Any]] = []
     max_blocks = _max_user_image_blocks()
     max_b64 = _max_user_image_base64_chars()
+    max_total_b64 = _max_user_total_image_base64_chars()
     image_count = 0
+    total_b64 = 0
 
     for i, block in enumerate(raw_blocks):
         if not isinstance(block, dict):
@@ -199,6 +217,9 @@ def _sanitize_user_content_blocks(
             return None, f"content_blocks[{i}] image.base64 is required"
         if len(image_b64) > max_b64:
             return None, f"content_blocks[{i}] image is too large"
+        total_b64 += len(image_b64)
+        if total_b64 > max_total_b64:
+            return None, f"content_blocks[{i}] total attached images are too large"
         if not isinstance(mime_type, str) or not mime_type.startswith("image/"):
             return None, f"content_blocks[{i}] image.mime_type must start with image/"
 
@@ -751,26 +772,38 @@ async def api_git_sync_project(project_id: str, request: Request) -> JSONRespons
     if not git_sync_enabled():
         return JSONResponse({"error": "git_sync_disabled"}, status_code=409)
 
-    from src.db.provisioning import hasura_client_from_env
-    from src.gitlab.integration import ensure_gitlab_repo_for_project
-    from src.projects.store import ProjectOwner, get_project_by_id
+    def _load_sync():
+        from src.db.provisioning import hasura_client_from_env
+        from src.gitlab.integration import ensure_gitlab_repo_for_project
+        from src.projects.store import ProjectOwner, get_project_by_id
 
-    client = hasura_client_from_env()
-    owner = ProjectOwner(sub=sub, email=email)
-    project = get_project_by_id(client, owner=owner, project_id=str(project_id))
-    if not project:
-        return JSONResponse({"error": "not_found"}, status_code=404)
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        project = get_project_by_id(client, owner=owner, project_id=str(project_id))
+        if not project:
+            return {"error": "not_found"}
+        try:
+            project, git = ensure_gitlab_repo_for_project(
+                client, owner=owner, project=project
+            )
+        except Exception as e:
+            return {"error": "gitlab_error", "detail": str(e)}
+        return {"ok": True, "project": project, "git": git}
 
-    try:
-        project, git = ensure_gitlab_repo_for_project(
-            client, owner=owner, project=project
-        )
-    except Exception as e:
-        detail = str(e)
-        status = 503 if ("GITLAB_TOKEN" in detail or "required" in detail) else 502
-        return JSONResponse(
-            {"error": "gitlab_error", "detail": detail}, status_code=status
-        )
+    loaded = await asyncio.to_thread(_load_sync)
+    if not isinstance(loaded, dict) or not loaded.get("ok"):
+        if isinstance(loaded, dict) and loaded.get("error") == "not_found":
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        if isinstance(loaded, dict) and loaded.get("error") == "gitlab_error":
+            detail = str(loaded.get("detail") or "")
+            status = 503 if ("GITLAB_TOKEN" in detail or "required" in detail) else 502
+            return JSONResponse(
+                {"error": "gitlab_error", "detail": detail}, status_code=status
+            )
+        return JSONResponse({"error": "gitlab_error"}, status_code=502)
+
+    project = loaded["project"]
+    git = loaded["git"]
 
     repo_url = None
     if isinstance(git, dict):
@@ -847,22 +880,37 @@ async def api_git_status_project(project_id: str, request: Request) -> JSONRespo
     if not git_sync_enabled():
         return JSONResponse({"error": "git_sync_disabled"}, status_code=409)
 
-    from src.db.provisioning import hasura_client_from_env
-    from src.gitlab.integration import ensure_gitlab_repo_for_project
-    from src.projects.store import ProjectOwner, get_project_by_id
+    def _load_sync():
+        from src.db.provisioning import hasura_client_from_env
+        from src.gitlab.integration import ensure_gitlab_repo_for_project
+        from src.projects.store import ProjectOwner, get_project_by_id
 
-    client = hasura_client_from_env()
-    owner = ProjectOwner(sub=sub, email=email)
-    project = get_project_by_id(client, owner=owner, project_id=str(project_id))
-    if not project:
-        return JSONResponse({"error": "not_found"}, status_code=404)
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        project = get_project_by_id(client, owner=owner, project_id=str(project_id))
+        if not project:
+            return {"error": "not_found"}
+        try:
+            project, git = ensure_gitlab_repo_for_project(
+                client, owner=owner, project=project
+            )
+        except Exception as e:
+            return {"error": "gitlab_error", "detail": str(e)}
+        return {"ok": True, "project": project, "git": git}
 
-    try:
-        project, git = ensure_gitlab_repo_for_project(
-            client, owner=owner, project=project
-        )
-    except Exception as e:
-        return JSONResponse({"error": "gitlab_error", "detail": str(e)}, status_code=502)
+    loaded = await asyncio.to_thread(_load_sync)
+    if not isinstance(loaded, dict) or not loaded.get("ok"):
+        if isinstance(loaded, dict) and loaded.get("error") == "not_found":
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        if isinstance(loaded, dict) and loaded.get("error") == "gitlab_error":
+            return JSONResponse(
+                {"error": "gitlab_error", "detail": str(loaded.get("detail") or "")},
+                status_code=502,
+            )
+        return JSONResponse({"error": "gitlab_error"}, status_code=502)
+
+    project = loaded["project"]
+    git = loaded["git"]
 
     repo_url = None
     if isinstance(git, dict):
@@ -930,22 +978,37 @@ async def api_git_pull_project(project_id: str, request: Request) -> JSONRespons
     if not git_sync_enabled():
         return JSONResponse({"error": "git_sync_disabled"}, status_code=409)
 
-    from src.db.provisioning import hasura_client_from_env
-    from src.gitlab.integration import ensure_gitlab_repo_for_project
-    from src.projects.store import ProjectOwner, get_project_by_id
+    def _load_sync():
+        from src.db.provisioning import hasura_client_from_env
+        from src.gitlab.integration import ensure_gitlab_repo_for_project
+        from src.projects.store import ProjectOwner, get_project_by_id
 
-    client = hasura_client_from_env()
-    owner = ProjectOwner(sub=sub, email=email)
-    project = get_project_by_id(client, owner=owner, project_id=str(project_id))
-    if not project:
-        return JSONResponse({"error": "not_found"}, status_code=404)
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        project = get_project_by_id(client, owner=owner, project_id=str(project_id))
+        if not project:
+            return {"error": "not_found"}
+        try:
+            project, git = ensure_gitlab_repo_for_project(
+                client, owner=owner, project=project
+            )
+        except Exception as e:
+            return {"error": "gitlab_error", "detail": str(e)}
+        return {"ok": True, "project": project, "git": git}
 
-    try:
-        project, git = ensure_gitlab_repo_for_project(
-            client, owner=owner, project=project
-        )
-    except Exception as e:
-        return JSONResponse({"error": "gitlab_error", "detail": str(e)}, status_code=502)
+    loaded = await asyncio.to_thread(_load_sync)
+    if not isinstance(loaded, dict) or not loaded.get("ok"):
+        if isinstance(loaded, dict) and loaded.get("error") == "not_found":
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        if isinstance(loaded, dict) and loaded.get("error") == "gitlab_error":
+            return JSONResponse(
+                {"error": "gitlab_error", "detail": str(loaded.get("detail") or "")},
+                status_code=502,
+            )
+        return JSONResponse({"error": "gitlab_error"}, status_code=502)
+
+    project = loaded["project"]
+    git = loaded["git"]
 
     repo_url = None
     if isinstance(git, dict):
@@ -997,7 +1060,6 @@ async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
     from fastapi import BackgroundTasks
 
     from src.db.cleanup import cleanup_app_db
-    from src.db.provisioning import hasura_client_from_env
     from src.deepagents_backend.session_sandbox_manager import SessionSandboxManager
     from src.gitlab.integration import delete_gitlab_repo_for_project
     from src.projects.store import (
@@ -1007,19 +1069,35 @@ async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
         mark_project_deleted,
     )
 
-    client = hasura_client_from_env()
-    owner = ProjectOwner(sub=sub, email=email)
-    p = get_project_by_id(client, owner=owner, project_id=project_id)
-    if not p:
-        return JSONResponse({"error": "not_found"}, status_code=404)
+    def _mark_deleted_sync():
+        from src.db.provisioning import hasura_client_from_env
 
-    # Mark deleted immediately (so it disappears from the list), then cleanup async.
-    mark_project_deleted(client, owner=owner, project_id=project_id)
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        p = get_project_by_id(client, owner=owner, project_id=project_id)
+        if not p:
+            return {"error": "not_found"}
+        # Mark deleted immediately (so it disappears from the list), then cleanup async.
+        mark_project_deleted(client, owner=owner, project_id=project_id)
+        return {"ok": True, "project": p}
+
+    marked = await asyncio.to_thread(_mark_deleted_sync)
+    if not isinstance(marked, dict) or not marked.get("ok"):
+        if isinstance(marked, dict) and marked.get("error") == "not_found":
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        return JSONResponse({"error": "delete_failed"}, status_code=500)
+
+    p = marked["project"]
 
     bg = BackgroundTasks()
 
     def _cleanup() -> None:
         import contextlib
+
+        from src.db.provisioning import hasura_client_from_env
+
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
 
         # Best-effort GitLab cleanup. Project deletion should not be blocked by GitLab.
         with contextlib.suppress(Exception):
@@ -1058,6 +1136,11 @@ def _ensure_project_access(request: Request, *, project_id: str):
     return p
 
 
+async def _ensure_project_access_async(request: Request, *, project_id: str):
+    # Must not block the event loop (Hasura/GitLab calls are synchronous).
+    return await asyncio.to_thread(_ensure_project_access, request, project_id=project_id)
+
+
 def _get_agent() -> Agent:
     global _agent
     if _agent is None:
@@ -1068,23 +1151,27 @@ def _get_agent() -> Agent:
 @app.get("/api/db/{project_id}/schema")
 async def api_db_schema_get(project_id: str, request: Request) -> JSONResponse:
     try:
-        proj = _ensure_project_access(request, project_id=project_id)
+        proj = await _ensure_project_access_async(request, project_id=project_id)
     except PermissionError as e:
         code = 401 if str(e) == "not_authenticated" else 404
         return JSONResponse({"error": str(e)}, status_code=code)
 
-    from src.db.provisioning import ensure_app, hasura_client_from_env
-    from src.db.schema_diff import compute_schema_version
-    from src.db.schema_introspection import introspect_schema
+    def _load_sync():
+        from src.db.provisioning import ensure_app, hasura_client_from_env
+        from src.db.schema_diff import compute_schema_version
+        from src.db.schema_introspection import introspect_schema
 
-    client = hasura_client_from_env()
-    app = ensure_app(client, app_id=str(project_id))
-    schema = introspect_schema(
-        client,
-        app_id=str(project_id),
-        schema_name=app.schema_name,
-    )
-    version = compute_schema_version(schema)
+        client = hasura_client_from_env()
+        app = ensure_app(client, app_id=str(project_id))
+        schema = introspect_schema(
+            client,
+            app_id=str(project_id),
+            schema_name=app.schema_name,
+        )
+        version = compute_schema_version(schema)
+        return app, schema, version
+
+    app, schema, version = await asyncio.to_thread(_load_sync)
     return JSONResponse(
         {
             "schema": schema,
@@ -1100,7 +1187,7 @@ async def api_db_schema_get(project_id: str, request: Request) -> JSONResponse:
 @app.post("/api/db/{project_id}/schema/intent")
 async def api_db_schema_intent(project_id: str, request: Request) -> JSONResponse:
     try:
-        _proj = _ensure_project_access(request, project_id=project_id)
+        _proj = await _ensure_project_access_async(request, project_id=project_id)
     except PermissionError as e:
         code = 401 if str(e) == "not_authenticated" else 404
         return JSONResponse({"error": str(e)}, status_code=code)
@@ -1121,41 +1208,53 @@ async def api_db_schema_intent(project_id: str, request: Request) -> JSONRespons
     if not intent_text:
         return JSONResponse({"error": "missing_intent_text"}, status_code=400)
 
-    from src.db.provisioning import ensure_app, hasura_client_from_env
-    from src.db.schema_ai_intent import generate_schema_intent
-    from src.db.schema_diff import SchemaValidationError, compute_schema_version
-    from src.db.schema_introspection import introspect_schema
+    def _intent_sync():
+        from src.db.provisioning import ensure_app, hasura_client_from_env
+        from src.db.schema_ai_intent import generate_schema_intent
+        from src.db.schema_diff import SchemaValidationError, compute_schema_version
+        from src.db.schema_introspection import introspect_schema
 
-    client = hasura_client_from_env()
-    app = ensure_app(client, app_id=str(project_id))
-    current = introspect_schema(
-        client,
-        app_id=str(project_id),
-        schema_name=app.schema_name,
-    )
-    current_version = compute_schema_version(current)
-    if base_version and base_version != current_version:
+        client = hasura_client_from_env()
+        app = ensure_app(client, app_id=str(project_id))
+        current = introspect_schema(
+            client,
+            app_id=str(project_id),
+            schema_name=app.schema_name,
+        )
+        current_version = compute_schema_version(current)
+        if base_version and base_version != current_version:
+            return {"error": "version_conflict", "current_version": current_version, "schema": current}
+
+        d = dict(draft)
+        d.setdefault("app_id", str(project_id))
+        d.setdefault("schema_name", app.schema_name)
+
+        try:
+            result = generate_schema_intent(
+                current=current,
+                draft=d,
+                intent_text=intent_text,
+            )
+        except SchemaValidationError as e:
+            return {"error": "invalid_draft", "detail": str(e)}
+        return {"ok": True, "base_version": current_version, "result": result}
+
+    out = await asyncio.to_thread(_intent_sync)
+    if isinstance(out, dict) and out.get("error") == "version_conflict":
         return JSONResponse(
             {
                 "error": "version_conflict",
-                "current_version": current_version,
-                "schema": current,
+                "current_version": out.get("current_version"),
+                "schema": out.get("schema"),
             },
             status_code=409,
         )
+    if isinstance(out, dict) and out.get("error") == "invalid_draft":
+        return JSONResponse({"error": "invalid_draft", "detail": out.get("detail")}, status_code=400)
+    if not isinstance(out, dict) or not out.get("ok"):
+        return JSONResponse({"error": "intent_failed"}, status_code=500)
 
-    draft = dict(draft)
-    draft.setdefault("app_id", str(project_id))
-    draft.setdefault("schema_name", app.schema_name)
-
-    try:
-        result = generate_schema_intent(
-            current=current,
-            draft=draft,
-            intent_text=intent_text,
-        )
-    except SchemaValidationError as e:
-        return JSONResponse({"error": "invalid_draft", "detail": str(e)}, status_code=400)
+    result = out.get("result") or {}
 
     raw_options = list(result.get("clarification_options") or [])
     clarification_options: list[dict[str, str]] = []
@@ -1169,7 +1268,7 @@ async def api_db_schema_intent(project_id: str, request: Request) -> JSONRespons
 
     return JSONResponse(
         {
-            "base_version": current_version,
+            "base_version": out.get("base_version"),
             "draft": result.get("draft") or draft,
             "assistant_message": str(result.get("assistant_message") or "").strip(),
             "change_cards": result.get("change_cards") or [],
@@ -1187,7 +1286,7 @@ async def api_db_schema_intent(project_id: str, request: Request) -> JSONRespons
 @app.post("/api/db/{project_id}/schema/review")
 async def api_db_schema_review(project_id: str, request: Request) -> JSONResponse:
     try:
-        _proj = _ensure_project_access(request, project_id=project_id)
+        _proj = await _ensure_project_access_async(request, project_id=project_id)
     except PermissionError as e:
         code = 401 if str(e) == "not_authenticated" else 404
         return JSONResponse({"error": str(e)}, status_code=code)
@@ -1205,42 +1304,55 @@ async def api_db_schema_review(project_id: str, request: Request) -> JSONRespons
     if not isinstance(draft, dict):
         return JSONResponse({"error": "invalid_draft"}, status_code=400)
 
-    from src.db.provisioning import ensure_app, hasura_client_from_env
-    from src.db.schema_ai_review import generate_schema_review
-    from src.db.schema_diff import (
-        SchemaValidationError,
-        build_schema_diff,
-        compute_schema_version,
-    )
-    from src.db.schema_introspection import introspect_schema
+    def _review_sync():
+        from src.db.provisioning import ensure_app, hasura_client_from_env
+        from src.db.schema_ai_review import generate_schema_review
+        from src.db.schema_diff import (
+            SchemaValidationError,
+            build_schema_diff,
+            compute_schema_version,
+        )
+        from src.db.schema_introspection import introspect_schema
 
-    client = hasura_client_from_env()
-    app = ensure_app(client, app_id=str(project_id))
-    current = introspect_schema(
-        client,
-        app_id=str(project_id),
-        schema_name=app.schema_name,
-    )
-    current_version = compute_schema_version(current)
-    if base_version and base_version != current_version:
+        client = hasura_client_from_env()
+        app = ensure_app(client, app_id=str(project_id))
+        current = introspect_schema(
+            client,
+            app_id=str(project_id),
+            schema_name=app.schema_name,
+        )
+        current_version = compute_schema_version(current)
+        if base_version and base_version != current_version:
+            return {"error": "version_conflict", "current_version": current_version, "schema": current}
+
+        d = dict(draft)
+        d.setdefault("app_id", str(project_id))
+        d.setdefault("schema_name", app.schema_name)
+        try:
+            diff = build_schema_diff(current, d)
+        except SchemaValidationError as e:
+            return {"error": "invalid_draft", "detail": str(e)}
+
+        review = generate_schema_review(current=current, diff=diff)
+        return {"ok": True, "base_version": current_version, "review": review, "diff": diff}
+
+    out = await asyncio.to_thread(_review_sync)
+    if isinstance(out, dict) and out.get("error") == "version_conflict":
         return JSONResponse(
             {
                 "error": "version_conflict",
-                "current_version": current_version,
-                "schema": current,
+                "current_version": out.get("current_version"),
+                "schema": out.get("schema"),
             },
             status_code=409,
         )
+    if isinstance(out, dict) and out.get("error") == "invalid_draft":
+        return JSONResponse({"error": "invalid_draft", "detail": out.get("detail")}, status_code=400)
+    if not isinstance(out, dict) or not out.get("ok"):
+        return JSONResponse({"error": "review_failed"}, status_code=500)
 
-    draft = dict(draft)
-    draft.setdefault("app_id", str(project_id))
-    draft.setdefault("schema_name", app.schema_name)
-    try:
-        diff = build_schema_diff(current, draft)
-    except SchemaValidationError as e:
-        return JSONResponse({"error": "invalid_draft", "detail": str(e)}, status_code=400)
-
-    review = generate_schema_review(current=current, diff=diff)
+    review = out.get("review")
+    diff = out.get("diff") or {}
     return JSONResponse(
         {
             "review": review,
@@ -1249,7 +1361,7 @@ async def api_db_schema_review(project_id: str, request: Request) -> JSONRespons
             "destructive": bool(diff.get("destructive")),
             "destructive_details": diff.get("destructive_details") or [],
             "sql_preview": diff.get("sql") or [],
-            "base_version": current_version,
+            "base_version": out.get("base_version"),
         },
         status_code=200,
     )
@@ -1279,64 +1391,105 @@ async def api_db_schema_apply(project_id: str, request: Request) -> JSONResponse
     if not isinstance(draft, dict):
         return JSONResponse({"error": "invalid_draft"}, status_code=400)
 
-    from src.db.provisioning import ensure_app, hasura_client_from_env
-    from src.db.schema_ai_review import generate_schema_review
-    from src.db.schema_apply import apply_schema_changes
-    from src.db.schema_diff import (
-        SchemaValidationError,
-        build_schema_diff,
-        compute_schema_version,
-    )
-    from src.db.schema_introspection import introspect_schema
     from src.gitlab.config import git_sync_enabled, git_sync_required
-    from src.gitlab.integration import ensure_gitlab_repo_for_project
     from src.gitlab.sync import sync_sandbox_tree_to_repo
-    from src.projects.store import ProjectOwner, get_project_by_id
 
-    client = hasura_client_from_env()
-    owner = ProjectOwner(sub=sub, email=email)
-    project = get_project_by_id(client, owner=owner, project_id=str(project_id))
-    if not project:
-        return JSONResponse({"error": "not_found"}, status_code=404)
+    def _prepare_sync():
+        from src.db.provisioning import ensure_app, hasura_client_from_env
+        from src.db.schema_ai_review import generate_schema_review
+        from src.db.schema_diff import (
+            SchemaValidationError,
+            build_schema_diff,
+            compute_schema_version,
+        )
+        from src.db.schema_introspection import introspect_schema
+        from src.projects.store import ProjectOwner, get_project_by_id
 
-    app = ensure_app(client, app_id=str(project_id))
-    current = introspect_schema(
-        client,
-        app_id=str(project_id),
-        schema_name=app.schema_name,
-    )
-    current_version = compute_schema_version(current)
-    if base_version and base_version != current_version:
-        return JSONResponse(
-            {
+        client = hasura_client_from_env()
+        owner = ProjectOwner(sub=sub, email=email)
+        project = get_project_by_id(client, owner=owner, project_id=str(project_id))
+        if not project:
+            return {"error": "not_found"}
+
+        app = ensure_app(client, app_id=str(project_id))
+        current = introspect_schema(
+            client,
+            app_id=str(project_id),
+            schema_name=app.schema_name,
+        )
+        current_version = compute_schema_version(current)
+        if base_version and base_version != current_version:
+            return {
                 "error": "version_conflict",
                 "current_version": current_version,
                 "schema": current,
+            }
+
+        d = dict(draft)
+        d.setdefault("app_id", str(project_id))
+        d.setdefault("schema_name", app.schema_name)
+
+        try:
+            diff = build_schema_diff(current, d)
+        except SchemaValidationError as e:
+            return {"error": "invalid_draft", "detail": str(e)}
+
+        if diff.get("destructive") and not confirm_destructive:
+            review = generate_schema_review(current=current, diff=diff)
+            return {
+                "error": "destructive_confirmation_required",
+                "review": review,
+                "destructive_details": diff.get("destructive_details") or [],
+                "operations": diff.get("operations") or [],
+            }
+
+        return {
+            "ok": True,
+            "project": project,
+            "schema_name": app.schema_name,
+            "role_name": app.role_name,
+            "current": current,
+            "draft": d,
+            "diff": diff,
+        }
+
+    prep = await asyncio.to_thread(_prepare_sync)
+    if not isinstance(prep, dict):
+        return JSONResponse({"error": "apply_failed"}, status_code=500)
+    if prep.get("error") == "not_found":
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    if prep.get("error") == "version_conflict":
+        return JSONResponse(
+            {
+                "error": "version_conflict",
+                "current_version": prep.get("current_version"),
+                "schema": prep.get("schema"),
             },
             status_code=409,
         )
-
-    draft = dict(draft)
-    draft.setdefault("app_id", str(project_id))
-    draft.setdefault("schema_name", app.schema_name)
-
-    try:
-        diff = build_schema_diff(current, draft)
-    except SchemaValidationError as e:
-        return JSONResponse({"error": "invalid_draft", "detail": str(e)}, status_code=400)
-
-    if diff.get("destructive") and not confirm_destructive:
-        review = generate_schema_review(current=current, diff=diff)
+    if prep.get("error") == "invalid_draft":
+        return JSONResponse(
+            {"error": "invalid_draft", "detail": prep.get("detail")}, status_code=400
+        )
+    if prep.get("error") == "destructive_confirmation_required":
         return JSONResponse(
             {
                 "error": "destructive_confirmation_required",
-                "review": review,
+                "review": prep.get("review"),
                 "destructive": True,
-                "destructive_details": diff.get("destructive_details") or [],
-                "operations": diff.get("operations") or [],
+                "destructive_details": prep.get("destructive_details") or [],
+                "operations": prep.get("operations") or [],
             },
             status_code=409,
         )
+    if not prep.get("ok"):
+        return JSONResponse({"error": "apply_failed"}, status_code=500)
+
+    project = prep["project"]
+    schema_name = str(prep.get("schema_name") or "")
+    role_name = str(prep.get("role_name") or "")
+    current = prep.get("current")
+    draft = prep.get("draft")
 
     agent = _get_agent()
     await agent.init(
@@ -1347,27 +1500,56 @@ async def api_db_schema_apply(project_id: str, request: Request) -> JSONResponse
     assert agent._session_manager is not None
     backend = agent._session_manager.get_backend(str(project_id))
 
-    try:
-        apply_res = apply_schema_changes(
+    def _apply_sync():
+        from src.db.provisioning import hasura_client_from_env
+        from src.db.schema_apply import apply_schema_changes
+        from src.db.schema_diff import SchemaValidationError, compute_schema_version
+        from src.db.schema_introspection import introspect_schema
+
+        client = hasura_client_from_env()
+        try:
+            apply_res = apply_schema_changes(
+                client,
+                app_id=str(project_id),
+                schema_name=schema_name,
+                role_name=role_name,
+                current_schema=current,
+                draft_schema=draft,
+                backend=backend,
+            )
+        except SchemaValidationError as e:
+            return {"error": "invalid_draft", "detail": str(e)}
+        except Exception as e:
+            return {"error": "apply_failed", "detail": str(e)}
+
+        updated_schema = introspect_schema(
             client,
             app_id=str(project_id),
-            schema_name=app.schema_name,
-            role_name=app.role_name,
-            current_schema=current,
-            draft_schema=draft,
-            backend=backend,
+            schema_name=schema_name,
         )
-    except SchemaValidationError as e:
-        return JSONResponse({"error": "invalid_draft", "detail": str(e)}, status_code=400)
-    except Exception as e:
-        return JSONResponse({"error": "apply_failed", "detail": str(e)}, status_code=500)
+        updated_version = compute_schema_version(updated_schema)
+        return {
+            "ok": True,
+            "apply_res": apply_res,
+            "updated_schema": updated_schema,
+            "updated_version": updated_version,
+        }
 
-    updated_schema = introspect_schema(
-        client,
-        app_id=str(project_id),
-        schema_name=app.schema_name,
-    )
-    updated_version = compute_schema_version(updated_schema)
+    applied = await asyncio.to_thread(_apply_sync)
+    if not isinstance(applied, dict) or not applied.get("ok"):
+        if isinstance(applied, dict) and applied.get("error") == "invalid_draft":
+            return JSONResponse(
+                {"error": "invalid_draft", "detail": applied.get("detail")}, status_code=400
+            )
+        if isinstance(applied, dict) and applied.get("error") == "apply_failed":
+            return JSONResponse(
+                {"error": "apply_failed", "detail": applied.get("detail")}, status_code=500
+            )
+        return JSONResponse({"error": "apply_failed"}, status_code=500)
+
+    apply_res = applied.get("apply_res") or {}
+    updated_schema = applied.get("updated_schema")
+    updated_version = applied.get("updated_version")
 
     git_sync_result: dict[str, Any] = {
         "attempted": False,
@@ -1379,9 +1561,16 @@ async def api_db_schema_apply(project_id: str, request: Request) -> JSONResponse
     if git_sync_enabled():
         git_sync_result["attempted"] = True
         try:
-            project, git = ensure_gitlab_repo_for_project(
-                client, owner=owner, project=project
-            )
+            def _ensure_git_sync():
+                from src.db.provisioning import hasura_client_from_env
+                from src.gitlab.integration import ensure_gitlab_repo_for_project
+                from src.projects.store import ProjectOwner
+
+                client = hasura_client_from_env()
+                owner = ProjectOwner(sub=sub, email=email)
+                return ensure_gitlab_repo_for_project(client, owner=owner, project=project)
+
+            project, git = await asyncio.to_thread(_ensure_git_sync)
             repo_url = None
             if isinstance(git, dict):
                 repo_url = git.get("http_url_to_repo") or git.get("repo_http_url")
@@ -1443,7 +1632,7 @@ async def api_db_schema_apply(project_id: str, request: Request) -> JSONResponse
 @app.get("/api/sandbox/{project_id}/ls")
 async def api_sandbox_ls(project_id: str, request: Request, path: str = "/"):
     try:
-        proj = _ensure_project_access(request, project_id=project_id)
+        proj = await _ensure_project_access_async(request, project_id=project_id)
     except PermissionError as e:
         code = 401 if str(e) == "not_authenticated" else 404
         return JSONResponse({"error": str(e)}, status_code=code)
@@ -1463,14 +1652,14 @@ async def api_sandbox_ls(project_id: str, request: Request, path: str = "/"):
     assert agent._session_manager is not None
     backend = agent._session_manager.get_backend(project_id)
     fs = SandboxFs(backend)
-    entries = fs.ls(p)
+    entries = await asyncio.to_thread(fs.ls, p)
     return JSONResponse({"path": p, "entries": entries}, status_code=200)
 
 
 @app.get("/api/sandbox/{project_id}/read")
 async def api_sandbox_read(project_id: str, path: str, request: Request):
     try:
-        proj = _ensure_project_access(request, project_id=project_id)
+        proj = await _ensure_project_access_async(request, project_id=project_id)
     except PermissionError as e:
         code = 401 if str(e) == "not_authenticated" else 404
         return JSONResponse({"error": str(e)}, status_code=code)
@@ -1491,7 +1680,7 @@ async def api_sandbox_read(project_id: str, path: str, request: Request):
     backend = agent._session_manager.get_backend(project_id)
     fs = SandboxFs(backend)
     try:
-        r = fs.read(p)
+        r = await asyncio.to_thread(fs.read, p)
     except FileNotFoundError:
         return JSONResponse({"error": "not_found"}, status_code=404)
     return JSONResponse(
@@ -1508,7 +1697,7 @@ async def api_sandbox_read(project_id: str, path: str, request: Request):
 @app.put("/api/sandbox/{project_id}/write")
 async def api_sandbox_write(project_id: str, request: Request) -> JSONResponse:
     try:
-        proj = _ensure_project_access(request, project_id=project_id)
+        proj = await _ensure_project_access_async(request, project_id=project_id)
     except PermissionError as e:
         code = 401 if str(e) == "not_authenticated" else 404
         return JSONResponse({"error": str(e)}, status_code=code)
@@ -1544,7 +1733,9 @@ async def api_sandbox_write(project_id: str, request: Request) -> JSONResponse:
     backend = agent._session_manager.get_backend(project_id)
     fs = SandboxFs(backend)
     try:
-        sha = fs.write(path=p, content=content, expected_sha256=expected_sha)
+        sha = await asyncio.to_thread(
+            fs.write, path=p, content=content, expected_sha256=expected_sha
+        )
     except FileNotFoundError:
         return JSONResponse({"error": "not_found"}, status_code=404)
     except RuntimeError as e:
@@ -1560,7 +1751,7 @@ async def api_sandbox_write(project_id: str, request: Request) -> JSONResponse:
 @app.post("/api/sandbox/{project_id}/mkdir")
 async def api_sandbox_mkdir(project_id: str, request: Request) -> JSONResponse:
     try:
-        proj = _ensure_project_access(request, project_id=project_id)
+        proj = await _ensure_project_access_async(request, project_id=project_id)
     except PermissionError as e:
         code = 401 if str(e) == "not_authenticated" else 404
         return JSONResponse({"error": str(e)}, status_code=code)
@@ -1590,7 +1781,7 @@ async def api_sandbox_mkdir(project_id: str, request: Request) -> JSONResponse:
     backend = agent._session_manager.get_backend(project_id)
     fs = SandboxFs(backend)
     try:
-        fs.mkdir(p)
+        await asyncio.to_thread(fs.mkdir, p)
     except PermissionError:
         return JSONResponse({"error": "permission_denied"}, status_code=403)
     return JSONResponse({"path": p}, status_code=200)
@@ -1599,7 +1790,7 @@ async def api_sandbox_mkdir(project_id: str, request: Request) -> JSONResponse:
 @app.post("/api/sandbox/{project_id}/create")
 async def api_sandbox_create(project_id: str, request: Request) -> JSONResponse:
     try:
-        proj = _ensure_project_access(request, project_id=project_id)
+        proj = await _ensure_project_access_async(request, project_id=project_id)
     except PermissionError as e:
         code = 401 if str(e) == "not_authenticated" else 404
         return JSONResponse({"error": str(e)}, status_code=code)
@@ -1635,9 +1826,9 @@ async def api_sandbox_create(project_id: str, request: Request) -> JSONResponse:
     fs = SandboxFs(backend)
     try:
         if kind == "dir":
-            fs.mkdir(p)
+            await asyncio.to_thread(fs.mkdir, p)
             return JSONResponse({"path": p}, status_code=200)
-        sha = fs.create_file(path=p, content=content)
+        sha = await asyncio.to_thread(fs.create_file, path=p, content=content)
         return JSONResponse({"path": p, "sha256": sha}, status_code=200)
     except PermissionError:
         return JSONResponse({"error": "permission_denied"}, status_code=403)
@@ -1648,7 +1839,7 @@ async def api_sandbox_create(project_id: str, request: Request) -> JSONResponse:
 @app.post("/api/sandbox/{project_id}/rename")
 async def api_sandbox_rename(project_id: str, request: Request) -> JSONResponse:
     try:
-        proj = _ensure_project_access(request, project_id=project_id)
+        proj = await _ensure_project_access_async(request, project_id=project_id)
     except PermissionError as e:
         code = 401 if str(e) == "not_authenticated" else 404
         return JSONResponse({"error": str(e)}, status_code=code)
@@ -1680,7 +1871,7 @@ async def api_sandbox_rename(project_id: str, request: Request) -> JSONResponse:
     backend = agent._session_manager.get_backend(project_id)
     fs = SandboxFs(backend)
     try:
-        fs.rename(src=s, dst=d)
+        await asyncio.to_thread(fs.rename, src=s, dst=d)
     except PermissionError:
         return JSONResponse({"error": "permission_denied"}, status_code=403)
     return JSONResponse({"from": s, "to": d}, status_code=200)
@@ -1691,7 +1882,7 @@ async def api_sandbox_rm(
     project_id: str, request: Request, path: str, recursive: int = 0
 ) -> JSONResponse:
     try:
-        proj = _ensure_project_access(request, project_id=project_id)
+        proj = await _ensure_project_access_async(request, project_id=project_id)
     except PermissionError as e:
         code = 401 if str(e) == "not_authenticated" else 404
         return JSONResponse({"error": str(e)}, status_code=code)
@@ -1713,7 +1904,7 @@ async def api_sandbox_rm(
     backend = agent._session_manager.get_backend(project_id)
     fs = SandboxFs(backend)
     try:
-        fs.rm(path=p, recursive=rec)
+        await asyncio.to_thread(fs.rm, path=p, recursive=rec)
     except PermissionError:
         return JSONResponse({"error": "permission_denied"}, status_code=403)
     return JSONResponse({"path": p}, status_code=200)
@@ -2396,15 +2587,17 @@ async def _handle_ws(ws: WebSocket) -> None:
                 err=err, preview_logs=preview_logs
             )
             screenshot: dict[str, Any] | None = None
-            try:
-                screenshot = await agent.capture_preview_screenshot(
-                    session_id=str(session_id),
-                    path="/",
-                    full_page=True,
-                    timeout_s=12,
-                )
-            except Exception:
-                screenshot = None
+            if _autoheal_screenshot_enabled():
+                try:
+                    screenshot = await agent.capture_preview_screenshot(
+                        session_id=str(session_id),
+                        path="/",
+                        # Prefer a bounded payload and faster capture for auto-heal.
+                        full_page=False,
+                        timeout_s=12,
+                    )
+                except Exception:
+                    screenshot = None
             user_content_blocks = _runtime_autoheal_user_content_blocks(
                 prompt, screenshot
             )
