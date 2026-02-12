@@ -2068,11 +2068,13 @@ async def _handle_ws(ws: WebSocket) -> None:
                 from src.gitlab.integration import ensure_gitlab_repo_for_project
                 from src.projects.store import ProjectOwner, get_project_by_id
 
-                def _load_sync():
+                def _load_sync(
+                    *, sub_: str, email_: str, session_id_: str
+                ) -> tuple[Any, Any]:
                     client = hasura_client_from_env()
-                    owner = ProjectOwner(sub=sub, email=email)
+                    owner = ProjectOwner(sub=sub_, email=email_)
                     project = get_project_by_id(
-                        client, owner=owner, project_id=str(session_id)
+                        client, owner=owner, project_id=str(session_id_)
                     )
                     if not project:
                         raise PermissionError("not_found")
@@ -2081,7 +2083,12 @@ async def _handle_ws(ws: WebSocket) -> None:
                     )
                     return project2, git2
 
-                project, git = await asyncio.to_thread(_load_sync)
+                project, git = await asyncio.to_thread(
+                    _load_sync,
+                    sub_=sub,
+                    email_=email,
+                    session_id_=str(session_id),
+                )
             except PermissionError as e:
                 # Most common cause: user mismatch between cookie/session and session_id.
                 logger.warning(

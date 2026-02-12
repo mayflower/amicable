@@ -41,6 +41,8 @@ def origin_matches_expected(
     preview_base_domain: str,
     preview_scheme: str,
 ) -> bool:
+    # Kept for backwards compatible signature (callers may pass these as keywords).
+    del app_id, slug
     if not origin:
         return False
     try:

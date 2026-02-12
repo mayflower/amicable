@@ -11,6 +11,28 @@ type ChatMarkdownProps = {
   className?: string;
 };
 
+function isSafeLinkHref(href: string | undefined): href is string {
+  if (!href) return false;
+  const raw = href.trim();
+  if (!raw) return false;
+
+  // Allow in-page anchors and same-origin relative paths.
+  if (raw.startsWith("#") || raw.startsWith("/")) return true;
+
+  // Only allow well-known safe schemes.
+  try {
+    const u = new URL(raw);
+    return u.protocol === "http:" || u.protocol === "https:" || u.protocol === "mailto:";
+  } catch {
+    return false;
+  }
+}
+
+function safeUrlTransform(url: string): string {
+  // react-markdown uses this for href/src values. Return empty string to drop.
+  return isSafeLinkHref(url) ? url : "";
+}
+
 function textFromChildren(children: ReactNode): string {
   if (typeof children === "string") return children;
   if (!Array.isArray(children)) return "";
@@ -32,6 +54,7 @@ export function ChatMarkdown({ markdown, className }: ChatMarkdownProps) {
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
+        urlTransform={safeUrlTransform}
         components={{
           p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
           ul: ({ children }) => <ul className="my-2 list-disc pl-6">{children}</ul>,
@@ -75,14 +98,18 @@ export function ChatMarkdown({ markdown, className }: ChatMarkdownProps) {
             );
           },
           a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="break-all text-primary underline underline-offset-2 transition-opacity hover:opacity-80"
-            >
-              {children}
-            </a>
+            isSafeLinkHref(href) ? (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="break-all text-primary underline underline-offset-2 transition-opacity hover:opacity-80"
+              >
+                {children}
+              </a>
+            ) : (
+              <span className="break-all">{children}</span>
+            )
           ),
           table: ({ children }) => (
             <div className="my-2 overflow-x-auto">

@@ -77,7 +77,8 @@ def _capture_single_url(
                     viewport={"width": viewport_width, "height": viewport_height}
                 )
                 page = context.new_page()
-                page.goto(target_url, wait_until="networkidle", timeout=timeout_ms)
+                # `networkidle` is unreliable for dev servers (for example Vite HMR keeps websockets open).
+                page.goto(target_url, wait_until="load", timeout=timeout_ms)
                 page.wait_for_timeout(250)
                 image_bytes = page.screenshot(
                     type="jpeg",

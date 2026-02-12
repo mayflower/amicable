@@ -211,8 +211,8 @@ def build_controller_graph(
         try:
             thread_id = _thread_id_from_config(config)
             backend = get_backend(thread_id)
-            pkg = await asyncio.to_thread(read_package_json, backend)
-            if pkg is None and python_project_present(backend):
+            pkg: PackageJsonReadResult = await asyncio.to_thread(read_package_json, backend)
+            if not pkg.exists and python_project_present(backend):
                 hint = (
                     "\n\nPlease fix the cause, then make QA pass. "
                     "If dependencies are missing, run `pip install -r requirements.txt`. "
@@ -227,6 +227,10 @@ def build_controller_graph(
         return {"attempt": attempt, "messages": messages}
 
     async def qa_fail_summary(state: ControllerState, config: Any) -> dict[str, Any]:
+        # `config` must be named exactly this way for LangChain/LangGraph introspection.
+        # Keep it in the signature and mark as used to satisfy linting.
+        _ = config
+
         qa_results = state.get("qa_results") or []
         attempt = int(state.get("attempt") or 0)
         max_rounds = self_heal_max_rounds()
