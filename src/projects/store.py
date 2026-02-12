@@ -122,6 +122,15 @@ class Project:
     updated_at: str | None = None
 
 
+@dataclass(frozen=True)
+class ProjectMember:
+    project_id: str
+    user_sub: str | None  # None if invited by email but not yet logged in
+    user_email: str
+    added_at: str | None = None
+    added_by_sub: str | None = None
+
+
 def _tuples_to_dicts(res: dict[str, Any]) -> list[dict[str, Any]]:
     rows = res.get("result")
     if not isinstance(rows, list) or len(rows) < 2:
@@ -517,6 +526,14 @@ def create_project(
         )
         p = _get_project_by_id_any_owner(client, project_id=project_id)
         if p and p.owner_sub == owner.sub:
+            # Add creator as first member
+            add_project_member(
+                client,
+                project_id=project_id,
+                user_sub=owner.sub,
+                user_email=owner.email,
+                added_by_sub=None,
+            )
             return p
 
     raise RuntimeError("failed to allocate unique project slug")
@@ -632,3 +649,129 @@ def hard_delete_project_row(
         WHERE project_id = {_sql_str(project_id)} AND owner_sub = {_sql_str(owner.sub)};
         """.strip()
     )
+
+
+# ---------------------------------------------------------------------------
+# Project Members
+# ---------------------------------------------------------------------------
+
+
+def _get_member_by_email(
+    client: HasuraClient, *, project_id: str, user_email: str
+) -> ProjectMember | None:
+    res = client.run_sql(
+        f"""
+        SELECT project_id, user_sub, user_email, added_at, added_by_sub
+        FROM amicable_meta.project_members
+        WHERE project_id = {_sql_str(project_id)} AND user_email = {_sql_str(user_email.lower())}
+        LIMIT 1;
+        """.strip(),
+        read_only=True,
+    )
+    rows = _tuples_to_dicts(res)
+    if not rows:
+        return None
+    r = rows[0]
+    return ProjectMember(
+        project_id=str(r["project_id"]),
+        user_sub=str(r["user_sub"]) if r.get("user_sub") else None,
+        user_email=str(r["user_email"]),
+        added_at=str(r.get("added_at")) if r.get("added_at") else None,
+        added_by_sub=str(r.get("added_by_sub")) if r.get("added_by_sub") else None,
+    )
+
+
+def add_project_member(
+    client: HasuraClient,
+    *,
+    project_id: str,
+    user_email: str,
+    user_sub: str | None = None,
+    added_by_sub: str | None = None,
+) -> ProjectMember:
+    """Add a member to a project. If user_sub is None, they'll be matched on first login."""
+    ensure_projects_schema(client)
+    user_email = user_email.strip().lower()
+
+    # Check if already a member by email
+    existing = _get_member_by_email(client, project_id=project_id, user_email=user_email)
+    if existing:
+        return existing
+
+    sub_sql = _sql_str(user_sub) if user_sub else "NULL"
+    added_by_sql = _sql_str(added_by_sub) if added_by_sub else "NULL"
+
+    client.run_sql(
+        f"""
+        INSERT INTO amicable_meta.project_members (project_id, user_sub, user_email, added_by_sub)
+        VALUES ({_sql_str(project_id)}, {sub_sql}, {_sql_str(user_email)}, {added_by_sql})
+        ON CONFLICT (project_id, user_sub) DO NOTHING;
+        """.strip()
+    )
+    return ProjectMember(
+        project_id=project_id,
+        user_sub=user_sub,
+        user_email=user_email,
+        added_by_sub=added_by_sub,
+    )
+
+
+def list_project_members(client: HasuraClient, *, project_id: str) -> list[ProjectMember]:
+    """List all members of a project."""
+    ensure_projects_schema(client)
+    res = client.run_sql(
+        f"""
+        SELECT project_id, user_sub, user_email, added_at, added_by_sub
+        FROM amicable_meta.project_members
+        WHERE project_id = {_sql_str(project_id)}
+        ORDER BY added_at ASC;
+        """.strip(),
+        read_only=True,
+    )
+    out: list[ProjectMember] = []
+    for r in _tuples_to_dicts(res):
+        out.append(
+            ProjectMember(
+                project_id=str(r["project_id"]),
+                user_sub=str(r["user_sub"]) if r.get("user_sub") else None,
+                user_email=str(r["user_email"]),
+                added_at=str(r.get("added_at")) if r.get("added_at") else None,
+                added_by_sub=str(r.get("added_by_sub")) if r.get("added_by_sub") else None,
+            )
+        )
+    return out
+
+
+def remove_project_member(
+    client: HasuraClient, *, project_id: str, user_sub: str
+) -> bool:
+    """Remove a member from a project. Returns False if they were the last member."""
+    ensure_projects_schema(client)
+    members = list_project_members(client, project_id=project_id)
+    if len(members) <= 1:
+        return False
+    client.run_sql(
+        f"""
+        DELETE FROM amicable_meta.project_members
+        WHERE project_id = {_sql_str(project_id)} AND user_sub = {_sql_str(user_sub)};
+        """.strip()
+    )
+    return True
+
+
+def is_project_member(
+    client: HasuraClient, *, project_id: str, user_sub: str, user_email: str
+) -> bool:
+    """Check if a user is a member of a project (by sub or email)."""
+    ensure_projects_schema(client)
+    res = client.run_sql(
+        f"""
+        SELECT 1 FROM amicable_meta.project_members
+        WHERE project_id = {_sql_str(project_id)}
+          AND (user_sub = {_sql_str(user_sub)} OR user_email = {_sql_str(user_email.lower())})
+        LIMIT 1;
+        """.strip(),
+        read_only=True,
+    )
+    rows = _tuples_to_dicts(res)
+    return bool(rows)

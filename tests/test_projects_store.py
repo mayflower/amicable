@@ -229,7 +229,7 @@ class FakeHasuraClient:
                 row["updated_at"] = "t_del"
             return {"result_type": "CommandOk", "result": []}
 
-        # DELETE.
+        # DELETE project.
         if sql_l.startswith("delete from amicable_meta.projects"):
             pid = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I).group(
                 1
@@ -238,6 +238,89 @@ class FakeHasuraClient:
             row = self.projects.get(pid)
             if row and row["owner_sub"] == sub:
                 self.projects.pop(pid, None)
+            return {"result_type": "CommandOk", "result": []}
+
+        # ---------------------------------------------------------------
+        # Project Members
+        # ---------------------------------------------------------------
+
+        # INSERT member
+        if sql_l.startswith("insert into amicable_meta.project_members"):
+            vals = re.search(r"values\s*\((.*)\)\s*on conflict", sql, flags=re.I | re.S)
+            if vals:
+                parts = [p.strip() for p in vals.group(1).split(",")]
+                pid = parts[0].strip("'")
+                user_sub = parts[1].strip("'") if parts[1].strip() != "NULL" else None
+                user_email = parts[2].strip("'").lower()
+                added_by = (
+                    parts[3].strip("'")
+                    if len(parts) > 3 and parts[3].strip() != "NULL"
+                    else None
+                )
+                # Use user_sub as key if available, else email
+                key = (pid, user_sub or user_email)
+                if key not in self.members:
+                    self.members[key] = {
+                        "project_id": pid,
+                        "user_sub": user_sub,
+                        "user_email": user_email,
+                        "added_at": "t0",
+                        "added_by_sub": added_by,
+                    }
+            return {"result_type": "CommandOk", "result": []}
+
+        # SELECT members by project_id
+        if "from amicable_meta.project_members" in sql_l and sql_l.startswith("select"):
+            pid_match = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I)
+            if pid_match:
+                pid = pid_match.group(1)
+                # Check for email filter (for _get_member_by_email)
+                email_match = re.search(
+                    r"and user_email\s*=\s*'([^']+)'", sql, flags=re.I
+                )
+                if email_match:
+                    email = email_match.group(1).lower()
+                    rows = [
+                        m
+                        for m in self.members.values()
+                        if m["project_id"] == pid and m["user_email"] == email
+                    ]
+                else:
+                    rows = [m for m in self.members.values() if m["project_id"] == pid]
+
+                # SELECT 1 for is_project_member
+                if sql_l.startswith("select 1"):
+                    if rows:
+                        return {"result_type": "TuplesOk", "result": [["1"], [1]]}
+                    return {"result_type": "TuplesOk", "result": [["1"]]}
+
+                header = [
+                    "project_id",
+                    "user_sub",
+                    "user_email",
+                    "added_at",
+                    "added_by_sub",
+                ]
+                out = [header]
+                for m in rows:
+                    out.append(
+                        [
+                            m["project_id"],
+                            m["user_sub"],
+                            m["user_email"],
+                            m["added_at"],
+                            m["added_by_sub"],
+                        ]
+                    )
+                return {"result_type": "TuplesOk", "result": out}
+
+        # DELETE member
+        if sql_l.startswith("delete from amicable_meta.project_members"):
+            pid_match = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I)
+            sub_match = re.search(r"and user_sub\s*=\s*'([^']+)'", sql, flags=re.I)
+            if pid_match and sub_match:
+                key = (pid_match.group(1), sub_match.group(1))
+                self.members.pop(key, None)
             return {"result_type": "CommandOk", "result": []}
 
         raise AssertionError(f"Unhandled SQL in test fake: {sql}")
@@ -307,3 +390,26 @@ def test_project_members_table_created() -> None:
     ensure_projects_schema(c)
     # The fake client should have received CREATE TABLE for project_members
     assert c.schema_created_tables.get("project_members") is True
+
+
+def test_add_and_list_project_members() -> None:
+    """Test adding and listing project members."""
+    c = FakeHasuraClient()
+    owner = ProjectOwner(sub="u1", email="u1@example.com")
+    p = create_project(c, owner=owner, name="Shared Project")
+
+    from src.projects.store import add_project_member, list_project_members
+
+    # Creator should already be a member
+    members = list_project_members(c, project_id=p.project_id)
+    assert len(members) == 1
+    assert members[0].user_sub == "u1"
+
+    # Add another member
+    add_project_member(
+        c, project_id=p.project_id, user_email="u2@example.com", added_by_sub="u1"
+    )
+    members = list_project_members(c, project_id=p.project_id)
+    assert len(members) == 2
+    emails = {m.user_email for m in members}
+    assert emails == {"u1@example.com", "u2@example.com"}
