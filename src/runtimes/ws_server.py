@@ -1268,13 +1268,15 @@ async def api_remove_project_member_by_email(
         if not project:
             return "not_found"
         success = remove_project_member_by_email(client, project_id=project_id, user_email=user_email)
-        return "ok" if success else "last_member"
+        # The underlying store only tells us whether a removal happened, not why it failed.
+        # Do not assume every failure is due to "last member"; report a generic failure instead.
+        return "ok" if success else "cannot_remove_member"
 
     result = await asyncio.to_thread(_remove_sync)
     if result == "not_found":
         return JSONResponse({"error": "not_found"}, status_code=404)
-    if result == "last_member":
-        return JSONResponse({"error": "cannot_remove_last_member"}, status_code=400)
+    if result == "cannot_remove_member":
+        return JSONResponse({"error": "cannot_remove_member"}, status_code=400)
 
     return JSONResponse({"ok": True})
 
