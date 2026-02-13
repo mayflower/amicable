@@ -97,3 +97,193 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  promote-staging:
+    name: Promote staging in data-cluster
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install yq
+        run: |
+          set -euo pipefail
+          YQ_VERSION="v4.44.6"
+          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Patch staging values in data-cluster
+        env:
+          DATA_CLUSTER_GITLAB_TOKEN: ${{ secrets.DATA_CLUSTER_GITLAB_TOKEN }}
+          BOT_NAME: ${{ vars.GITOPS_BOT_NAME || 'amicable-bot' }}
+          BOT_EMAIL: ${{ vars.GITOPS_BOT_EMAIL || 'amicable@mayflower.de' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DATA_CLUSTER_GITLAB_TOKEN}" ]; then
+            echo "Missing required secret: DATA_CLUSTER_GITLAB_TOKEN"
+            exit 1
+          fi
+
+          IMAGE_TAG="sha-${GITHUB_SHA::7}"
+          VALUES_FILE="/tmp/data-cluster/amicable/values-staging.yaml"
+
+          cat >/tmp/git-askpass-data-cluster.sh <<'EOF'
+          #!/usr/bin/env bash
+          case "$1" in
+            *Username*) echo "oauth2" ;;
+            *Password*) echo "${DATA_CLUSTER_GITLAB_TOKEN}" ;;
+            *) echo "" ;;
+          esac
+          EOF
+          chmod 700 /tmp/git-askpass-data-cluster.sh
+
+          rm -rf /tmp/data-cluster
+          GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/tmp/git-askpass-data-cluster.sh \
+            git clone https://git.mayflower.de/data/data-cluster.git /tmp/data-cluster
+
+          if [ ! -f "${VALUES_FILE}" ]; then
+            echo "Missing file: ${VALUES_FILE}"
+            exit 1
+          fi
+
+          echo "Patching ${VALUES_FILE} with image tag ${IMAGE_TAG}"
+          IMAGE_TAG="${IMAGE_TAG}" yq -i '
+            .images.agent.tag = strenv(IMAGE_TAG) |
+            .images.sandbox.tag = strenv(IMAGE_TAG) |
+            .images.editor.tag = strenv(IMAGE_TAG) |
+            .sandboxTemplates[].image.tag = strenv(IMAGE_TAG)
+          ' "${VALUES_FILE}"
+
+          cd /tmp/data-cluster
+          git config user.name "${BOT_NAME}"
+          git config user.email "${BOT_EMAIL}"
+
+          if git diff --quiet -- amicable/values-staging.yaml; then
+            echo "No staging values changes to commit."
+            exit 0
+          fi
+
+          git add amicable/values-staging.yaml
+          git commit -m "chore(amicable-staging): deploy ${IMAGE_TAG}"
+          git push origin main
+
+  promote-prod:
+    name: Promote production release
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install yq
+        run: |
+          set -euo pipefail
+          YQ_VERSION="v4.44.6"
+          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Patch prod values and ArgoCD app
+        env:
+          DATA_CLUSTER_GITLAB_TOKEN: ${{ secrets.DATA_CLUSTER_GITLAB_TOKEN }}
+          ARGOCD_GITLAB_TOKEN: ${{ secrets.ARGOCD_GITLAB_TOKEN }}
+          BOT_NAME: ${{ vars.GITOPS_BOT_NAME || 'amicable-bot' }}
+          BOT_EMAIL: ${{ vars.GITOPS_BOT_EMAIL || 'amicable@mayflower.de' }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DATA_CLUSTER_GITLAB_TOKEN}" ]; then
+            echo "Missing required secret: DATA_CLUSTER_GITLAB_TOKEN"
+            exit 1
+          fi
+
+          ARGOCD_GITLAB_TOKEN="${ARGOCD_GITLAB_TOKEN:-${DATA_CLUSTER_GITLAB_TOKEN}}"
+          if [ -z "${ARGOCD_GITLAB_TOKEN}" ]; then
+            echo "Missing required secret: ARGOCD_GITLAB_TOKEN (or fallback DATA_CLUSTER_GITLAB_TOKEN)"
+            exit 1
+          fi
+
+          VALUES_FILE="/tmp/data-cluster/amicable/values.yaml"
+          ARGO_FILE="/tmp/argocd/data-muc/platform-apps/amicable.yaml"
+
+          cat >/tmp/git-askpass-data-cluster.sh <<'EOF'
+          #!/usr/bin/env bash
+          case "$1" in
+            *Username*) echo "oauth2" ;;
+            *Password*) echo "${DATA_CLUSTER_GITLAB_TOKEN}" ;;
+            *) echo "" ;;
+          esac
+          EOF
+          chmod 700 /tmp/git-askpass-data-cluster.sh
+
+          cat >/tmp/git-askpass-argocd.sh <<'EOF'
+          #!/usr/bin/env bash
+          case "$1" in
+            *Username*) echo "oauth2" ;;
+            *Password*) echo "${ARGOCD_GITLAB_TOKEN}" ;;
+            *) echo "" ;;
+          esac
+          EOF
+          chmod 700 /tmp/git-askpass-argocd.sh
+
+          rm -rf /tmp/data-cluster /tmp/argocd
+          GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/tmp/git-askpass-data-cluster.sh \
+            git clone https://git.mayflower.de/data/data-cluster.git /tmp/data-cluster
+          GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/tmp/git-askpass-argocd.sh \
+            git clone https://git.mayflower.de/data/argocd.git /tmp/argocd
+
+          if [ ! -f "${VALUES_FILE}" ]; then
+            echo "Missing file: ${VALUES_FILE}"
+            exit 1
+          fi
+          if [ ! -f "${ARGO_FILE}" ]; then
+            echo "Missing file: ${ARGO_FILE}"
+            exit 1
+          fi
+
+          echo "Patching ${VALUES_FILE} with release tag ${RELEASE_TAG}"
+          RELEASE_TAG="${RELEASE_TAG}" yq -i '
+            .images.agent.tag = strenv(RELEASE_TAG) |
+            .images.sandbox.tag = strenv(RELEASE_TAG) |
+            .images.editor.tag = strenv(RELEASE_TAG) |
+            .sandboxTemplates[].image.tag = strenv(RELEASE_TAG)
+          ' "${VALUES_FILE}"
+
+          MATCH_COUNT="$(
+            yq '
+              .spec.sources
+              | map(select(.repoURL == "https://github.com/mayflower/amicable.git" and .path == "deploy/helm/amicable"))
+              | length
+            ' "${ARGO_FILE}"
+          )"
+          if [ "${MATCH_COUNT}" -ne 1 ]; then
+            echo "Expected exactly one matching Amicable chart source in ${ARGO_FILE}, got ${MATCH_COUNT}"
+            exit 1
+          fi
+
+          echo "Patching ${ARGO_FILE} chart targetRevision to ${RELEASE_TAG}"
+          RELEASE_TAG="${RELEASE_TAG}" yq -i '
+            (.spec.sources[] | select(.repoURL == "https://github.com/mayflower/amicable.git" and .path == "deploy/helm/amicable") | .targetRevision) = strenv(RELEASE_TAG)
+          ' "${ARGO_FILE}"
+
+          cd /tmp/data-cluster
+          git config user.name "${BOT_NAME}"
+          git config user.email "${BOT_EMAIL}"
+          if git diff --quiet -- amicable/values.yaml; then
+            echo "No production values changes to commit in data-cluster."
+          else
+            git add amicable/values.yaml
+            git commit -m "chore(amicable): release ${RELEASE_TAG}"
+            git push origin main
+          fi
+
+          cd /tmp/argocd
+          git config user.name "${BOT_NAME}"
+          git config user.email "${BOT_EMAIL}"
+          if git diff --quiet -- data-muc/platform-apps/amicable.yaml; then
+            echo "No ArgoCD application changes to commit."
+          else
+            git add data-muc/platform-apps/amicable.yaml
+            git commit -m "chore(argocd): pin amicable chart to ${RELEASE_TAG}"
+            git push origin main
+          fi
