@@ -2,13 +2,19 @@ import unittest
 
 from src.deepagents_backend.qa import (
     PackageJsonReadResult,
+    aspnetcore_project_present,
+    aspnetcore_qa_commands,
     detect_qa_commands,
     effective_qa_commands_for_backend,
     flutter_project_present,
     flutter_qa_commands,
+    phoenix_project_present,
+    phoenix_qa_commands,
     python_project_present,
     python_qa_commands,
     qa_enabled_from_env,
+    quarkus_project_present,
+    quarkus_qa_commands,
     read_package_json,
     run_qa,
 )
@@ -169,6 +175,12 @@ class TestDeepAgentsQa(unittest.TestCase):
                 def execute(self, command: str):
                     if "test -e package.json" in command:
                         return {"exit_code": 1, "output": "", "truncated": False}
+                    if "*.csproj" in command or "*.sln" in command:
+                        return {"exit_code": 1, "output": "", "truncated": False}
+                    if "test -e pom.xml" in command:
+                        return {"exit_code": 1, "output": "", "truncated": False}
+                    if "test -e mix.exs" in command:
+                        return {"exit_code": 1, "output": "", "truncated": False}
                     if "test -e pubspec.yaml" in command:
                         return {"exit_code": 0, "output": "", "truncated": False}
                     return {"exit_code": 1, "output": "", "truncated": False}
@@ -209,6 +221,110 @@ class TestDeepAgentsQa(unittest.TestCase):
                 os.environ.pop("DEEPAGENTS_QA_RUN_TESTS", None)
             else:
                 os.environ["DEEPAGENTS_QA_RUN_TESTS"] = old_run_tests
+
+    def test_aspnetcore_project_present_detects_csproj(self):
+        class _ExistsBackend:
+            def execute(self, command: str):
+                if "*.csproj" in command:
+                    return {"exit_code": 0, "output": "app.csproj", "truncated": False}
+                return {"exit_code": 1, "output": "", "truncated": False}
+
+        self.assertTrue(aspnetcore_project_present(_ExistsBackend()))
+
+    def test_aspnetcore_qa_commands(self):
+        self.assertEqual(aspnetcore_qa_commands(run_tests=False), ["dotnet build"])
+        self.assertEqual(
+            aspnetcore_qa_commands(run_tests=True),
+            ["dotnet build", "dotnet test"],
+        )
+
+    def test_quarkus_project_present_detects_pom_marker(self):
+        class _ExistsBackend:
+            def execute(self, command: str):
+                if "test -e pom.xml" in command:
+                    return {"exit_code": 0, "output": "", "truncated": False}
+                if "grep -q" in command and "io.quarkus" in command:
+                    return {"exit_code": 0, "output": "", "truncated": False}
+                return {"exit_code": 1, "output": "", "truncated": False}
+
+        self.assertTrue(quarkus_project_present(_ExistsBackend()))
+
+    def test_quarkus_qa_commands(self):
+        self.assertEqual(
+            quarkus_qa_commands(run_tests=False),
+            ["./mvnw -q -DskipTests compile"],
+        )
+        self.assertEqual(
+            quarkus_qa_commands(run_tests=True),
+            ["./mvnw -q -DskipTests compile", "./mvnw -q test"],
+        )
+
+    def test_phoenix_project_present_detects_mix_marker(self):
+        class _ExistsBackend:
+            def execute(self, command: str):
+                if "test -e mix.exs" in command:
+                    return {"exit_code": 0, "output": "", "truncated": False}
+                if "grep -q" in command and "phoenix" in command:
+                    return {"exit_code": 0, "output": "", "truncated": False}
+                return {"exit_code": 1, "output": "", "truncated": False}
+
+        self.assertTrue(phoenix_project_present(_ExistsBackend()))
+
+    def test_phoenix_qa_commands(self):
+        self.assertEqual(phoenix_qa_commands(run_tests=False), ["mix compile"])
+        self.assertEqual(
+            phoenix_qa_commands(run_tests=True),
+            ["mix compile", "mix test"],
+        )
+
+    def test_effective_qa_commands_detects_aspnetcore_when_no_package_json(self):
+        class _Backend:
+            def execute(self, command: str):
+                if "test -e package.json" in command:
+                    return {"exit_code": 1, "output": "", "truncated": False}
+                if "*.csproj" in command:
+                    return {"exit_code": 0, "output": "app.csproj", "truncated": False}
+                return {"exit_code": 1, "output": "", "truncated": False}
+
+        pkg = PackageJsonReadResult(exists=False, data=None, error=None)
+        cmds = effective_qa_commands_for_backend(_Backend(), pkg)
+        self.assertEqual(cmds, ["dotnet build"])
+
+    def test_effective_qa_commands_detects_quarkus_when_no_package_json(self):
+        class _Backend:
+            def execute(self, command: str):
+                if "test -e package.json" in command:
+                    return {"exit_code": 1, "output": "", "truncated": False}
+                if "*.csproj" in command or "*.sln" in command:
+                    return {"exit_code": 1, "output": "", "truncated": False}
+                if "test -e pom.xml" in command:
+                    return {"exit_code": 0, "output": "", "truncated": False}
+                if "grep -q" in command and "io.quarkus" in command:
+                    return {"exit_code": 0, "output": "", "truncated": False}
+                return {"exit_code": 1, "output": "", "truncated": False}
+
+        pkg = PackageJsonReadResult(exists=False, data=None, error=None)
+        cmds = effective_qa_commands_for_backend(_Backend(), pkg)
+        self.assertEqual(cmds, ["./mvnw -q -DskipTests compile"])
+
+    def test_effective_qa_commands_detects_phoenix_when_no_package_json(self):
+        class _Backend:
+            def execute(self, command: str):
+                if "test -e package.json" in command:
+                    return {"exit_code": 1, "output": "", "truncated": False}
+                if "*.csproj" in command or "*.sln" in command:
+                    return {"exit_code": 1, "output": "", "truncated": False}
+                if "test -e pom.xml" in command:
+                    return {"exit_code": 1, "output": "", "truncated": False}
+                if "test -e mix.exs" in command:
+                    return {"exit_code": 0, "output": "", "truncated": False}
+                if "grep -q" in command and "phoenix" in command:
+                    return {"exit_code": 0, "output": "", "truncated": False}
+                return {"exit_code": 1, "output": "", "truncated": False}
+
+        pkg = PackageJsonReadResult(exists=False, data=None, error=None)
+        cmds = effective_qa_commands_for_backend(_Backend(), pkg)
+        self.assertEqual(cmds, ["mix compile"])
 
 
 if __name__ == "__main__":

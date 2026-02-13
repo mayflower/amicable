@@ -10,12 +10,15 @@ from typing import Any, Literal, TypedDict
 from src.deepagents_backend.qa import (
     PackageJsonReadResult,
     QaCommandResult,
+    aspnetcore_project_present,
     effective_qa_commands_for_backend,
     flutter_project_present,
+    phoenix_project_present,
     python_project_present,
     python_qa_commands,
     qa_run_tests_enabled,
     qa_timeout_s,
+    quarkus_project_present,
     read_package_json,
     run_qa,
     self_heal_max_rounds,
@@ -219,6 +222,24 @@ def build_controller_graph(
                     "\n\nPlease fix the cause, then make QA pass. "
                     "If dependencies are missing, run `pip install -r requirements.txt`. "
                     "After edits, ensure `ruff check .` succeeds."
+                )
+            elif not pkg.exists and aspnetcore_project_present(backend):
+                hint = (
+                    "\n\nPlease fix the cause, then make QA pass. "
+                    "If dependencies are missing, run `dotnet restore`. "
+                    "After edits, ensure `dotnet build` succeeds."
+                )
+            elif not pkg.exists and quarkus_project_present(backend):
+                hint = (
+                    "\n\nPlease fix the cause, then make QA pass. "
+                    "If dependencies are missing, run `./mvnw -q dependency:resolve`. "
+                    "After edits, ensure `./mvnw -q -DskipTests compile` succeeds."
+                )
+            elif not pkg.exists and phoenix_project_present(backend):
+                hint = (
+                    "\n\nPlease fix the cause, then make QA pass. "
+                    "If dependencies are missing, run `mix deps.get`. "
+                    "After edits, ensure `mix compile` succeeds."
                 )
             elif not pkg.exists and flutter_project_present(backend):
                 hint = (

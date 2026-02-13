@@ -121,6 +121,10 @@ Backend template ids (and default):
 - `sveltekit`
 - `laravel`
 - `flutter`
+- `flutter`
+- `phoenix`
+- `aspnetcore`
+- `quarkus`
 
 The backend default is `DEFAULT_TEMPLATE_ID = "vite"` in `src/templates/registry.py`.
 

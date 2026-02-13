@@ -89,6 +89,12 @@ def _tags_for(template_id: str) -> tuple[str, ...]:
         return ("amicable", "typescript", "hono")
     if tid == "laravel":
         return ("amicable", "php", "laravel")
+    if tid == "phoenix":
+        return ("amicable", "elixir", "phoenix")
+    if tid == "aspnetcore":
+        return ("amicable", "csharp", "aspnetcore")
+    if tid == "quarkus":
+        return ("amicable", "java", "quarkus")
     # Unknown/future templates: keep stable but minimal.
     return ("amicable",)
 
@@ -105,6 +111,12 @@ def _sonar_sources_for(template_id: str) -> str:
         return "app"
     if tid == "laravel":
         return "app,resources,routes"
+    if tid == "phoenix":
+        return "lib"
+    if tid == "aspnetcore":
+        return "."
+    if tid == "quarkus":
+        return "src"
     return "."
 
 
@@ -331,6 +343,21 @@ def _dev_commands_for(template_id: str) -> tuple[str, str]:
         return (
             "flutter pub get\nflutter run -d web-server --web-hostname 0.0.0.0 --web-port 3000",
             "flutter analyze\nflutter test",
+        )
+    if tid == "phoenix":
+        return (
+            "mix deps.get\nmix phx.server",
+            "mix compile\nmix test",
+        )
+    if tid == "aspnetcore":
+        return (
+            "dotnet restore\ndotnet watch run --urls http://0.0.0.0:3000",
+            "dotnet build\ndotnet test",
+        )
+    if tid == "quarkus":
+        return (
+            "./mvnw quarkus:dev -Dquarkus.http.host=0.0.0.0 -Dquarkus.http.port=3000",
+            "./mvnw -q -DskipTests compile\n./mvnw -q test",
         )
     return ("<fill in>", "<fill in>")
 
