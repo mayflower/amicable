@@ -2386,7 +2386,7 @@ async def _handle_ws(ws: WebSocket) -> None:
     agent = _agent
 
     try:
-     while True:
+        while True:
         try:
             raw = await ws.receive_text()
         except WebSocketDisconnect:
