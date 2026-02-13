@@ -10,12 +10,12 @@ COPY k8s/images/amicable-sandbox-phoenix/requirements.txt ./requirements.txt
 RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
 # App workspace
-WORKDIR /app
 ENV MIX_ENV=dev
 RUN mix local.hex --force \
   && mix local.rebar --force \
   && mix archive.install hex phx_new --force \
-  && mix phx.new /app --no-ecto --no-dashboard --no-mailer --no-assets --install
+  && echo "y" | mix phx.new /app --no-ecto --no-dashboard --no-mailer --no-assets --install
+WORKDIR /app
 
 # Bind preview server to 0.0.0.0:3000 and use fs_poll for live reload under containerized filesystems.
 RUN python3 - <<'PY'
