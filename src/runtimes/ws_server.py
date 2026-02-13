@@ -1232,13 +1232,13 @@ async def api_remove_project_member(
         if not project:
             return "not_found"
         success = remove_project_member(client, project_id=project_id, user_sub=user_sub)
-        return "ok" if success else "last_member"
+        return "ok" if success else "remove_failed"
 
     result = await asyncio.to_thread(_remove_sync)
     if result == "not_found":
         return JSONResponse({"error": "not_found"}, status_code=404)
-    if result == "last_member":
-        return JSONResponse({"error": "cannot_remove_last_member"}, status_code=400)
+    if result == "remove_failed":
+        return JSONResponse({"error": "cannot_remove_member"}, status_code=400)
 
     return JSONResponse({"ok": True})
 
