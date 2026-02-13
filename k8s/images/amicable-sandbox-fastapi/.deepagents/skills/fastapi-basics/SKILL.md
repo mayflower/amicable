@@ -1,6 +1,6 @@
 ---
 name: fastapi-basics
-description: Building Hasura webhook handlers with FastAPI.
+description: Execution-ready guidance for FastAPI Hasura webhook handlers.
 license: MIT
 ---
 
@@ -8,12 +8,20 @@ license: MIT
 
 ## When To Use
 - You are editing the FastAPI template.
+- You are implementing Actions/Event Trigger webhooks or API endpoints.
 
-## Conventions
-- Use pydantic models for request/response bodies.
-- Validate incoming payloads; return structured errors.
-- Keep routes thin; move logic into `app/services/*`.
+## Implementation Rules
+- Use Pydantic models for request and response contracts.
+- Keep route handlers thin; move logic into service modules when complexity grows.
+- Use dependencies for shared concerns (auth/context/validation helpers).
+- Return structured JSON errors and explicit status codes.
 
-## Preview
-- The sandbox preview runs `uvicorn` on port 3000.
-- Visit `/docs` for Swagger UI.
+## Sandbox Notes
+- Keep the preview command compatible with `uvicorn ... --host 0.0.0.0 --port 3000 --reload`.
+- Use `/docs` to quickly validate endpoint contracts.
+
+## Verify
+- Run `python -m compileall -q .`.
+- Run `ruff check .`.
+- Run `pytest` when tests exist or are requested.
+- Confirm key webhook endpoints return expected JSON shapes.

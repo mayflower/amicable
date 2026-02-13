@@ -209,6 +209,35 @@ Operationally:
 - Put project-specific skills into the project workspace under `/app/skills/` (if you persist the repo to Git).
 - Override `DEEPAGENTS_SKILLS_SOURCES` if you want different lookup locations.
 
+### Skill conventions
+
+All in-image skills should follow these conventions:
+
+- Path pattern: `/.deepagents/skills/<skill-name>/SKILL.md`
+- Frontmatter keys are required: `name`, `description`, `license`
+- Each skill must include `## When To Use` and `## Verify` sections
+- Keep skill names lowercase and hyphenated
+
+### Baseline skill matrix (minimum by image)
+
+The following minimum set is enforced in CI by `tests/test_sandbox_skills_coverage.py`:
+
+| Sandbox image | Required skills |
+|---|---|
+| `amicable-sandbox` | `sandbox-basics`, `sandbox-preview-contract` |
+| `amicable-sandbox-lovable-vite` | `sandbox-basics`, `sandbox-preview-contract`, `react-vite-basics`, `tanstack-query`, `hasura-graphql-client` |
+| `amicable-sandbox-nextjs15` | `sandbox-basics`, `sandbox-preview-contract`, `nextjs-basics`, `hasura-graphql-client` |
+| `amicable-sandbox-remix` | `sandbox-basics`, `sandbox-preview-contract`, `remix-basics`, `hasura-graphql-client` |
+| `amicable-sandbox-nuxt3` | `sandbox-basics`, `sandbox-preview-contract`, `nuxt-basics`, `hasura-graphql-client` |
+| `amicable-sandbox-sveltekit` | `sandbox-basics`, `sandbox-preview-contract`, `sveltekit-basics`, `hasura-graphql-client` |
+| `amicable-sandbox-fastapi` | `sandbox-basics`, `sandbox-preview-contract`, `fastapi-basics` |
+| `amicable-sandbox-hono` | `sandbox-basics`, `sandbox-preview-contract`, `hono-basics` |
+| `amicable-sandbox-laravel` | `sandbox-basics`, `sandbox-preview-contract`, `laravel-basics`, `hasura-db-proxy`, `hasura-graphql-client` |
+| `amicable-sandbox-flutter` | `sandbox-basics`, `sandbox-preview-contract`, `flutter-basics` |
+| `amicable-sandbox-phoenix` | `sandbox-basics`, `sandbox-preview-contract`, `phoenix-basics` |
+| `amicable-sandbox-aspnetcore` | `sandbox-basics`, `sandbox-preview-contract`, `aspnetcore-basics` |
+| `amicable-sandbox-quarkus` | `sandbox-basics`, `sandbox-preview-contract`, `quarkus-basics` |
+
 ### System prompt (“agent personality”)
 
 The system prompt that governs model behavior is defined in `src/agent_core.py` as `_DEEPAGENTS_SYSTEM_PROMPT`.

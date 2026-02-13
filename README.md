@@ -150,6 +150,11 @@ Key configuration:
 | `AMICABLE_WEB_SEARCH_MAX_RESULTS` | `8` | Max normalized results returned by `WebSearch` |
 | `AMICABLE_WEB_SEARCH_USER_AGENT` | unset | Optional User-Agent override for `WebSearch`/`WebFetch` HTTP requests |
 
+Sandbox skills are shipped per image under `/app/.deepagents/skills` and include
+template-specific guidance plus shared workflow skills (for example
+`sandbox-basics`, `sandbox-preview-contract`). Minimum skill coverage and skill
+file structure are enforced by `tests/test_sandbox_skills_coverage.py`.
+
 ### GitLab Persistence (Optional)
 
 If configured, the agent persists each project to GitLab as a repository and pushes snapshot commits after each controller run (after QA success or QA failure).

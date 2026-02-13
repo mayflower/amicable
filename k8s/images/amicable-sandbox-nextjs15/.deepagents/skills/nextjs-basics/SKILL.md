@@ -1,19 +1,26 @@
 ---
 name: nextjs-basics
-description: Quick reference for Next.js 15 (App Router) projects in Amicable.
+description: Execution-ready guidance for Next.js 15 App Router projects in Amicable.
 license: MIT
 ---
 
 # Next.js Basics
 
 ## When To Use
-- You are editing a Next.js 15 template.
+- You are editing the Next.js 15 template.
+- You are adding routes, server data loading, or client interactivity.
 
-## Conventions
-- App Router: routes live under `src/app/`.
-- Prefer Server Components by default; add `"use client"` only when needed.
-- For data fetching to Hasura, you can use `fetch` from server components or a small client wrapper.
+## Implementation Rules
+- Use App Router conventions under `src/app/`.
+- Default to Server Components; add `"use client"` only when browser APIs/state/effects are required.
+- Keep server-only logic out of client components.
+- Use Route Handlers (`app/**/route.ts`) for HTTP endpoints when needed.
 
-## Common Scripts
-- `npm run lint`
-- `npm run build`
+## Data and Boundaries
+- For browser-side DB calls, use `window.__AMICABLE_DB__` helper logic in client components only.
+- For server-side data fetching, use standard `fetch` in Server Components/Route Handlers.
+
+## Verify
+- Run `npm run -s lint`.
+- Run `npm run -s build`.
+- Confirm affected route(s) render in preview and no client/server boundary errors appear.

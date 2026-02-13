@@ -1,15 +1,20 @@
 ---
 name: sandbox-basics
-description: Quick reference for working in the Amicable sandbox workspace (npm scripts, common locations).
+description: Quick reference for npm-based Amicable sandbox workflow.
 license: MIT
 ---
 
 # Sandbox Basics
 
 ## When To Use
-- You need to remember where the workspace lives, or which npm scripts are expected.
+- You are editing an npm-based web template in Amicable.
+- You need the standard command order for reliable sandbox feedback.
 
 ## Checklist
-- Prefer `npm run -s lint`, `npm run -s typecheck`, `npm run -s build` when present.
-- If scripts fail due to missing deps, run `npm install` first.
+- Install dependencies first when needed: `npm install`.
+- Prefer deterministic QA scripts when available: `npm run -s lint`, `npm run -s typecheck`, `npm run -s build`.
+- Keep edits scoped and rerun checks after each meaningful change.
 
+## Verify
+- Run all available QA scripts in this order: lint -> typecheck -> build.
+- Confirm the preview app still loads after the last successful check.
