@@ -107,10 +107,12 @@ jobs:
       - name: Install ArgoCD CLI
         run: |
           set -euo pipefail
-          curl -sSL -o /usr/local/bin/argocd \
+          mkdir -p "${HOME}/.local/bin"
+          curl -sSL -o "${HOME}/.local/bin/argocd" \
             "https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64"
-          chmod +x /usr/local/bin/argocd
-          argocd version --client
+          chmod +x "${HOME}/.local/bin/argocd"
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.local/bin/argocd" version --client
 
       - name: Set image tags and sync
         env:
