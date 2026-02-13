@@ -5,6 +5,7 @@ import re
 import threading
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -62,6 +63,9 @@ def ensure_projects_schema(client: HasuraClient) -> None:
               gitlab_project_id bigint NULL,
               gitlab_path text NULL,
               gitlab_web_url text NULL,
+              locked_by_sub text NULL,
+              locked_by_email text NULL,
+              locked_at timestamptz NULL,
               created_at timestamptz NOT NULL DEFAULT now(),
               updated_at timestamptz NOT NULL DEFAULT now(),
               deleted_at timestamptz NULL
@@ -76,6 +80,32 @@ def ensure_projects_schema(client: HasuraClient) -> None:
               ADD COLUMN IF NOT EXISTS gitlab_path text NULL;
             ALTER TABLE amicable_meta.projects
               ADD COLUMN IF NOT EXISTS gitlab_web_url text NULL;
+            ALTER TABLE amicable_meta.projects
+              ADD COLUMN IF NOT EXISTS locked_by_sub text NULL;
+            ALTER TABLE amicable_meta.projects
+              ADD COLUMN IF NOT EXISTS locked_by_email text NULL;
+            ALTER TABLE amicable_meta.projects
+              ADD COLUMN IF NOT EXISTS locked_at timestamptz NULL;
+
+            CREATE TABLE IF NOT EXISTS amicable_meta.project_members (
+              project_id text NOT NULL REFERENCES amicable_meta.projects(project_id) ON DELETE CASCADE,
+              user_sub text NULL,
+              user_email text NOT NULL,
+              added_at timestamptz NOT NULL DEFAULT now(),
+              added_by_sub text NULL,
+              PRIMARY KEY (project_id, user_email)
+            );
+            CREATE INDEX IF NOT EXISTS idx_project_members_user
+              ON amicable_meta.project_members(user_sub);
+            CREATE INDEX IF NOT EXISTS idx_project_members_email
+              ON amicable_meta.project_members(user_email);
+
+            -- Migration: add existing project owners as members
+            INSERT INTO amicable_meta.project_members (project_id, user_sub, user_email, added_at)
+            SELECT p.project_id, p.owner_sub, LOWER(p.owner_email), p.created_at
+            FROM amicable_meta.projects p
+            WHERE p.deleted_at IS NULL
+            ON CONFLICT DO NOTHING;
             """.strip()
         )
         _schema_ready = True
@@ -101,6 +131,23 @@ class Project:
     gitlab_web_url: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
+
+
+@dataclass(frozen=True)
+class ProjectMember:
+    project_id: str
+    user_sub: str | None  # None if invited by email but not yet logged in
+    user_email: str
+    added_at: str | None = None
+    added_by_sub: str | None = None
+
+
+@dataclass(frozen=True)
+class ProjectLock:
+    project_id: str
+    locked_by_sub: str
+    locked_by_email: str
+    locked_at: str
 
 
 def _tuples_to_dicts(res: dict[str, Any]) -> list[dict[str, Any]]:
@@ -232,7 +279,9 @@ def get_project_by_id(
     p = _get_project_by_id_any_owner(client, project_id=project_id)
     if not p:
         return None
-    if p.owner_sub != owner.sub:
+    if not is_project_member(
+        client, project_id=project_id, user_sub=owner.sub, user_email=owner.email
+    ):
         return None
     return p
 
@@ -256,10 +305,13 @@ def get_project_by_slug(
     if not rows:
         return None
     r = rows[0]
-    if str(r.get("owner_sub")) != owner.sub:
+    project_id = str(r["project_id"])
+    if not is_project_member(
+        client, project_id=project_id, user_sub=owner.sub, user_email=owner.email
+    ):
         return None
     return Project(
-        project_id=str(r["project_id"]),
+        project_id=project_id,
         owner_sub=str(r["owner_sub"]),
         owner_email=str(r["owner_email"]),
         name=str(r["name"]),
@@ -357,12 +409,17 @@ def list_projects(client: HasuraClient, *, owner: ProjectOwner) -> list[Project]
     ensure_projects_schema(client)
     res = client.run_sql(
         f"""
-        SELECT project_id, owner_sub, owner_email, name, slug, sandbox_id, template_id,
-               gitlab_project_id, gitlab_path, gitlab_web_url,
-               created_at, updated_at
-        FROM amicable_meta.projects
-        WHERE owner_sub = {_sql_str(owner.sub)} AND deleted_at IS NULL
-        ORDER BY updated_at DESC;
+        SELECT p.project_id, p.owner_sub, p.owner_email, p.name, p.slug, p.sandbox_id, p.template_id,
+               p.gitlab_project_id, p.gitlab_path, p.gitlab_web_url,
+               p.created_at, p.updated_at
+        FROM amicable_meta.projects p
+        WHERE p.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM amicable_meta.project_members pm
+            WHERE pm.project_id = p.project_id
+              AND (pm.user_sub = {_sql_str(owner.sub)} OR pm.user_email = {_sql_str(owner.email.lower())})
+          )
+        ORDER BY p.updated_at DESC;
         """.strip(),
         read_only=True,
     )
@@ -409,11 +466,17 @@ def set_project_slug(
     new_slug: str,
 ) -> Project:
     ensure_projects_schema(client)
+    # Check membership before updating
     client.run_sql(
         f"""
-        UPDATE amicable_meta.projects
+        UPDATE amicable_meta.projects p
         SET slug = {_sql_str(new_slug)}, updated_at = now()
-        WHERE project_id = {_sql_str(project_id)} AND owner_sub = {_sql_str(owner.sub)} AND deleted_at IS NULL;
+        WHERE p.project_id = {_sql_str(project_id)} AND p.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM amicable_meta.project_members pm
+            WHERE pm.project_id = p.project_id
+              AND (pm.user_sub = {_sql_str(owner.sub)} OR pm.user_email = {_sql_str(owner.email.lower())})
+          );
         """.strip()
     )
     p = get_project_by_id(client, owner=owner, project_id=project_id)
@@ -432,14 +495,20 @@ def set_gitlab_metadata(
     gitlab_web_url: str | None,
 ) -> Project:
     ensure_projects_schema(client)
+    # Check membership before updating
     client.run_sql(
         f"""
-        UPDATE amicable_meta.projects
+        UPDATE amicable_meta.projects p
         SET gitlab_project_id = {str(int(gitlab_project_id)) if gitlab_project_id is not None else "NULL"},
             gitlab_path = {_sql_str(gitlab_path) if gitlab_path is not None else "NULL"},
             gitlab_web_url = {_sql_str(gitlab_web_url) if gitlab_web_url is not None else "NULL"},
             updated_at = now()
-        WHERE project_id = {_sql_str(project_id)} AND owner_sub = {_sql_str(owner.sub)} AND deleted_at IS NULL;
+        WHERE p.project_id = {_sql_str(project_id)} AND p.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM amicable_meta.project_members pm
+            WHERE pm.project_id = p.project_id
+              AND (pm.user_sub = {_sql_str(owner.sub)} OR pm.user_email = {_sql_str(owner.email.lower())})
+          );
         """.strip()
     )
     p = get_project_by_id(client, owner=owner, project_id=project_id)
@@ -498,6 +567,14 @@ def create_project(
         )
         p = _get_project_by_id_any_owner(client, project_id=project_id)
         if p and p.owner_sub == owner.sub:
+            # Add creator as first member
+            add_project_member(
+                client,
+                project_id=project_id,
+                user_sub=owner.sub,
+                user_email=owner.email,
+                added_by_sub=None,
+            )
             return p
 
     raise RuntimeError("failed to allocate unique project slug")
@@ -510,8 +587,11 @@ def ensure_project_for_id(
     ensure_projects_schema(client)
     existing = _get_project_by_id_any_owner(client, project_id=project_id)
     if existing:
-        if existing.owner_sub != owner.sub:
-            raise PermissionError("project belongs to a different user")
+        # Check membership instead of ownership
+        if not is_project_member(
+            client, project_id=project_id, user_sub=owner.sub, user_email=owner.email
+        ):
+            raise PermissionError("not a project member")
         return existing
 
     # If a project row exists but was soft-deleted, resurrect it instead of failing
@@ -531,6 +611,14 @@ def ensure_project_for_id(
         )
         revived = _get_project_by_id_any_owner(client, project_id=project_id)
         if revived:
+            # Ensure member record exists after resurrection
+            add_project_member(
+                client,
+                project_id=project_id,
+                user_sub=owner.sub,
+                user_email=owner.email,
+                added_by_sub=None,
+            )
             return revived
 
     short = project_id.replace("-", "")[:8]
@@ -552,6 +640,14 @@ def ensure_project_for_id(
         )
         created = _get_project_by_id_any_owner(client, project_id=project_id)
         if created and created.owner_sub == owner.sub:
+            # Add creator as first member
+            add_project_member(
+                client,
+                project_id=project_id,
+                user_sub=owner.sub,
+                user_email=owner.email,
+                added_by_sub=None,
+            )
             return created
 
     raise RuntimeError("failed to auto-create project")
@@ -563,7 +659,7 @@ def rename_project(
     ensure_projects_schema(client)
     base = slugify(new_name)
 
-    # Ensure project exists and is owned.
+    # Ensure project exists and user is a member (membership checked by get_project_by_id)
     existing = get_project_by_id(client, owner=owner, project_id=project_id)
     if not existing:
         raise PermissionError("project not found")
@@ -579,7 +675,12 @@ def rename_project(
             f"""
             UPDATE amicable_meta.projects
             SET name = {_sql_str(new_name)}, slug = {_sql_str(slug)}, updated_at = now()
-            WHERE project_id = {_sql_str(project_id)} AND owner_sub = {_sql_str(owner.sub)} AND deleted_at IS NULL;
+            WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL
+              AND EXISTS (
+                SELECT 1 FROM amicable_meta.project_members pm
+                WHERE pm.project_id = {_sql_str(project_id)}
+                  AND (pm.user_sub = {_sql_str(owner.sub)} OR pm.user_email = {_sql_str(owner.email.lower())})
+              );
             """.strip()
         )
         updated = get_project_by_id(client, owner=owner, project_id=project_id)
@@ -593,12 +694,17 @@ def mark_project_deleted(
     client: HasuraClient, *, owner: ProjectOwner, project_id: str
 ) -> None:
     ensure_projects_schema(client)
-    # Mark deleted first so it disappears from lists immediately.
+    # Verify user is a member before allowing delete
+    if not is_project_member(
+        client, project_id=project_id, user_sub=owner.sub, user_email=owner.email
+    ):
+        raise PermissionError("not a member")
+    # Mark deleted so it disappears from lists immediately.
     client.run_sql(
         f"""
         UPDATE amicable_meta.projects
         SET deleted_at = now(), updated_at = now()
-        WHERE project_id = {_sql_str(project_id)} AND owner_sub = {_sql_str(owner.sub)} AND deleted_at IS NULL;
+        WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL;
         """.strip()
     )
 
@@ -607,9 +713,257 @@ def hard_delete_project_row(
     client: HasuraClient, *, owner: ProjectOwner, project_id: str
 ) -> None:
     ensure_projects_schema(client)
+    # Verify user is a member before allowing hard delete
+    if not is_project_member(
+        client, project_id=project_id, user_sub=owner.sub, user_email=owner.email
+    ):
+        raise PermissionError("not a member")
     client.run_sql(
         f"""
         DELETE FROM amicable_meta.projects
-        WHERE project_id = {_sql_str(project_id)} AND owner_sub = {_sql_str(owner.sub)};
+        WHERE project_id = {_sql_str(project_id)};
+        """.strip()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Project Members
+# ---------------------------------------------------------------------------
+
+
+def _get_member_by_email(
+    client: HasuraClient, *, project_id: str, user_email: str
+) -> ProjectMember | None:
+    res = client.run_sql(
+        f"""
+        SELECT project_id, user_sub, user_email, added_at, added_by_sub
+        FROM amicable_meta.project_members
+        WHERE project_id = {_sql_str(project_id)} AND user_email = {_sql_str(user_email.lower())}
+        LIMIT 1;
+        """.strip(),
+        read_only=True,
+    )
+    rows = _tuples_to_dicts(res)
+    if not rows:
+        return None
+    r = rows[0]
+    return ProjectMember(
+        project_id=str(r["project_id"]),
+        user_sub=str(r["user_sub"]) if r.get("user_sub") else None,
+        user_email=str(r["user_email"]),
+        added_at=str(r.get("added_at")) if r.get("added_at") else None,
+        added_by_sub=str(r.get("added_by_sub")) if r.get("added_by_sub") else None,
+    )
+
+
+def add_project_member(
+    client: HasuraClient,
+    *,
+    project_id: str,
+    user_email: str,
+    user_sub: str | None = None,
+    added_by_sub: str | None = None,
+) -> ProjectMember:
+    """Add a member to a project. If user_sub is None, they'll be matched on first login."""
+    ensure_projects_schema(client)
+    user_email = user_email.strip().lower()
+
+    # Check if already a member by email — skip only if no new user_sub to backfill
+    existing = _get_member_by_email(client, project_id=project_id, user_email=user_email)
+    if existing and (existing.user_sub or not user_sub):
+        return existing
+
+    sub_sql = _sql_str(user_sub) if user_sub else "NULL"
+    added_by_sql = _sql_str(added_by_sub) if added_by_sub else "NULL"
+
+    client.run_sql(
+        f"""
+        INSERT INTO amicable_meta.project_members (project_id, user_sub, user_email, added_by_sub)
+        VALUES ({_sql_str(project_id)}, {sub_sql}, {_sql_str(user_email)}, {added_by_sql})
+        ON CONFLICT (project_id, user_email) DO UPDATE SET user_sub = COALESCE(EXCLUDED.user_sub, amicable_meta.project_members.user_sub);
+        """.strip()
+    )
+    # Re-fetch to get DB-populated fields (added_at, resolved user_sub from upsert)
+    member = _get_member_by_email(client, project_id=project_id, user_email=user_email)
+    if member:
+        return member
+    return ProjectMember(
+        project_id=project_id,
+        user_sub=user_sub,
+        user_email=user_email,
+        added_by_sub=added_by_sub,
+        added_at=datetime.now(tz=UTC).isoformat(),
+    )
+
+
+def list_project_members(client: HasuraClient, *, project_id: str) -> list[ProjectMember]:
+    """List all members of a project."""
+    ensure_projects_schema(client)
+    res = client.run_sql(
+        f"""
+        SELECT project_id, user_sub, user_email, added_at, added_by_sub
+        FROM amicable_meta.project_members
+        WHERE project_id = {_sql_str(project_id)}
+        ORDER BY added_at ASC;
+        """.strip(),
+        read_only=True,
+    )
+    out: list[ProjectMember] = []
+    for r in _tuples_to_dicts(res):
+        out.append(
+            ProjectMember(
+                project_id=str(r["project_id"]),
+                user_sub=str(r["user_sub"]) if r.get("user_sub") else None,
+                user_email=str(r["user_email"]),
+                added_at=str(r.get("added_at")) if r.get("added_at") else None,
+                added_by_sub=str(r.get("added_by_sub")) if r.get("added_by_sub") else None,
+            )
+        )
+    return out
+
+
+def remove_project_member(
+    client: HasuraClient, *, project_id: str, user_sub: str
+) -> bool:
+    """Remove a member from a project. Returns False if they were the last member or target not found."""
+    ensure_projects_schema(client)
+    members = list_project_members(client, project_id=project_id)
+    if len(members) <= 1:
+        return False
+    if not any(m.user_sub == user_sub for m in members):
+        return False
+    client.run_sql(
+        f"""
+        DELETE FROM amicable_meta.project_members
+        WHERE project_id = {_sql_str(project_id)} AND user_sub = {_sql_str(user_sub)};
+        """.strip()
+    )
+    return True
+
+
+def remove_project_member_by_email(
+    client: HasuraClient, *, project_id: str, user_email: str
+) -> bool:
+    """Remove a pending member by email. Returns False if they were the last member or target not found."""
+    ensure_projects_schema(client)
+    user_email = user_email.strip().lower()
+    members = list_project_members(client, project_id=project_id)
+    if len(members) <= 1:
+        return False
+    if not any(m.user_email == user_email for m in members):
+        return False
+    client.run_sql(
+        f"""
+        DELETE FROM amicable_meta.project_members
+        WHERE project_id = {_sql_str(project_id)} AND user_email = {_sql_str(user_email)};
+        """.strip()
+    )
+    return True
+
+
+def is_project_member(
+    client: HasuraClient, *, project_id: str, user_sub: str, user_email: str
+) -> bool:
+    """Check if a user is a member of a project (by sub or email)."""
+    ensure_projects_schema(client)
+    res = client.run_sql(
+        f"""
+        SELECT 1 FROM amicable_meta.project_members
+        WHERE project_id = {_sql_str(project_id)}
+          AND (user_sub = {_sql_str(user_sub)} OR user_email = {_sql_str(user_email.lower())})
+        LIMIT 1;
+        """.strip(),
+        read_only=True,
+    )
+    rows = _tuples_to_dicts(res)
+    return bool(rows)
+
+
+# ---------------------------------------------------------------------------
+# Session Locking
+# ---------------------------------------------------------------------------
+
+
+def get_project_lock(client: HasuraClient, *, project_id: str) -> ProjectLock | None:
+    """Get current lock info for a project."""
+    ensure_projects_schema(client)
+    res = client.run_sql(
+        f"""
+        SELECT locked_by_sub, locked_by_email, locked_at
+        FROM amicable_meta.projects
+        WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL AND locked_by_sub IS NOT NULL
+        LIMIT 1;
+        """.strip(),
+        read_only=True,
+    )
+    rows = _tuples_to_dicts(res)
+    if not rows or not rows[0].get("locked_by_sub"):
+        return None
+    r = rows[0]
+    return ProjectLock(
+        project_id=project_id,
+        locked_by_sub=str(r["locked_by_sub"]),
+        locked_by_email=str(r.get("locked_by_email") or ""),
+        locked_at=str(r.get("locked_at") or ""),
+    )
+
+
+def acquire_project_lock(
+    client: HasuraClient,
+    *,
+    project_id: str,
+    user_sub: str,
+    user_email: str,
+    force: bool = False,
+) -> ProjectLock | None:
+    """Try to acquire lock atomically. Returns None if locked by someone else (unless force=True)."""
+    ensure_projects_schema(client)
+
+    # Atomic conditional update - only acquire if unlocked, held by self, or force
+    if force:
+        # Force always succeeds
+        client.run_sql(
+            f"""
+            UPDATE amicable_meta.projects
+            SET locked_by_sub = {_sql_str(user_sub)}, locked_by_email = {_sql_str(user_email)},
+                locked_at = now(), updated_at = now()
+            WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL;
+            """.strip()
+        )
+    else:
+        # Only acquire if unlocked or already held by this user
+        client.run_sql(
+            f"""
+            UPDATE amicable_meta.projects
+            SET locked_by_sub = {_sql_str(user_sub)}, locked_by_email = {_sql_str(user_email)},
+                locked_at = now(), updated_at = now()
+            WHERE project_id = {_sql_str(project_id)}
+              AND deleted_at IS NULL
+              AND (locked_by_sub IS NULL OR locked_by_sub = {_sql_str(user_sub)});
+            """.strip()
+        )
+
+    # Check if we actually got the lock
+    lock = get_project_lock(client, project_id=project_id)
+    if lock and lock.locked_by_sub == user_sub:
+        return ProjectLock(
+            project_id=project_id,
+            locked_by_sub=user_sub,
+            locked_by_email=user_email,
+            locked_at=lock.locked_at,
+        )
+    return None
+
+
+def release_project_lock(
+    client: HasuraClient, *, project_id: str, user_sub: str
+) -> None:
+    """Release lock if held by user_sub."""
+    ensure_projects_schema(client)
+    client.run_sql(
+        f"""
+        UPDATE amicable_meta.projects
+        SET locked_by_sub = NULL, locked_by_email = NULL, locked_at = NULL, updated_at = now()
+        WHERE project_id = {_sql_str(project_id)} AND locked_by_sub = {_sql_str(user_sub)} AND deleted_at IS NULL;
         """.strip()
     )
