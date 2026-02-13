@@ -1206,6 +1206,8 @@ class Agent:
         path: str = "/",
         full_page: bool = True,
         timeout_s: int = 15,
+        viewport_width: int = 1280,
+        viewport_height: int = 800,
     ) -> dict[str, Any]:
         from src.deepagents_backend.preview_screenshot import capture_preview_screenshot
 
@@ -1214,6 +1216,8 @@ class Agent:
             path=path,
             timeout_ms=max(1, int(timeout_s)) * 1000,
             full_page=bool(full_page),
+            viewport_width=max(1, int(viewport_width)),
+            viewport_height=max(1, int(viewport_height)),
         )
 
         payload: dict[str, Any] = {
@@ -1240,6 +1244,8 @@ class Agent:
         path: str = "/",
         full_page: bool = True,
         timeout_s: int = 15,
+        viewport_width: int = 1280,
+        viewport_height: int = 800,
     ) -> dict[str, Any]:
         return await asyncio.to_thread(
             self._capture_preview_screenshot,
@@ -1247,6 +1253,8 @@ class Agent:
             path=path,
             full_page=full_page,
             timeout_s=timeout_s,
+            viewport_width=viewport_width,
+            viewport_height=viewport_height,
         )
 
     async def send_feedback(

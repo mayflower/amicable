@@ -36,7 +36,16 @@ import { ChatMarkdown } from "../../components/ChatMarkdown";
 import { Button } from "@/components/ui/button";
 import { CodePane } from "@/components/CodePane";
 import { DatabasePane } from "@/components/DatabasePane";
+import { DesignPane } from "@/components/DesignPane";
 import { Input } from "@/components/ui/input";
+import {
+  designCaptureSnapshot,
+  designCreateApproaches,
+  designGetState,
+  designRegenerateApproaches,
+  designSelectApproach,
+} from "@/services/design";
+import type { DesignState } from "@/types/design";
 import type { ConversationHistoryEntry, Message } from "../../types/messages";
 import { cn } from "@/lib/utils";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -235,7 +244,19 @@ const Create = () => {
   const [agentTouchedPath, setAgentTouchedPath] = useState<string | null>(null);
   const toolFileByRunId = useRef<Map<string, string>>(new Map());
   const latestAssistantMsgIdRef = useRef<string | null>(null);
-  const [mainView, setMainView] = useState<"preview" | "code" | "database">("preview");
+  const [mainView, setMainView] = useState<
+    "preview" | "code" | "database" | "design"
+  >("preview");
+  const [designState, setDesignState] = useState<DesignState | null>(null);
+  const designStateRef = useRef<DesignState | null>(null);
+  const [designLoading, setDesignLoading] = useState(false);
+  const [designIterating, setDesignIterating] = useState(false);
+  const [designBatchProgress, setDesignBatchProgress] = useState(0);
+  const [designError, setDesignError] = useState<string | null>(null);
+  const designIterationWaiterRef = useRef<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+  } | null>(null);
   const [pendingImages, setPendingImages] = useState<PendingImageAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -341,6 +362,86 @@ const Create = () => {
       }
     }
     return false;
+  }, []);
+
+  useEffect(() => {
+    designStateRef.current = designState;
+  }, [designState]);
+
+  const currentPreviewPath = useMemo(() => {
+    const raw = rawIframeUrl || iframeUrl;
+    if (!raw) return "/";
+    try {
+      const u = new URL(raw);
+      return `${u.pathname || "/"}${u.search || ""}${u.hash || ""}`;
+    } catch {
+      return "/";
+    }
+  }, [rawIframeUrl, iframeUrl]);
+
+  const currentViewport = useMemo(() => {
+    if (selectedDevice === "mobile") return { width: 390, height: 844 };
+    if (selectedDevice === "tablet") return { width: 768, height: 1024 };
+    const w = Math.max(480, Math.min(1920, Math.round(window.innerWidth - chatWidth - 80)));
+    const h = Math.max(360, Math.min(1440, Math.round(window.innerHeight - 220)));
+    return { width: w, height: h };
+  }, [selectedDevice, chatWidth]);
+
+  const apiErrorMessage = useCallback((err: unknown, fallback: string): string => {
+    if (err && typeof err === "object") {
+      const rec = err as { message?: unknown; data?: unknown; status?: unknown };
+      const dataObj = asObj(rec.data);
+      const detail = typeof dataObj?.detail === "string" ? dataObj.detail : "";
+      const code = typeof dataObj?.error === "string" ? dataObj.error : "";
+      if (detail && code) return `${code}: ${detail}`;
+      if (detail) return detail;
+      if (code) return code;
+      if (typeof rec.message === "string" && rec.message.trim()) return rec.message;
+    }
+    return fallback;
+  }, []);
+
+  const rejectDesignIterationWaiter = useCallback((reason: string) => {
+    const waiter = designIterationWaiterRef.current;
+    if (!waiter) return;
+    designIterationWaiterRef.current = null;
+    waiter.reject(new Error(reason));
+  }, []);
+
+  const resolveDesignIterationWaiter = useCallback(() => {
+    const waiter = designIterationWaiterRef.current;
+    if (!waiter) return;
+    designIterationWaiterRef.current = null;
+    waiter.resolve();
+  }, []);
+
+  const waitForDesignIterationCompletion = useCallback((): Promise<void> => {
+    return new Promise<void>((resolve, reject) => {
+      const startedAt = Date.now();
+      const timeoutMs = 15 * 60 * 1000;
+      const onTimeout = () => {
+        if (designIterationWaiterRef.current) {
+          designIterationWaiterRef.current = null;
+          reject(new Error("Design iteration timed out"));
+        }
+      };
+      const timeoutId = window.setTimeout(onTimeout, timeoutMs);
+
+      designIterationWaiterRef.current = {
+        resolve: () => {
+          window.clearTimeout(timeoutId);
+          resolve();
+        },
+        reject: (error: Error) => {
+          window.clearTimeout(timeoutId);
+          reject(error || new Error("Design iteration failed"));
+        },
+      };
+
+      if (Date.now() - startedAt > timeoutMs) {
+        onTimeout();
+      }
+    });
   }, []);
 
   const sendRuntimeError = useCallback(
@@ -452,6 +553,190 @@ const Create = () => {
       }
     },
     [rawIframeUrl, iframeUrl, hash, sendRuntimeError]
+  );
+
+  const pushAssistantMessage = useCallback(
+    (text: string) => {
+      const cleaned = (text || "").trim();
+      if (!cleaned) return;
+      setMessages((prev) => [
+        ...prev,
+        {
+          type: MessageType.AGENT_FINAL,
+          timestamp: Date.now(),
+          data: {
+            text: cleaned,
+            sender: Sender.ASSISTANT,
+          },
+          session_id: resolvedSessionId || undefined,
+        },
+      ]);
+    },
+    [resolvedSessionId]
+  );
+
+  const loadDesignState = useCallback(async () => {
+    if (!resolvedSessionId) return;
+    try {
+      const state = await designGetState(resolvedSessionId);
+      setDesignState(state);
+      setDesignError(null);
+    } catch (err) {
+      const rec = err as { status?: unknown };
+      if (rec && rec.status === 404) return;
+      setDesignError(apiErrorMessage(err, "Failed to load design state."));
+    }
+  }, [resolvedSessionId, apiErrorMessage]);
+
+  const createOrRegenerateDesign = useCallback(
+    async (args: { instruction?: string; forceCreate?: boolean }) => {
+      if (!resolvedSessionId) return null;
+      setDesignLoading(true);
+      setDesignError(null);
+      try {
+        const payload = {
+          path: currentPreviewPath,
+          viewport_width: currentViewport.width,
+          viewport_height: currentViewport.height,
+          full_page: false,
+          instruction: (args.instruction || "").trim() || undefined,
+        };
+        const out =
+          args.forceCreate || !designStateRef.current
+            ? await designCreateApproaches(resolvedSessionId, payload)
+            : await designRegenerateApproaches(resolvedSessionId, payload);
+        setDesignState(out);
+        return out;
+      } catch (err) {
+        setDesignError(apiErrorMessage(err, "Failed to generate design concepts."));
+        return null;
+      } finally {
+        setDesignLoading(false);
+      }
+    },
+    [
+      resolvedSessionId,
+      currentPreviewPath,
+      currentViewport.width,
+      currentViewport.height,
+      apiErrorMessage,
+    ]
+  );
+
+  const syncDesignSelection = useCallback(
+    async (args: {
+      approachId: string;
+      totalIterations?: number;
+      pendingContinueDecision?: boolean;
+    }) => {
+      if (!resolvedSessionId) return null;
+      try {
+        const st = await designSelectApproach(resolvedSessionId, {
+          approach_id: args.approachId,
+          total_iterations: args.totalIterations,
+          pending_continue_decision: args.pendingContinueDecision,
+        });
+        setDesignState(st);
+        return st;
+      } catch (err) {
+        setDesignError(apiErrorMessage(err, "Failed to update selected design."));
+        return null;
+      }
+    },
+    [resolvedSessionId, apiErrorMessage]
+  );
+
+  const runDesignIterationBatch = useCallback(
+    async (batchSize = 5) => {
+      const st = designStateRef.current;
+      if (!resolvedSessionId || !st || !st.selected_approach_id) return;
+      if (!isConnectedRef.current) {
+        setDesignError("Not connected to workspace.");
+        return;
+      }
+      const selected = st.approaches.find(
+        (a) => a.approach_id === st.selected_approach_id
+      );
+      if (!selected) {
+        setDesignError("Selected design could not be found.");
+        return;
+      }
+
+      setDesignIterating(true);
+      setDesignBatchProgress(0);
+      setDesignError(null);
+      let completed = 0;
+      try {
+        for (let i = 0; i < batchSize; i++) {
+          const snap = await designCaptureSnapshot(resolvedSessionId, {
+            path: currentPreviewPath,
+            viewport_width: currentViewport.width,
+            viewport_height: currentViewport.height,
+            full_page: false,
+          });
+          if (!snap.ok || !snap.image_base64) {
+            throw new Error(snap.error || "Could not capture preview screenshot.");
+          }
+
+          const iterationNumber = (designStateRef.current?.total_iterations || 0) + 1;
+          const text = [
+            "Apply targeted UI changes to move the app closer to the selected reference design.",
+            "Preserve current product functionality, data flow, and information architecture.",
+            `Iteration: ${iterationNumber}`,
+          ].join("\n");
+
+          sendRef.current(MessageType.USER, {
+            text,
+            content_blocks: [
+              { type: "text", text },
+              {
+                type: "image",
+                base64: snap.image_base64,
+                mime_type: snap.mime_type || "image/jpeg",
+              },
+              {
+                type: "image",
+                base64: selected.image_base64,
+                mime_type: selected.mime_type || "image/png",
+              },
+            ],
+          });
+          await waitForDesignIterationCompletion();
+          completed += 1;
+          setDesignBatchProgress(completed);
+        }
+
+        const total = (designStateRef.current?.total_iterations || 0) + completed;
+        const updated = await syncDesignSelection({
+          approachId: selected.approach_id,
+          totalIterations: total,
+          pendingContinueDecision: true,
+        });
+        if (updated) {
+          pushAssistantMessage("Finished 5 design iterations. Continue or stop from the Design tab.");
+        }
+      } catch (err) {
+        const total = (designStateRef.current?.total_iterations || 0) + completed;
+        await syncDesignSelection({
+          approachId: selected.approach_id,
+          totalIterations: total,
+          pendingContinueDecision: false,
+        });
+        setDesignError(apiErrorMessage(err, "Design iteration failed."));
+      } finally {
+        setDesignIterating(false);
+      }
+    },
+    [
+      resolvedSessionId,
+      currentPreviewPath,
+      currentViewport.width,
+      currentViewport.height,
+      waitForDesignIterationCompletion,
+      syncDesignSelection,
+      pushAssistantMessage,
+      apiErrorMessage,
+    ]
   );
 
   // Message handlers for different message types
@@ -589,6 +874,16 @@ const Create = () => {
     },
 
     [MessageType.ERROR]: (message: Message) => {
+      const errorObj = asObj(message.data.error);
+      const detail =
+        typeof message.data.detail === "string"
+          ? message.data.detail
+          : typeof errorObj?.detail === "string"
+            ? errorObj.detail
+            : typeof message.data.error === "string"
+              ? message.data.error
+              : "Agent run failed";
+      rejectDesignIterationWaiter(detail);
       setMessages((prev) => [
         ...prev,
         {
@@ -865,6 +1160,7 @@ const Create = () => {
     [MessageType.UPDATE_COMPLETED]: (message: Message) => {
       setIsUpdateInProgress(false);
       setAgentStatusText("");
+      resolveDesignIterationWaiter();
       const id = message.id;
       setMessages((prev) => {
         const filtered = prev;
@@ -1144,6 +1440,9 @@ const Create = () => {
     onConnect: () => {
       console.log("Connected to Amicable Agent");
     },
+    onDisconnect: () => {
+      rejectDesignIterationWaiter("Connection lost");
+    },
     onError: (errorMsg) => {
       console.error("Connection error:", errorMsg);
 
@@ -1165,6 +1464,24 @@ const Create = () => {
     isConnectedRef.current = isConnected;
     sendRef.current = send;
   }, [isConnected, send]);
+
+  useEffect(() => {
+    if (mainView !== "design" || !resolvedSessionId) return;
+    void loadDesignState();
+  }, [mainView, resolvedSessionId, loadDesignState]);
+
+  useEffect(() => {
+    if (mainView !== "design") return;
+    if (!pendingImages.length) return;
+    setPendingImages([]);
+    setAttachmentError(null);
+  }, [mainView, pendingImages.length]);
+
+  useEffect(() => {
+    return () => {
+      rejectDesignIterationWaiter("View was closed");
+    };
+  }, [rejectDesignIterationWaiter]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -1204,6 +1521,32 @@ const Create = () => {
     const text = inputValue.trim();
     const imgs = pendingImages;
     if (!text && imgs.length === 0) return;
+
+    if (mainView === "design") {
+      if (!text) return;
+      if (imgs.length > 0) {
+        setPendingImages([]);
+        setAttachmentError("Image attachments are disabled in Design mode.");
+      }
+      setInputValue("");
+      setMessages((prev) => [
+        ...prev,
+        {
+          type: MessageType.USER,
+          timestamp: Date.now(),
+          data: {
+            text,
+            sender: Sender.USER,
+          },
+          session_id: resolvedSessionId || undefined,
+        },
+      ]);
+      void createOrRegenerateDesign({ instruction: text }).then((out) => {
+        if (!out) return;
+        pushAssistantMessage("Regenerated both design approaches from your latest feedback.");
+      });
+      return;
+    }
 
     const content_blocks =
       imgs.length > 0
@@ -1258,6 +1601,10 @@ const Create = () => {
   };
 
   const handleAttachClick = () => {
+    if (mainView === "design") {
+      setAttachmentError("Image attachments are disabled in Design mode.");
+      return;
+    }
     fileInputRef.current?.click();
   };
 
@@ -1316,6 +1663,46 @@ const Create = () => {
     setPendingImages((prev) => prev.filter((_, i) => i !== idx));
     setAttachmentError(null);
   };
+
+  const handleDesignGenerate = useCallback(() => {
+    void createOrRegenerateDesign({ forceCreate: true });
+  }, [createOrRegenerateDesign]);
+
+  const handleDesignAccept = useCallback(
+    (approachId: string) => {
+      if (designIterating) return;
+      void syncDesignSelection({
+        approachId,
+        pendingContinueDecision: false,
+      }).then((st) => {
+        if (!st) return;
+        void runDesignIterationBatch(5);
+      });
+    },
+    [syncDesignSelection, runDesignIterationBatch, designIterating]
+  );
+
+  const handleDesignContinue = useCallback(() => {
+    const st = designStateRef.current;
+    if (!st?.selected_approach_id) return;
+    void syncDesignSelection({
+      approachId: st.selected_approach_id,
+      totalIterations: st.total_iterations,
+      pendingContinueDecision: false,
+    }).then(() => {
+      void runDesignIterationBatch(5);
+    });
+  }, [syncDesignSelection, runDesignIterationBatch]);
+
+  const handleDesignStop = useCallback(() => {
+    const st = designStateRef.current;
+    if (!st?.selected_approach_id) return;
+    void syncDesignSelection({
+      approachId: st.selected_approach_id,
+      totalIterations: st.total_iterations,
+      pendingContinueDecision: false,
+    });
+  }, [syncDesignSelection]);
 
   const renderUiBlocks = (blocks: JsonObject[] | undefined) => {
     if (!blocks || !blocks.length) return null;
@@ -1801,7 +2188,7 @@ const Create = () => {
         argsError: null,
       }))
     );
-  }, [pendingHitl?.interruptId, hitlActionRequests]);
+  }, [pendingHitl, hitlActionRequests]);
 
   const HitlPanel = () => {
     if (!pendingHitl) return null;
@@ -2043,7 +2430,9 @@ const Create = () => {
     );
   };
 
-  const renderMainViewToggle = (activeView: "preview" | "code" | "database") => {
+  const renderMainViewToggle = (
+    activeView: "preview" | "code" | "database" | "design"
+  ) => {
     return (
       <div className="flex gap-2">
         <ToggleButton
@@ -2067,6 +2456,12 @@ const Create = () => {
           onClick={() => setMainView("database")}
         >
           Database
+        </ToggleButton>
+        <ToggleButton
+          active={activeView === "design"}
+          onClick={() => setMainView("design")}
+        >
+          Design
         </ToggleButton>
       </div>
     );
@@ -2119,6 +2514,52 @@ const Create = () => {
             <div className="w-full flex items-center justify-between bg-gray-200 border-t border-gray-200 px-6 h-14 absolute left-0 right-0 bottom-0 z-[3]">
               {renderMainViewToggle("database")}
               <div />
+              <div />
+            </div>
+          </div>
+        ) : mainView === "design" ? (
+          <div style={{ height: "100%", minHeight: 0 }}>
+            {resolvedSessionId ? (
+              <DesignPane
+                state={designState}
+                loading={designLoading}
+                iterating={designIterating}
+                batchProgress={designBatchProgress}
+                error={designError}
+                canGenerate={!!resolvedSessionId && isConnected && iframeReady && initCompleted}
+                onGenerate={handleDesignGenerate}
+                onAccept={handleDesignAccept}
+                onContinue={handleDesignContinue}
+                onStop={handleDesignStop}
+              />
+            ) : (
+              <div style={{ padding: 16 }}>Loading project...</div>
+            )}
+            <div className="w-full flex items-center justify-between bg-gray-200 border-t border-gray-200 px-6 h-14 absolute left-0 right-0 bottom-0 z-[3]">
+              {renderMainViewToggle("design")}
+              <div className="flex gap-2">
+                <DeviceButton
+                  active={selectedDevice === "mobile"}
+                  disabled={!iframeUrl || !iframeReady || !initCompleted || designLoading || designIterating}
+                  onClick={() => setSelectedDevice("mobile")}
+                >
+                  <PhoneIcon />
+                </DeviceButton>
+                <DeviceButton
+                  active={selectedDevice === "tablet"}
+                  disabled={!iframeUrl || !iframeReady || !initCompleted || designLoading || designIterating}
+                  onClick={() => setSelectedDevice("tablet")}
+                >
+                  <TabletIcon />
+                </DeviceButton>
+                <DeviceButton
+                  active={selectedDevice === "desktop"}
+                  disabled={!iframeUrl || !iframeReady || !initCompleted || designLoading || designIterating}
+                  onClick={() => setSelectedDevice("desktop")}
+                >
+                  <ComputerIcon />
+                </DeviceButton>
+              </div>
               <div />
             </div>
           </div>
@@ -2583,13 +3024,17 @@ const Create = () => {
             <Button
               variant="outline"
               onClick={handleAttachClick}
-              disabled={!isConnected || !iframeReady || !!pendingHitl}
+              disabled={!isConnected || !iframeReady || !!pendingHitl || mainView === "design"}
               title="Attach screenshot or diagram image"
             >
               <Paperclip size={14} />
             </Button>
             <Input
-              placeholder="Ask Amicable..."
+              placeholder={
+                mainView === "design"
+                  ? "Refine both design approaches..."
+                  : "Ask Amicable..."
+              }
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={(e) => {
@@ -2606,7 +3051,9 @@ const Create = () => {
                 !isConnected ||
                 !iframeReady ||
                 !!pendingHitl ||
-                (!inputValue.trim() && pendingImages.length === 0)
+                (mainView === "design"
+                  ? !inputValue.trim()
+                  : !inputValue.trim() && pendingImages.length === 0)
               }
             >
               Send

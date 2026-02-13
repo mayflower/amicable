@@ -1153,6 +1153,77 @@ def _get_agent() -> Agent:
     return _agent
 
 
+def _design_viewport_dimension(
+    raw: Any, *, default: int, minimum: int = 200, maximum: int = 2400
+) -> int:
+    try:
+        value = int(raw)
+    except Exception:
+        value = int(default)
+    if value < minimum:
+        return int(minimum)
+    if value > maximum:
+        return int(maximum)
+    return int(value)
+
+
+def _design_request_settings(body: dict[str, Any]) -> tuple[str, int, int, bool, str]:
+    path = str(body.get("path") or "/").strip() or "/"
+    viewport_width = _design_viewport_dimension(
+        body.get("viewport_width"), default=1280
+    )
+    viewport_height = _design_viewport_dimension(
+        body.get("viewport_height"), default=800
+    )
+    full_page = bool(body.get("full_page", False))
+    instruction = str(body.get("instruction") or "").strip()
+    return path, viewport_width, viewport_height, full_page, instruction
+
+
+async def _design_capture_snapshot(
+    *,
+    project_id: str,
+    path: str,
+    viewport_width: int,
+    viewport_height: int,
+    full_page: bool,
+) -> dict[str, Any]:
+    agent = _get_agent()
+    snap = await agent.capture_preview_screenshot(
+        session_id=project_id,
+        path=path,
+        full_page=full_page,
+        timeout_s=15,
+        viewport_width=viewport_width,
+        viewport_height=viewport_height,
+    )
+    width = snap.get("width")
+    height = snap.get("height")
+    image_b64 = snap.get("image_base64")
+    mime_type = snap.get("mime_type")
+    return {
+        "ok": bool(snap.get("ok")),
+        "image_base64": image_b64 if isinstance(image_b64, str) and image_b64 else None,
+        "mime_type": mime_type if isinstance(mime_type, str) and mime_type else "image/jpeg",
+        "width": int(width) if isinstance(width, int) and width > 0 else int(viewport_width),
+        "height": int(height) if isinstance(height, int) and height > 0 else int(viewport_height),
+        "path": str(snap.get("path") or path),
+        "target_url": str(snap.get("target_url") or "") or None,
+        "error": str(snap.get("error") or "") or None,
+    }
+
+
+def _design_config_error() -> str | None:
+    from src.design.gemini_design import is_design_enabled, validate_design_config
+
+    if not is_design_enabled():
+        return "design_disabled"
+    cfg = validate_design_config()
+    if cfg:
+        return "design_not_configured"
+    return None
+
+
 @app.get("/api/db/{project_id}/schema")
 async def api_db_schema_get(project_id: str, request: Request) -> JSONResponse:
     try:
@@ -1632,6 +1703,327 @@ async def api_db_schema_apply(project_id: str, request: Request) -> JSONResponse
         },
         status_code=200,
     )
+
+
+@app.post("/api/design/{project_id}/approaches")
+async def api_design_approaches(project_id: str, request: Request) -> JSONResponse:
+    from src.design.gemini_design import (
+        DesignGenerationError,
+        generate_design_approaches,
+    )
+    from src.design.session_state import get_lock, set_state
+    from src.design.types import DesignState
+
+    try:
+        proj = await _ensure_project_access_async(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
+
+    design_err = _design_config_error()
+    if design_err:
+        return JSONResponse({"error": design_err}, status_code=400)
+
+    body: Any
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    path, viewport_width, viewport_height, full_page, instruction = _design_request_settings(
+        body
+    )
+
+    agent = _get_agent()
+    await agent.init(
+        session_id=str(project_id),
+        template_id=getattr(proj, "template_id", None),
+        slug=getattr(proj, "slug", None),
+    )
+
+    snap = await _design_capture_snapshot(
+        project_id=str(project_id),
+        path=path,
+        viewport_width=viewport_width,
+        viewport_height=viewport_height,
+        full_page=full_page,
+    )
+    if not snap.get("ok") or not isinstance(snap.get("image_base64"), str):
+        return JSONResponse(
+            {
+                "error": "snapshot_failed",
+                "detail": str(snap.get("error") or "screenshot capture failed"),
+            },
+            status_code=500,
+        )
+
+    try:
+        async with get_lock(str(project_id)):
+            approaches = await generate_design_approaches(
+                screenshot_base64=str(snap["image_base64"]),
+                screenshot_mime_type=str(snap.get("mime_type") or "image/jpeg"),
+                viewport_width=int(snap.get("width") or viewport_width),
+                viewport_height=int(snap.get("height") or viewport_height),
+                app_context=str(getattr(proj, "project_prompt", "") or ""),
+                instruction=instruction,
+            )
+            state = set_state(
+                DesignState(
+                    project_id=str(project_id),
+                    path=path,
+                    viewport_width=int(snap.get("width") or viewport_width),
+                    viewport_height=int(snap.get("height") or viewport_height),
+                    approaches=approaches,
+                    selected_approach_id=None,
+                    total_iterations=0,
+                    pending_continue_decision=False,
+                    last_user_instruction=instruction or None,
+                )
+            )
+    except DesignGenerationError as e:
+        return JSONResponse(
+            {"error": "design_generation_failed", "detail": str(e)},
+            status_code=500,
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"error": "design_generation_failed", "detail": str(e)},
+            status_code=500,
+        )
+
+    return JSONResponse(state.to_dict(), status_code=200)
+
+
+@app.post("/api/design/{project_id}/approaches/regenerate")
+async def api_design_approaches_regenerate(
+    project_id: str, request: Request
+) -> JSONResponse:
+    from src.design.gemini_design import (
+        DesignGenerationError,
+        generate_design_approaches,
+    )
+    from src.design.session_state import get_lock, get_state, set_state
+    from src.design.types import DesignState
+
+    try:
+        proj = await _ensure_project_access_async(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
+
+    design_err = _design_config_error()
+    if design_err:
+        return JSONResponse({"error": design_err}, status_code=400)
+
+    current = get_state(str(project_id))
+    if current is None:
+        return JSONResponse({"error": "state_not_found"}, status_code=404)
+
+    body: Any
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    path_raw = body.get("path")
+    width_raw = body.get("viewport_width")
+    height_raw = body.get("viewport_height")
+    full_page = bool(body.get("full_page", False))
+    instruction = str(body.get("instruction") or "").strip()
+
+    path = str(path_raw).strip() if isinstance(path_raw, str) and path_raw else current.path
+    viewport_width = _design_viewport_dimension(
+        width_raw if width_raw is not None else current.viewport_width,
+        default=current.viewport_width,
+    )
+    viewport_height = _design_viewport_dimension(
+        height_raw if height_raw is not None else current.viewport_height,
+        default=current.viewport_height,
+    )
+
+    agent = _get_agent()
+    await agent.init(
+        session_id=str(project_id),
+        template_id=getattr(proj, "template_id", None),
+        slug=getattr(proj, "slug", None),
+    )
+
+    snap = await _design_capture_snapshot(
+        project_id=str(project_id),
+        path=path,
+        viewport_width=viewport_width,
+        viewport_height=viewport_height,
+        full_page=full_page,
+    )
+    if not snap.get("ok") or not isinstance(snap.get("image_base64"), str):
+        return JSONResponse(
+            {
+                "error": "snapshot_failed",
+                "detail": str(snap.get("error") or "screenshot capture failed"),
+            },
+            status_code=500,
+        )
+
+    final_instruction = instruction or str(current.last_user_instruction or "")
+    try:
+        async with get_lock(str(project_id)):
+            approaches = await generate_design_approaches(
+                screenshot_base64=str(snap["image_base64"]),
+                screenshot_mime_type=str(snap.get("mime_type") or "image/jpeg"),
+                viewport_width=int(snap.get("width") or viewport_width),
+                viewport_height=int(snap.get("height") or viewport_height),
+                app_context=str(getattr(proj, "project_prompt", "") or ""),
+                instruction=final_instruction,
+            )
+            state = set_state(
+                DesignState(
+                    project_id=str(project_id),
+                    path=path,
+                    viewport_width=int(snap.get("width") or viewport_width),
+                    viewport_height=int(snap.get("height") or viewport_height),
+                    approaches=approaches,
+                    selected_approach_id=None,
+                    total_iterations=int(current.total_iterations),
+                    pending_continue_decision=False,
+                    last_user_instruction=final_instruction or None,
+                )
+            )
+    except DesignGenerationError as e:
+        return JSONResponse(
+            {"error": "design_generation_failed", "detail": str(e)},
+            status_code=500,
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"error": "design_generation_failed", "detail": str(e)},
+            status_code=500,
+        )
+
+    return JSONResponse(state.to_dict(), status_code=200)
+
+
+@app.post("/api/design/{project_id}/select")
+async def api_design_select(project_id: str, request: Request) -> JSONResponse:
+    try:
+        await _ensure_project_access_async(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
+
+    if not _env_bool("AMICABLE_DESIGN_ENABLED", True):
+        return JSONResponse({"error": "design_disabled"}, status_code=400)
+
+    body: Any
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    approach_id = str(body.get("approach_id") or "").strip()
+    if not approach_id:
+        return JSONResponse({"error": "invalid_approach_id"}, status_code=400)
+
+    from src.design.session_state import get_lock, get_state, update_state
+
+    async with get_lock(str(project_id)):
+        current = get_state(str(project_id))
+        if current is None:
+            return JSONResponse({"error": "state_not_found"}, status_code=404)
+        if not any(a.approach_id == approach_id for a in current.approaches):
+            return JSONResponse({"error": "invalid_approach_id"}, status_code=400)
+
+        next_total = current.total_iterations
+        total_raw = body.get("total_iterations")
+        if isinstance(total_raw, int) and total_raw >= 0:
+            next_total = total_raw
+
+        next_pending = current.pending_continue_decision
+        pending_raw = body.get("pending_continue_decision")
+        if isinstance(pending_raw, bool):
+            next_pending = pending_raw
+
+        state = update_state(
+            str(project_id),
+            selected_approach_id=approach_id,
+            total_iterations=next_total,
+            pending_continue_decision=next_pending,
+        )
+    if state is None:
+        return JSONResponse({"error": "state_not_found"}, status_code=404)
+    return JSONResponse(state.to_dict(), status_code=200)
+
+
+@app.post("/api/design/{project_id}/snapshot")
+async def api_design_snapshot(project_id: str, request: Request) -> JSONResponse:
+    try:
+        proj = await _ensure_project_access_async(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
+
+    if not _env_bool("AMICABLE_DESIGN_ENABLED", True):
+        return JSONResponse({"error": "design_disabled"}, status_code=400)
+
+    body: Any
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    path, viewport_width, viewport_height, full_page, _instruction = _design_request_settings(
+        body
+    )
+
+    agent = _get_agent()
+    await agent.init(
+        session_id=str(project_id),
+        template_id=getattr(proj, "template_id", None),
+        slug=getattr(proj, "slug", None),
+    )
+
+    snap = await _design_capture_snapshot(
+        project_id=str(project_id),
+        path=path,
+        viewport_width=viewport_width,
+        viewport_height=viewport_height,
+        full_page=full_page,
+    )
+    if not snap.get("ok"):
+        return JSONResponse(
+            {
+                "error": "snapshot_failed",
+                "detail": str(snap.get("error") or "screenshot capture failed"),
+            },
+            status_code=500,
+        )
+    return JSONResponse(snap, status_code=200)
+
+
+@app.get("/api/design/{project_id}/state")
+async def api_design_state(project_id: str, request: Request) -> JSONResponse:
+    try:
+        await _ensure_project_access_async(request, project_id=project_id)
+    except PermissionError as e:
+        code = 401 if str(e) == "not_authenticated" else 404
+        return JSONResponse({"error": str(e)}, status_code=code)
+
+    if not _env_bool("AMICABLE_DESIGN_ENABLED", True):
+        return JSONResponse({"error": "design_disabled"}, status_code=400)
+
+    from src.design.session_state import get_state
+
+    st = get_state(str(project_id))
+    if st is None:
+        return JSONResponse({"error": "state_not_found"}, status_code=404)
+    return JSONResponse(st.to_dict(), status_code=200)
 
 
 @app.get("/api/sandbox/{project_id}/ls")
