@@ -5,7 +5,7 @@ import re
 import threading
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -102,13 +102,9 @@ def ensure_projects_schema(client: HasuraClient) -> None:
 
             -- Migration: add existing project owners as members
             INSERT INTO amicable_meta.project_members (project_id, user_sub, user_email, added_at)
-            SELECT p.project_id, p.owner_sub, p.owner_email, p.created_at
+            SELECT p.project_id, p.owner_sub, LOWER(p.owner_email), p.created_at
             FROM amicable_meta.projects p
             WHERE p.deleted_at IS NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM amicable_meta.project_members pm
-                WHERE pm.project_id = p.project_id
-              )
             ON CONFLICT DO NOTHING;
             """.strip()
         )
@@ -675,12 +671,16 @@ def rename_project(
         slug = _candidate_slug(base, suffix=suffix)
         if slug != existing.slug and not _slug_available(client, slug=slug):
             continue
-        # Update without owner_sub check since membership is already verified
         client.run_sql(
             f"""
             UPDATE amicable_meta.projects
             SET name = {_sql_str(new_name)}, slug = {_sql_str(slug)}, updated_at = now()
-            WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL;
+            WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL
+              AND EXISTS (
+                SELECT 1 FROM amicable_meta.project_members pm
+                WHERE pm.project_id = {_sql_str(project_id)}
+                  AND (pm.user_sub = {_sql_str(owner.sub)} OR pm.user_email = {_sql_str(owner.email.lower())})
+              );
             """.strip()
         )
         updated = get_project_by_id(client, owner=owner, project_id=project_id)
@@ -768,9 +768,9 @@ def add_project_member(
     ensure_projects_schema(client)
     user_email = user_email.strip().lower()
 
-    # Check if already a member by email
+    # Check if already a member by email — skip only if no new user_sub to backfill
     existing = _get_member_by_email(client, project_id=project_id, user_email=user_email)
-    if existing:
+    if existing and (existing.user_sub or not user_sub):
         return existing
 
     sub_sql = _sql_str(user_sub) if user_sub else "NULL"
@@ -783,12 +783,16 @@ def add_project_member(
         ON CONFLICT (project_id, user_email) DO UPDATE SET user_sub = COALESCE(EXCLUDED.user_sub, amicable_meta.project_members.user_sub);
         """.strip()
     )
+    # Re-fetch to get DB-populated fields (added_at, resolved user_sub from upsert)
+    member = _get_member_by_email(client, project_id=project_id, user_email=user_email)
+    if member:
+        return member
     return ProjectMember(
         project_id=project_id,
         user_sub=user_sub,
         user_email=user_email,
         added_by_sub=added_by_sub,
-        added_at=datetime.now(tz=timezone.utc).isoformat(),
+        added_at=datetime.now(tz=UTC).isoformat(),
     )
 
 
@@ -821,10 +825,12 @@ def list_project_members(client: HasuraClient, *, project_id: str) -> list[Proje
 def remove_project_member(
     client: HasuraClient, *, project_id: str, user_sub: str
 ) -> bool:
-    """Remove a member from a project. Returns False if they were the last member."""
+    """Remove a member from a project. Returns False if they were the last member or target not found."""
     ensure_projects_schema(client)
     members = list_project_members(client, project_id=project_id)
     if len(members) <= 1:
+        return False
+    if not any(m.user_sub == user_sub for m in members):
         return False
     client.run_sql(
         f"""
@@ -838,15 +844,18 @@ def remove_project_member(
 def remove_project_member_by_email(
     client: HasuraClient, *, project_id: str, user_email: str
 ) -> bool:
-    """Remove a pending member by email. Returns False if they were the last member."""
+    """Remove a pending member by email. Returns False if they were the last member or target not found."""
     ensure_projects_schema(client)
+    user_email = user_email.strip().lower()
     members = list_project_members(client, project_id=project_id)
     if len(members) <= 1:
+        return False
+    if not any(m.user_email == user_email for m in members):
         return False
     client.run_sql(
         f"""
         DELETE FROM amicable_meta.project_members
-        WHERE project_id = {_sql_str(project_id)} AND user_email = {_sql_str(user_email.lower())};
+        WHERE project_id = {_sql_str(project_id)} AND user_email = {_sql_str(user_email)};
         """.strip()
     )
     return True

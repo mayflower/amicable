@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, type FormEvent } from "react";
 import { Loader2, UserPlus, X, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,7 +48,7 @@ export function ProjectMembers({ projectId, className }: ProjectMembersProps) {
     fetchMembers();
   }, [fetchMembers]);
 
-  const handleAddMember = async (e: React.FormEvent) => {
+  const handleAddMember = async (e: FormEvent) => {
     e.preventDefault();
     const email = newEmail.trim().toLowerCase();
     if (!email || !email.includes("@")) return;

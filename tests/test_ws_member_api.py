@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 pytest.importorskip("fastapi")
 pytest.importorskip("dotenv")
@@ -18,6 +19,7 @@ def _patch_auth_rejected():
 def test_list_members_requires_auth():
     """GET /api/projects/{id}/members requires authentication."""
     from fastapi.testclient import TestClient
+
     from src.runtimes.ws_server import app
 
     with patch("src.runtimes.ws_server._require_hasura"), _patch_auth_rejected():
@@ -29,6 +31,7 @@ def test_list_members_requires_auth():
 def test_add_member_requires_auth():
     """POST /api/projects/{id}/members requires authentication."""
     from fastapi.testclient import TestClient
+
     from src.runtimes.ws_server import app
 
     with patch("src.runtimes.ws_server._require_hasura"), _patch_auth_rejected():
@@ -40,6 +43,7 @@ def test_add_member_requires_auth():
 def test_remove_member_requires_auth():
     """DELETE /api/projects/{id}/members/{sub} requires authentication."""
     from fastapi.testclient import TestClient
+
     from src.runtimes.ws_server import app
 
     with patch("src.runtimes.ws_server._require_hasura"), _patch_auth_rejected():

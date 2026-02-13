@@ -610,8 +610,8 @@ def test_project_locking() -> None:
 
     # Add u2 as member
     from src.projects.store import (
-        add_project_member,
         acquire_project_lock,
+        add_project_member,
         get_project_lock,
         release_project_lock,
     )
@@ -660,7 +660,11 @@ def test_project_lock_force_claim() -> None:
 
     p = create_project(c, owner=owner1, name="Forceable")
 
-    from src.projects.store import add_project_member, acquire_project_lock, get_project_lock
+    from src.projects.store import (
+        acquire_project_lock,
+        add_project_member,
+        get_project_lock,
+    )
 
     add_project_member(
         c,

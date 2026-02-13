@@ -49,6 +49,7 @@ _runtime_autoheal_state_by_project: dict[str, Any] = {}
 # Track active WebSocket connections for session locking.
 # Maps WebSocket -> (project_id, user_sub) for lock release on disconnect.
 _ws_session_map: dict[WebSocket, tuple[str, str]] = {}
+_background_tasks: set[asyncio.Task[Any]] = set()
 
 _naming_llm: Any = None
 
@@ -1218,7 +1219,11 @@ async def api_remove_project_member(
         return JSONResponse({"error": "not_authenticated"}, status_code=401)
 
     from src.db.provisioning import hasura_client_from_env
-    from src.projects.store import ProjectOwner, get_project_by_id, remove_project_member
+    from src.projects.store import (
+        ProjectOwner,
+        get_project_by_id,
+        remove_project_member,
+    )
 
     def _remove_sync():
         client = hasura_client_from_env()
@@ -1250,7 +1255,11 @@ async def api_remove_project_member_by_email(
         return JSONResponse({"error": "not_authenticated"}, status_code=401)
 
     from src.db.provisioning import hasura_client_from_env
-    from src.projects.store import ProjectOwner, get_project_by_id, remove_project_member_by_email
+    from src.projects.store import (
+        ProjectOwner,
+        get_project_by_id,
+        remove_project_member_by_email,
+    )
 
     def _remove_sync():
         client = hasura_client_from_env()
@@ -2376,27 +2385,11 @@ async def _handle_ws(ws: WebSocket) -> None:
         _agent = Agent()
     agent = _agent
 
-    while True:
+    try:
+     while True:
         try:
             raw = await ws.receive_text()
         except WebSocketDisconnect:
-            # Release session lock on disconnect
-            conn_info = _ws_session_map.pop(ws, None)
-            if conn_info:
-                sess_id, u_sub = conn_info
-
-                def _release_lock_on_disconnect() -> None:
-                    try:
-                        from src.db.provisioning import hasura_client_from_env
-                        from src.projects.store import release_project_lock
-
-                        client = hasura_client_from_env()
-                        release_project_lock(client, project_id=sess_id, user_sub=u_sub)
-                    except Exception as exc:
-                        logger.warning("Failed to release lock for session %s: %s", sess_id, exc)
-
-                # Run lock release in background to avoid blocking
-                asyncio.create_task(asyncio.to_thread(_release_lock_on_disconnect))
             return
 
         msg: dict[str, Any]
@@ -2485,24 +2478,29 @@ async def _handle_ws(ws: WebSocket) -> None:
                 get_project_lock,
             )
 
-            def _check_and_acquire_lock() -> tuple[str, dict[str, Any] | None]:
+            def _check_and_acquire_lock(
+                _sid: str = str(session_id),
+                _sub: str = sub,
+                _email: str = email,
+                _force: bool = force_claim,
+            ) -> tuple[str, dict[str, Any] | None]:
                 client = hasura_client_from_env()
-                current_lock = get_project_lock(client, project_id=str(session_id))
-                if current_lock and current_lock.locked_by_sub != sub and not force_claim:
+                current_lock = get_project_lock(client, project_id=_sid)
+                if current_lock and current_lock.locked_by_sub != _sub and not _force:
                     return "locked", {
                         "locked_by_email": current_lock.locked_by_email,
                         "locked_at": current_lock.locked_at,
                     }
                 lock = acquire_project_lock(
                     client,
-                    project_id=str(session_id),
-                    user_sub=sub,
-                    user_email=email,
-                    force=force_claim,
+                    project_id=_sid,
+                    user_sub=_sub,
+                    user_email=_email,
+                    force=_force,
                 )
                 if not lock:
                     # Race: someone else acquired it between check and acquire
-                    current = get_project_lock(client, project_id=str(session_id))
+                    current = get_project_lock(client, project_id=_sid)
                     return "locked", {
                         "locked_by_email": current.locked_by_email if current else "unknown",
                         "locked_at": current.locked_at if current else "",
@@ -2523,7 +2521,13 @@ async def _handle_ws(ws: WebSocket) -> None:
                             )
                             await other_ws.close(code=1000)
                         except Exception:
-                            pass
+                            logger.debug(
+                                "Failed to notify/close previous session websocket "
+                                "(session_id=%s, previous_sub=%s)",
+                                session_id,
+                                other_sub,
+                                exc_info=True,
+                            )
                         _ws_session_map.pop(other_ws, None)
 
             try:
@@ -2933,6 +2937,24 @@ async def _handle_ws(ws: WebSocket) -> None:
                 ).to_dict()
             )
             continue
+    finally:
+        conn_info = _ws_session_map.pop(ws, None)
+        if conn_info:
+            sess_id, u_sub = conn_info
+
+            def _release_lock_on_disconnect() -> None:
+                try:
+                    from src.db.provisioning import hasura_client_from_env
+                    from src.projects.store import release_project_lock
+
+                    client = hasura_client_from_env()
+                    release_project_lock(client, project_id=sess_id, user_sub=u_sub)
+                except Exception as exc:
+                    logger.warning("Failed to release lock for session %s: %s", sess_id, exc)
+
+            task = asyncio.create_task(asyncio.to_thread(_release_lock_on_disconnect))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
 
 
 @app.websocket("/")
