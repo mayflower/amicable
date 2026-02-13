@@ -48,7 +48,7 @@ COPY k8s/images/amicable-sandbox-flutter/.deepagents/skills/ /app/.deepagents/sk
 WORKDIR /runtime
 COPY k8s/images/amicable-sandbox-flutter/runtime.py ./runtime.py
 
-ENV AMICABLE_PREVIEW_CMD="flutter run -d web-server --web-hostname 0.0.0.0 --web-port 3000"
+ENV AMICABLE_PREVIEW_CMD="flutter run -d web-server --web-hostname 0.0.0.0 --web-port 3000 --no-dds"
 
 EXPOSE 8888
 EXPOSE 3000
