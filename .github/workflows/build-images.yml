@@ -148,7 +148,11 @@ jobs:
             -p "sandboxTemplates[4].image.tag=${IMAGE_TAG}" \
             -p "sandboxTemplates[5].image.tag=${IMAGE_TAG}" \
             -p "sandboxTemplates[6].image.tag=${IMAGE_TAG}" \
-            -p "sandboxTemplates[7].image.tag=${IMAGE_TAG}"
+            -p "sandboxTemplates[7].image.tag=${IMAGE_TAG}" \
+            -p "sandboxTemplates[8].image.tag=${IMAGE_TAG}" \
+            -p "sandboxTemplates[9].image.tag=${IMAGE_TAG}" \
+            -p "sandboxTemplates[10].image.tag=${IMAGE_TAG}" \
+            -p "sandboxTemplates[11].image.tag=${IMAGE_TAG}"
 
           argocd app sync "${APP}" --prune --timeout 300
           argocd app wait "${APP}" --timeout 300
