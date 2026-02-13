@@ -23,6 +23,8 @@ export enum Sender {
 export type JsonObject = Record<string, unknown>;
 
 export type HitlDecisionType = "approve" | "edit" | "reject";
+export type PermissionMode = "default" | "accept_edits" | "bypass";
+export type ThinkingLevel = "none" | "think" | "think_hard" | "ultrathink";
 
 export interface HitlActionRequest {
   name: string;
@@ -78,6 +80,8 @@ export type MessageData = JsonObject & {
   url?: string;
   sandbox_id?: string;
   exists?: boolean;
+  permission_mode?: PermissionMode;
+  thinking_level?: ThinkingLevel;
 
   hitl_pending?: { interrupt_id: string; request: HitlRequest };
   interrupt_id?: string;

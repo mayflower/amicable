@@ -9,7 +9,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import AsyncIterator
@@ -190,6 +190,42 @@ def _deepagents_qa_enabled() -> bool:
     return qa_enabled_from_env(legacy_validate_env=_deepagents_validate())
 
 
+PermissionMode = Literal["default", "accept_edits", "bypass"]
+ThinkingLevel = Literal["none", "think", "think_hard", "ultrathink"]
+
+
+def _default_permission_mode() -> PermissionMode:
+    raw = (os.environ.get("AMICABLE_PERMISSION_MODE_DEFAULT") or "default").strip()
+    return normalize_permission_mode(raw)
+
+
+def normalize_permission_mode(raw: Any) -> PermissionMode:
+    mode = str(raw or "").strip().lower()
+    if mode == "accept_edits":
+        return "accept_edits"
+    if mode == "bypass":
+        return "bypass"
+    return "default"
+
+
+def normalize_thinking_level(raw: Any) -> ThinkingLevel:
+    level = str(raw or "").strip().lower()
+    if level in ("think", "think_hard", "ultrathink"):
+        return level  # type: ignore[return-value]
+    return "none"
+
+
+def _compaction_trigger_messages() -> int:
+    # Keep defaults aligned with deepagents summarization thresholds.
+    return max(
+        5,
+        _env_int(
+            "AMICABLE_COMPACTION_TRIGGER_MESSAGES",
+            _deepagents_summarization_trigger_messages(),
+        ),
+    )
+
+
 _DEEPAGENTS_SYSTEM_PROMPT = """You are Amicable, an AI editor for sandboxed application workspaces.
 
 Your job: implement the user's request by editing the live sandboxed codebase. The user can see a live preview.
@@ -307,6 +343,15 @@ class Agent:
         # concurrent WS/HTTP requests hit init paths.
         self._ensure_env_lock_by_session: dict[str, asyncio.Lock] = {}
 
+        # Optional lifecycle hooks (fail-open).
+        self._hook_bus = None
+        try:
+            from src.agent_hooks import AgentHookBus
+
+            self._hook_bus = AgentHookBus()
+        except Exception:
+            self._hook_bus = None
+
     def _ensure_env_lock(self, session_id: str) -> asyncio.Lock:
         lock = self._ensure_env_lock_by_session.get(session_id)
         if lock is None:
@@ -366,6 +411,179 @@ class Agent:
         except Exception:
             self._trace_narrator = None
         return self._trace_narrator
+
+    def set_session_controls(
+        self,
+        session_id: str,
+        *,
+        permission_mode: str | None = None,
+        thinking_level: str | None = None,
+    ) -> None:
+        meta = self.session_data.get(session_id)
+        if not isinstance(meta, dict):
+            meta = {}
+            self.session_data[session_id] = meta
+
+        current_mode = meta.get("permission_mode")
+        current_level = meta.get("thinking_level")
+        mode = normalize_permission_mode(
+            permission_mode
+            if permission_mode is not None
+            else (
+                current_mode
+                if isinstance(current_mode, str)
+                else _default_permission_mode()
+            )
+        )
+        level = normalize_thinking_level(
+            thinking_level
+            if thinking_level is not None
+            else (current_level if isinstance(current_level, str) else "none")
+        )
+        meta["permission_mode"] = mode
+        meta["thinking_level"] = level
+
+    def _permission_mode_for_session(self, session_id: str) -> PermissionMode:
+        init_data = self.session_data.get(session_id)
+        if isinstance(init_data, dict):
+            mode = init_data.get("permission_mode")
+            if isinstance(mode, str):
+                return normalize_permission_mode(mode)
+        return _default_permission_mode()
+
+    def _thinking_level_for_session(self, session_id: str) -> ThinkingLevel:
+        init_data = self.session_data.get(session_id)
+        if isinstance(init_data, dict):
+            level = init_data.get("thinking_level")
+            if isinstance(level, str):
+                return normalize_thinking_level(level)
+        return "none"
+
+    def _conversation_history(self, session_id: str) -> list[dict[str, str]]:
+        init_data = self.session_data.get(session_id)
+        if not isinstance(init_data, dict):
+            init_data = {}
+            self.session_data[session_id] = init_data
+        raw = init_data.get("_conversation_history")
+        if isinstance(raw, list):
+            return raw
+        history: list[dict[str, str]] = []
+        init_data["_conversation_history"] = history
+        return history
+
+    def _append_conversation_turn(self, session_id: str, role: str, text: str) -> None:
+        t = (text or "").strip()
+        if not t:
+            return
+        history = self._conversation_history(session_id)
+        history.append({"role": role, "text": t[:4000]})
+        if len(history) > 250:
+            del history[: len(history) - 250]
+
+    def _compose_workspace_instruction_context(self, session_id: str) -> str:
+        if self._session_manager is None:
+            return ""
+        try:
+            from src.prompting.instruction_loader import compose_instruction_prompt
+
+            backend = self._session_manager.get_backend(session_id)
+            composed = compose_instruction_prompt(
+                base_prompt="",
+                backend=backend,
+            )
+            return composed.prompt.strip()
+        except Exception:
+            return ""
+
+    def _maybe_compact_user_text(
+        self,
+        *,
+        session_id: str,
+        user_text: str,
+    ) -> tuple[str, dict[str, Any] | None]:
+        history = self._conversation_history(session_id)
+        threshold = _compaction_trigger_messages()
+        if len(history) < threshold:
+            return user_text, None
+
+        keep_recent = _deepagents_summarization_keep_messages()
+        if keep_recent < 1:
+            keep_recent = 1
+
+        recent = history[-keep_recent:] if keep_recent < len(history) else list(history)
+        older = history[: max(0, len(history) - len(recent))]
+
+        init_data = self.session_data.get(session_id)
+        prior_summary = ""
+        if isinstance(init_data, dict):
+            ps = init_data.get("_conversation_summary")
+            if isinstance(ps, str):
+                prior_summary = ps
+
+        bullets: list[str] = []
+        if prior_summary.strip():
+            bullets.append(prior_summary.strip())
+        for item in older[-80:]:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "msg")
+            text = str(item.get("text") or "").replace("\n", " ").strip()
+            if text:
+                bullets.append(f"{role}: {text[:220]}")
+
+        if isinstance(init_data, dict):
+            qa_last = init_data.get("_last_qa_failure")
+            if isinstance(qa_last, str) and qa_last.strip():
+                bullets.append(f"last_qa_failure: {qa_last[:900]}")
+        if session_id in self._hitl_pending:
+            bullets.append("pending_hitl: unresolved approval is in progress")
+
+        merged_summary = "\n".join(f"- {b}" for b in bullets if b.strip()).strip()
+        if len(merged_summary) > 8_000:
+            merged_summary = merged_summary[:8_000]
+
+        if isinstance(init_data, dict):
+            init_data["_conversation_summary"] = merged_summary
+            init_data["_conversation_history"] = recent
+
+        compacted = (
+            "Compacted conversation context:\n"
+            f"{merged_summary}\n\n"
+            "Current request:\n"
+            f"{user_text}"
+        )
+        return compacted, {
+            "history_before": len(history),
+            "history_after": len(recent),
+            "summary_chars": len(merged_summary),
+            "threshold": threshold,
+        }
+
+    async def _emit_hook(self, event: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._hook_bus is None:
+            return {"event": event, "called": False, "results": []}
+        try:
+            return await self._hook_bus.emit(event, payload)
+        except Exception as exc:
+            return {
+                "event": event,
+                "called": False,
+                "results": [{"status": "error", "error": str(exc)}],
+            }
+
+    async def emit_session_start_hook(
+        self,
+        *,
+        session_id: str,
+    ) -> dict[str, Any]:
+        return await self._emit_hook(
+            "session_start",
+            {
+                "session_id": session_id,
+                "permission_mode": self._permission_mode_for_session(session_id),
+                "thinking_level": self._thinking_level_for_session(session_id),
+            },
+        )
 
     async def init(
         self,
@@ -491,6 +709,11 @@ class Agent:
             "app_id": session_id,
             "template_id": effective_template_id,
             "k8s_template_name": sandbox_template_name,
+            "permission_mode": _default_permission_mode(),
+            "thinking_level": "none",
+            "_conversation_history": [],
+            "_conversation_summary": "",
+            "_last_qa_failure": "",
         }
 
         # Persist sandbox_id (best-effort) for preview routing and debugging.
@@ -833,6 +1056,7 @@ class Agent:
 
         # Defensive: ensure sandbox exists even if the frontend skipped init.
         await self._ensure_app_environment(session_id)
+        self.set_session_controls(session_id)
 
         await self._ensure_deep_agent()
 
@@ -857,8 +1081,16 @@ class Agent:
         sent_qa_failed_error = False
         tool_trace_for_reason: list[str] = []
 
+        permission_mode = self._permission_mode_for_session(session_id)
+        thinking_level = self._thinking_level_for_session(session_id)
+
         config: dict[str, Any] = {
-            "configurable": {"thread_id": session_id, "checkpoint_ns": "controller"},
+            "configurable": {
+                "thread_id": session_id,
+                "checkpoint_ns": "controller",
+                "permission_mode": permission_mode,
+                "thinking_level": thinking_level,
+            },
             "metadata": {"assistant_id": session_id},
             "recursion_limit": 500,
         }
@@ -911,17 +1143,79 @@ class Agent:
             lf.session_id = session_id
             config["callbacks"] = [lf]
 
-        user_text = feedback.strip()
+        raw_user_text = feedback.strip()
+        user_text = raw_user_text
+        self._append_conversation_turn(session_id, "user", raw_user_text)
+
+        submit_hook = await self._emit_hook(
+            "user_prompt_submit",
+            {
+                "session_id": session_id,
+                "permission_mode": permission_mode,
+                "thinking_level": thinking_level,
+                "user_text": raw_user_text[:4000],
+            },
+        )
+        if submit_hook.get("called"):
+            yield Message.new(
+                MessageType.TRACE_EVENT,
+                {
+                    "phase": "user_prompt_submit",
+                    "tool_name": "hooks",
+                    "output": _safe_trace_payload(submit_hook),
+                    "assistant_msg_id": plan_msg_id,
+                },
+                session_id=session_id,
+            ).to_dict()
+
+        compacted_text, compact_meta = self._maybe_compact_user_text(
+            session_id=session_id, user_text=user_text
+        )
+        if compact_meta is not None:
+            compact_hook = await self._emit_hook(
+                "pre_compact",
+                {
+                    "session_id": session_id,
+                    "meta": compact_meta,
+                },
+            )
+            user_text = compacted_text
+            yield Message.new(
+                MessageType.TRACE_EVENT,
+                {
+                    "phase": "pre_compact",
+                    "tool_name": "compaction",
+                    "output": {
+                        **compact_meta,
+                        "hook_called": bool(compact_hook.get("called")),
+                    },
+                    "assistant_msg_id": plan_msg_id,
+                },
+                session_id=session_id,
+            ).to_dict()
+
+        workspace_ctx = self._compose_workspace_instruction_context(session_id)
+        if workspace_ctx:
+            user_text = (
+                "Workspace instruction context:\n"
+                f"{workspace_ctx}\n\n"
+                "User request:\n"
+                f"{user_text}"
+            )
+
+        if thinking_level != "none":
+            user_text = f"Thinking level: {thinking_level}\n\n{user_text}"
+
         content_blocks = (
             [b for b in (user_content_blocks or []) if isinstance(b, dict)]
             if user_content_blocks
             else []
         )
-        if content_blocks and not any(
-            isinstance(block.get("text"), str) and block.get("type") == "text"
-            for block in content_blocks
-        ):
-            content_blocks = [{"type": "text", "text": user_text}, *content_blocks]
+        if content_blocks:
+            non_text_blocks = [
+                b for b in content_blocks if str(b.get("type") or "").lower() != "text"
+            ]
+            content_blocks = [{"type": "text", "text": user_text}, *non_text_blocks]
 
         def _chunk_text(chunk: Any) -> str:
             if chunk is None:
@@ -1092,6 +1386,25 @@ class Agent:
 
                 if etype == "on_tool_start" and isinstance(name, str) and name:
                     tool_input = _safe_trace_payload(data.get("input"))
+                    pre_tool_hook = await self._emit_hook(
+                        "pre_tool_use",
+                        {
+                            "session_id": session_id,
+                            "tool_name": name,
+                            "input": tool_input,
+                        },
+                    )
+                    if pre_tool_hook.get("called"):
+                        yield Message.new(
+                            MessageType.TRACE_EVENT,
+                            {
+                                "phase": "pre_tool_use",
+                                "tool_name": name,
+                                "output": _safe_trace_payload(pre_tool_hook),
+                                "assistant_msg_id": plan_msg_id,
+                            },
+                            session_id=session_id,
+                        ).to_dict()
                     # Minimal tool trace for reasoning summaries. Avoid including raw command strings.
                     if name in ("write_file", "edit_file") and isinstance(
                         tool_input, dict
@@ -1120,6 +1433,25 @@ class Agent:
 
                 if etype == "on_tool_end" and isinstance(name, str) and name:
                     tool_output = _safe_trace_payload(data.get("output"))
+                    post_tool_hook = await self._emit_hook(
+                        "post_tool_use",
+                        {
+                            "session_id": session_id,
+                            "tool_name": name,
+                            "output": tool_output,
+                        },
+                    )
+                    if post_tool_hook.get("called"):
+                        yield Message.new(
+                            MessageType.TRACE_EVENT,
+                            {
+                                "phase": "post_tool_use",
+                                "tool_name": name,
+                                "output": _safe_trace_payload(post_tool_hook),
+                                "assistant_msg_id": plan_msg_id,
+                            },
+                            session_id=session_id,
+                        ).to_dict()
                     tool_trace_for_reason.append(f"{name}: ok")
                     yield Message.new(
                         MessageType.TRACE_EVENT,
@@ -1165,6 +1497,25 @@ class Agent:
 
                 if etype == "on_tool_error" and isinstance(name, str) and name:
                     err = _safe_trace_payload(data.get("error"))
+                    tool_error_hook = await self._emit_hook(
+                        "tool_error",
+                        {
+                            "session_id": session_id,
+                            "tool_name": name,
+                            "error": err,
+                        },
+                    )
+                    if tool_error_hook.get("called"):
+                        yield Message.new(
+                            MessageType.TRACE_EVENT,
+                            {
+                                "phase": "tool_error",
+                                "tool_name": name,
+                                "output": _safe_trace_payload(tool_error_hook),
+                                "assistant_msg_id": plan_msg_id,
+                            },
+                            session_id=session_id,
+                        ).to_dict()
                     tool_trace_for_reason.append(f"{name}: error")
                     yield Message.new(
                         MessageType.TRACE_EVENT,
@@ -1267,7 +1618,14 @@ class Agent:
                                 },
                                 session_id=session_id,
                             ).to_dict()
+                            init_data = self.session_data.get(session_id)
+                            if isinstance(init_data, dict):
+                                init_data["_last_qa_failure"] = last_detail
                             sent_qa_failed_error = True
+                        elif isinstance(out, dict):
+                            init_data = self.session_data.get(session_id)
+                            if isinstance(init_data, dict):
+                                init_data["_last_qa_failure"] = ""
                     if name == "git_sync":
                         out = data.get("output")
                         if isinstance(out, dict):
@@ -1356,7 +1714,7 @@ class Agent:
                                 buffer.strip() or (final_from_end or "")
                             ).strip()
                             msg = generate_agent_commit_message_llm(
-                                user_request=user_text,
+                                user_request=raw_user_text,
                                 agent_summary=agent_summary,
                                 project_slug=str(project_slug),
                                 qa_passed=None,
@@ -1399,7 +1757,7 @@ class Agent:
             if narrator is not None:
                 try:
                     reason = await narrator.areason(
-                        user_request=user_text,
+                        user_request=raw_user_text,
                         tool_trace=tool_trace_for_reason,
                         status="paused_for_approval",
                     )
@@ -1416,9 +1774,29 @@ class Agent:
                         },
                         session_id=session_id,
                     ).to_dict()
+            stop_hook = await self._emit_hook(
+                "stop",
+                {
+                    "session_id": session_id,
+                    "status": "paused_for_approval",
+                    "assistant_msg_id": plan_msg_id,
+                },
+            )
+            if stop_hook.get("called"):
+                yield Message.new(
+                    MessageType.TRACE_EVENT,
+                    {
+                        "phase": "stop",
+                        "tool_name": "hooks",
+                        "output": _safe_trace_payload(stop_hook),
+                        "assistant_msg_id": plan_msg_id,
+                    },
+                    session_id=session_id,
+                ).to_dict()
             return
 
         final = buffer.strip() or (final_from_end or "").strip()
+        self._append_conversation_turn(session_id, "assistant", final)
         if final and not sent_final:
             yield Message.new(
                 MessageType.AGENT_FINAL,
@@ -1432,7 +1810,7 @@ class Agent:
         if narrator is not None:
             try:
                 reason = await narrator.areason(
-                    user_request=user_text,
+                    user_request=raw_user_text,
                     tool_trace=tool_trace_for_reason,
                     status="completed",
                 )
@@ -1449,6 +1827,26 @@ class Agent:
                     },
                     session_id=session_id,
                 ).to_dict()
+
+        stop_hook = await self._emit_hook(
+            "stop",
+            {
+                "session_id": session_id,
+                "status": "completed",
+                "assistant_msg_id": plan_msg_id,
+            },
+        )
+        if stop_hook.get("called"):
+            yield Message.new(
+                MessageType.TRACE_EVENT,
+                {
+                    "phase": "stop",
+                    "tool_name": "hooks",
+                    "output": _safe_trace_payload(stop_hook),
+                    "assistant_msg_id": plan_msg_id,
+                },
+                session_id=session_id,
+            ).to_dict()
 
         # Complete the update even on errors so the UI can clear "in progress".
         yield Message.new(
@@ -1540,6 +1938,7 @@ class Agent:
                         return
 
         await self._ensure_deep_agent()
+        self.set_session_controls(session_id)
         assert self._deep_controller is not None
 
         from src.db.context import reset_current_app_id, set_current_app_id
@@ -1559,8 +1958,15 @@ class Agent:
         sent_qa_failed_error = False
         tool_trace_for_reason: list[str] = []
 
+        permission_mode = self._permission_mode_for_session(session_id)
+        thinking_level = self._thinking_level_for_session(session_id)
         config: dict[str, Any] = {
-            "configurable": {"thread_id": session_id, "checkpoint_ns": "controller"},
+            "configurable": {
+                "thread_id": session_id,
+                "checkpoint_ns": "controller",
+                "permission_mode": permission_mode,
+                "thinking_level": thinking_level,
+            },
             "metadata": {"assistant_id": session_id},
             "recursion_limit": 500,
         }
@@ -1738,6 +2144,25 @@ class Agent:
 
                 if etype == "on_tool_start" and isinstance(name, str) and name:
                     tool_input = _safe_trace_payload(data.get("input"))
+                    pre_tool_hook = await self._emit_hook(
+                        "pre_tool_use",
+                        {
+                            "session_id": session_id,
+                            "tool_name": name,
+                            "input": tool_input,
+                        },
+                    )
+                    if pre_tool_hook.get("called"):
+                        yield Message.new(
+                            MessageType.TRACE_EVENT,
+                            {
+                                "phase": "pre_tool_use",
+                                "tool_name": name,
+                                "output": _safe_trace_payload(pre_tool_hook),
+                                "assistant_msg_id": plan_msg_id,
+                            },
+                            session_id=session_id,
+                        ).to_dict()
                     if name in ("write_file", "edit_file") and isinstance(
                         tool_input, dict
                     ):
@@ -1765,6 +2190,25 @@ class Agent:
 
                 if etype == "on_tool_end" and isinstance(name, str) and name:
                     tool_output = _safe_trace_payload(data.get("output"))
+                    post_tool_hook = await self._emit_hook(
+                        "post_tool_use",
+                        {
+                            "session_id": session_id,
+                            "tool_name": name,
+                            "output": tool_output,
+                        },
+                    )
+                    if post_tool_hook.get("called"):
+                        yield Message.new(
+                            MessageType.TRACE_EVENT,
+                            {
+                                "phase": "post_tool_use",
+                                "tool_name": name,
+                                "output": _safe_trace_payload(post_tool_hook),
+                                "assistant_msg_id": plan_msg_id,
+                            },
+                            session_id=session_id,
+                        ).to_dict()
                     tool_trace_for_reason.append(f"{name}: ok")
                     yield Message.new(
                         MessageType.TRACE_EVENT,
@@ -1810,6 +2254,25 @@ class Agent:
 
                 if etype == "on_tool_error" and isinstance(name, str) and name:
                     err = _safe_trace_payload(data.get("error"))
+                    tool_error_hook = await self._emit_hook(
+                        "tool_error",
+                        {
+                            "session_id": session_id,
+                            "tool_name": name,
+                            "error": err,
+                        },
+                    )
+                    if tool_error_hook.get("called"):
+                        yield Message.new(
+                            MessageType.TRACE_EVENT,
+                            {
+                                "phase": "tool_error",
+                                "tool_name": name,
+                                "output": _safe_trace_payload(tool_error_hook),
+                                "assistant_msg_id": plan_msg_id,
+                            },
+                            session_id=session_id,
+                        ).to_dict()
                     tool_trace_for_reason.append(f"{name}: error")
                     yield Message.new(
                         MessageType.TRACE_EVENT,
@@ -1912,7 +2375,14 @@ class Agent:
                                 },
                                 session_id=session_id,
                             ).to_dict()
+                            init_data = self.session_data.get(session_id)
+                            if isinstance(init_data, dict):
+                                init_data["_last_qa_failure"] = last_detail
                             sent_qa_failed_error = True
+                        elif isinstance(out, dict):
+                            init_data = self.session_data.get(session_id)
+                            if isinstance(init_data, dict):
+                                init_data["_last_qa_failure"] = ""
                     if name == "git_sync":
                         out = data.get("output")
                         if isinstance(out, dict):
@@ -2056,9 +2526,29 @@ class Agent:
                         },
                         session_id=session_id,
                     ).to_dict()
+            stop_hook = await self._emit_hook(
+                "stop",
+                {
+                    "session_id": session_id,
+                    "status": "paused_for_approval",
+                    "assistant_msg_id": plan_msg_id,
+                },
+            )
+            if stop_hook.get("called"):
+                yield Message.new(
+                    MessageType.TRACE_EVENT,
+                    {
+                        "phase": "stop",
+                        "tool_name": "hooks",
+                        "output": _safe_trace_payload(stop_hook),
+                        "assistant_msg_id": plan_msg_id,
+                    },
+                    session_id=session_id,
+                ).to_dict()
             return
 
         final = buffer.strip() or (final_from_end or "").strip()
+        self._append_conversation_turn(session_id, "assistant", final)
         if final and not sent_final:
             yield Message.new(
                 MessageType.AGENT_FINAL,
@@ -2089,6 +2579,26 @@ class Agent:
                     },
                     session_id=session_id,
                 ).to_dict()
+
+        stop_hook = await self._emit_hook(
+            "stop",
+            {
+                "session_id": session_id,
+                "status": "completed",
+                "assistant_msg_id": plan_msg_id,
+            },
+        )
+        if stop_hook.get("called"):
+            yield Message.new(
+                MessageType.TRACE_EVENT,
+                {
+                    "phase": "stop",
+                    "tool_name": "hooks",
+                    "output": _safe_trace_payload(stop_hook),
+                    "assistant_msg_id": plan_msg_id,
+                },
+                session_id=session_id,
+            ).to_dict()
 
         yield Message.new(
             MessageType.UPDATE_COMPLETED, {}, session_id=session_id
@@ -2121,7 +2631,6 @@ class Agent:
 
         # Stable policy defaults.
         deny_write_paths: list[str] = []
-        deny_write_prefixes = ["/node_modules/", "/.git/"]
         deny_commands = [
             # Catastrophic deletes should be blocked regardless of HITL approval.
             "rm -rf /",
@@ -2134,14 +2643,24 @@ class Agent:
         ]
 
         def policy_backend(thread_id: str):
+            mode = self._permission_mode_for_session(thread_id)
             backend = self._session_manager.get_backend(thread_id)
+            deny_write_prefixes = ["/node_modules/", "/.git/"]
+            if mode in ("accept_edits", "bypass"):
+                deny_write_prefixes = []
             return SandboxPolicyWrapper(
                 backend,
                 deny_write_paths=deny_write_paths,
                 deny_write_prefixes=deny_write_prefixes,
                 deny_commands=deny_commands,
                 audit_log=lambda op, target, meta: _append_tool_journal(
-                    thread_id, op, target, meta
+                    thread_id,
+                    op,
+                    target,
+                    {
+                        **(meta if isinstance(meta, dict) else {}),
+                        "permission_mode": mode,
+                    },
                 ),
             )
 
@@ -2163,11 +2682,14 @@ class Agent:
         # NOTE: TodoListMiddleware and SummarizationMiddleware are already added
         # internally by create_deep_agent(); including them here would cause a
         # "duplicate middleware" assertion error.
+        def _should_require_hitl(thread_id: str) -> bool:
+            return self._permission_mode_for_session(thread_id) != "bypass"
+
         middleware = [
             # Require approval before destructive deletes (e.g. rm/unlink/git clean/find -delete).
-            DangerousExecuteHitlMiddleware(),
+            DangerousExecuteHitlMiddleware(should_interrupt=_should_require_hitl),
             # Require approval before destructive DB ops (drop/truncate).
-            DangerousDbHitlMiddleware(),
+            DangerousDbHitlMiddleware(should_interrupt=_should_require_hitl),
             ToolRetryMiddleware(max_retries=_deepagents_tool_retry_max_retries()),
         ]
 
@@ -2192,10 +2714,23 @@ class Agent:
             logger.exception("Web tools unavailable; continuing without them")
 
         memory_sources = _deepagents_memory_sources()
+        system_prompt = _DEEPAGENTS_SYSTEM_PROMPT
+        try:
+            from src.prompting.instruction_loader import compose_instruction_prompt
+
+            backend = self._session_manager.get_backend("default-thread")
+            composed = compose_instruction_prompt(
+                base_prompt=_DEEPAGENTS_SYSTEM_PROMPT, backend=backend
+            )
+            if composed.prompt.strip():
+                system_prompt = composed.prompt
+        except Exception:
+            # Per-session instruction layering is applied at request time.
+            system_prompt = _DEEPAGENTS_SYSTEM_PROMPT
 
         self._deep_agent = create_deep_agent(
             model=_deepagents_model(),
-            system_prompt=_DEEPAGENTS_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             checkpointer=checkpointer or MemorySaver(),
             backend=backend_factory,
             middleware=middleware,

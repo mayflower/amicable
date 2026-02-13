@@ -40,6 +40,7 @@ class ControllerState(TypedDict, total=False):
     git_last_commit: str | None
     git_error: str | None
     git_warnings: list[str]
+    delegate_target: Literal["qa_fixer", "db_migrator"]
 
 
 GetBackendFn = Callable[[str], Any]
@@ -108,6 +109,32 @@ def _format_last_failure(qa_results: list[dict[str, Any]]) -> str:
     return f"QA failed on `{cmd}` (exit {code}). Output:\n\n{out}"
 
 
+def _delegate_target_from_qa_results(
+    qa_results: list[dict[str, Any]],
+) -> Literal["qa_fixer", "db_migrator"]:
+    if not qa_results:
+        return "qa_fixer"
+    last = qa_results[-1]
+    output = str(last.get("output") or "").lower()
+    command = str(last.get("command") or "").lower()
+    db_markers = (
+        "graphql",
+        "hasura",
+        "relation",
+        "table",
+        "column",
+        "sql",
+        "migration",
+        "db_",
+        "database",
+    )
+    if any(marker in output for marker in db_markers):
+        return "db_migrator"
+    if any(marker in command for marker in ("db", "hasura", "graphql", "sql")):
+        return "db_migrator"
+    return "qa_fixer"
+
+
 def build_controller_graph(
     *,
     deep_agent_runnable: Any,
@@ -142,6 +169,31 @@ def build_controller_graph(
             | deep_agent_for_node
             | RunnableLambda(lambda out: out.get("messages", []))
         )
+    )
+
+    def _delegate_node(extra_instruction: str):
+        return RunnablePassthrough.assign(
+            messages=(
+                RunnableLambda(
+                    lambda st: {
+                        "messages": [
+                            *(st.get("messages", []) or []),
+                            HumanMessage(content=extra_instruction),
+                        ]
+                    }
+                )
+                | deep_agent_for_node
+                | RunnableLambda(lambda out: out.get("messages", []))
+            )
+        )
+
+    qa_fixer_node = _delegate_node(
+        "You are acting as QA-fixer subagent. Focus on lint/typecheck/build failures. "
+        "Prefer minimal code edits and avoid changing DB schema unless clearly required."
+    )
+    db_migrator_node = _delegate_node(
+        "You are acting as DB-migrator subagent. Focus on schema/data-layer issues "
+        "(Hasura, GraphQL, SQL, migrations). Keep app/UI changes minimal."
     )
 
     async def qa_validate(_state: ControllerState, config: Any) -> dict[str, Any]:
@@ -254,7 +306,11 @@ def build_controller_graph(
 
         messages = list(state.get("messages") or [])
         messages.append(HumanMessage(content=msg))
-        return {"attempt": attempt, "messages": messages}
+        return {
+            "attempt": attempt,
+            "messages": messages,
+            "delegate_target": _delegate_target_from_qa_results(qa_results),
+        }
 
     async def qa_fail_summary(state: ControllerState, config: Any) -> dict[str, Any]:
         # `config` must be named exactly this way for LangChain/LangGraph introspection.
@@ -433,8 +489,14 @@ def build_controller_graph(
             return "heal"
         return "fail"
 
+    def route_delegate(state: ControllerState) -> Literal["qa_fixer", "db_migrator"]:
+        target = state.get("delegate_target")
+        return "db_migrator" if target == "db_migrator" else "qa_fixer"
+
     g: Any = StateGraph(ControllerState)
     g.add_node("deepagents_edit", agent_node)
+    g.add_node("qa_fixer_edit", qa_fixer_node)
+    g.add_node("db_migrator_edit", db_migrator_node)
     g.add_node(
         "qa_validate",
         RunnableLambda(
@@ -474,7 +536,16 @@ def build_controller_graph(
             "fail": "qa_fail_summary",
         },
     )
-    g.add_edge("self_heal_message", "deepagents_edit")
+    g.add_conditional_edges(
+        "self_heal_message",
+        route_delegate,
+        {
+            "qa_fixer": "qa_fixer_edit",
+            "db_migrator": "db_migrator_edit",
+        },
+    )
+    g.add_edge("qa_fixer_edit", "qa_validate")
+    g.add_edge("db_migrator_edit", "qa_validate")
     g.add_edge("qa_fail_summary", "git_sync")
     g.add_edge("git_sync", END)
 

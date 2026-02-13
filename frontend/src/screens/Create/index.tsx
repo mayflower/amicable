@@ -1074,6 +1074,8 @@ const Create = () => {
   const { isConnecting, isConnected, error, connect, send } = useMessageBus({
     wsUrl: AGENT_CONFIG.WS_URL,
     sessionId: resolvedSessionId || undefined,
+    permissionMode: AGENT_CONFIG.PERMISSION_MODE,
+    thinkingLevel: AGENT_CONFIG.THINKING_LEVEL,
     handlers: messageHandlers,
     onConnect: () => {
       console.log("Connected to Amicable Agent");

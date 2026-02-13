@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { MessageBus } from "../services/messageBus";
 import { WebSocketBus, createWebSocketBus } from "../services/websocketBus";
-import type { Message } from "../types/messages";
+import type { Message, PermissionMode, ThinkingLevel } from "../types/messages";
 import { MessageType } from "../types/messages";
 
 interface UseMessageBusConfig {
   wsUrl: string;
   sessionId?: string;
+  permissionMode?: PermissionMode;
+  thinkingLevel?: ThinkingLevel;
   handlers?: {
     [K in MessageType]?: (message: Message) => void;
   };
@@ -27,6 +29,8 @@ interface UseMessageBusReturn {
 export const useMessageBus = ({
   wsUrl,
   sessionId,
+  permissionMode,
+  thinkingLevel,
   handlers = {},
   onConnect,
   onDisconnect,
@@ -43,6 +47,8 @@ export const useMessageBus = ({
   const lastConnectParamsRef = useRef<{
     wsUrl: string;
     sessionId?: string;
+    permissionMode?: PermissionMode;
+    thinkingLevel?: ThinkingLevel;
   } | null>(null);
 
   // Keep latest callbacks without forcing MessageBus recreation.
@@ -127,12 +133,14 @@ export const useMessageBus = ({
       return;
     }
 
-    const nextParams = { wsUrl, sessionId };
+    const nextParams = { wsUrl, sessionId, permissionMode, thinkingLevel };
     const prevParams = lastConnectParamsRef.current;
     const sameParams =
       prevParams &&
       prevParams.wsUrl === nextParams.wsUrl &&
-      prevParams.sessionId === nextParams.sessionId;
+      prevParams.sessionId === nextParams.sessionId &&
+      prevParams.permissionMode === nextParams.permissionMode &&
+      prevParams.thinkingLevel === nextParams.thinkingLevel;
 
     if (isConnected && webSocketRef.current && sameParams) {
       console.log("Already connected with same parameters, skipping...");
@@ -158,7 +166,9 @@ export const useMessageBus = ({
       webSocketRef.current = createWebSocketBus(
         wsUrl,
         messageBusRef.current,
-        sessionId
+        sessionId,
+        permissionMode,
+        thinkingLevel
       );
       lastConnectParamsRef.current = nextParams;
       await webSocketRef.current.connect();
@@ -169,7 +179,7 @@ export const useMessageBus = ({
       isConnectingRef.current = false;
       setError(err instanceof Error ? err.message : "Failed to connect");
     }
-  }, [wsUrl, sessionId, isConnected]);
+  }, [wsUrl, sessionId, permissionMode, thinkingLevel, isConnected]);
 
   const disconnect = useCallback(() => {
     if (webSocketRef.current) {
@@ -221,7 +231,7 @@ export const useMessageBus = ({
     if (!isConnected || !webSocketRef.current) return;
     console.log("Connection parameters changed, reconnecting...");
     connect().catch((e) => console.error("Reconnect failed:", e));
-  }, [wsUrl, sessionId, isConnected, connect]);
+  }, [wsUrl, sessionId, permissionMode, thinkingLevel, isConnected, connect]);
 
   return {
     isConnecting,

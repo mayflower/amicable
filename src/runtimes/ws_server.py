@@ -2255,6 +2255,17 @@ async def _handle_ws(ws: WebSocket) -> None:
                 await ws.close(code=1008)
                 return
 
+            requested_permission_mode = (
+                data.get("permission_mode")
+                if isinstance(data.get("permission_mode"), str)
+                else None
+            )
+            requested_thinking_level = (
+                data.get("thinking_level")
+                if isinstance(data.get("thinking_level"), str)
+                else None
+            )
+
             project = None
             git = None
             try:
@@ -2319,6 +2330,11 @@ async def _handle_ws(ws: WebSocket) -> None:
             )
             exists = await agent.init(
                 session_id=session_id, template_id=template_id, slug=project_slug
+            )
+            agent.set_session_controls(
+                session_id,
+                permission_mode=requested_permission_mode,
+                thinking_level=requested_thinking_level,
             )
             init_data = agent.session_data[session_id]
             init_data["exists"] = exists
@@ -2401,6 +2417,20 @@ async def _handle_ws(ws: WebSocket) -> None:
             pending = agent.get_pending_hitl(session_id)
             if pending:
                 init_data["hitl_pending"] = pending
+
+            hook = await agent.emit_session_start_hook(session_id=session_id)
+            if hook.get("called"):
+                await ws.send_json(
+                    Message.new(
+                        MessageType.TRACE_EVENT,
+                        {
+                            "phase": "session_start",
+                            "tool_name": "hooks",
+                            "output": hook,
+                        },
+                        session_id=session_id,
+                    ).to_dict()
+                )
 
             await ws.send_json(
                 Message.new(

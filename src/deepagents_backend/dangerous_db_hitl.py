@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
 from langchain.agents.middleware.types import AgentMiddleware, AgentState
@@ -17,9 +18,41 @@ _DESTRUCTIVE_DB_TOOLS = {"db_drop_table", "db_truncate_table"}
 class DangerousDbHitlMiddleware(AgentMiddleware):
     """Interrupt before destructive DB tool calls (drop/truncate)."""
 
+    def __init__(
+        self,
+        *,
+        should_interrupt: Callable[[str], bool] | None = None,
+    ) -> None:
+        super().__init__()
+        self._should_interrupt = should_interrupt
+
+    def _interrupt_enabled(self, runtime: Runtime[Any] | None) -> bool:
+        if self._should_interrupt is None:
+            return True
+        thread_id = "default-thread"
+        try:
+            from langgraph.config import get_config as _lg_get_config
+
+            cfg = _lg_get_config()
+        except Exception:
+            cfg = getattr(runtime, "config", {}) if runtime is not None else {}
+        if isinstance(cfg, dict):
+            configurable = cfg.get("configurable")
+            if isinstance(configurable, dict):
+                tid = configurable.get("thread_id")
+                if isinstance(tid, str) and tid.strip():
+                    thread_id = tid.strip()
+        try:
+            return bool(self._should_interrupt(thread_id))
+        except Exception:
+            return True
+
     def after_model(
-        self, state: AgentState[Any], _runtime: Runtime[Any] | None = None
+        self, state: AgentState[Any], runtime: Runtime[Any] | None = None
     ) -> dict[str, Any] | None:
+        if not self._interrupt_enabled(runtime):
+            return None
+
         messages = state.get("messages") or []
         if not messages:
             return None

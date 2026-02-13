@@ -1,5 +1,6 @@
 import { MessageBus } from "./messageBus";
 import type { Message } from "../types/messages";
+import type { PermissionMode, ThinkingLevel } from "../types/messages";
 import { MessageType, createMessage } from "../types/messages";
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -9,6 +10,8 @@ export interface WebSocketBusConfig {
   url: string;
   messageBus: MessageBus;
   sessionId?: string;
+  permissionMode?: PermissionMode;
+  thinkingLevel?: ThinkingLevel;
 }
 
 export class WebSocketBus {
@@ -83,9 +86,15 @@ export class WebSocketBus {
         this.reconnectAttempts = 0;
         this.config.messageBus.setConnected(true);
 
-        const initData = this.config.sessionId
+        const initData: Record<string, unknown> = this.config.sessionId
           ? { session_id: this.config.sessionId }
           : {};
+        if (this.config.permissionMode) {
+          initData.permission_mode = this.config.permissionMode;
+        }
+        if (this.config.thinkingLevel) {
+          initData.thinking_level = this.config.thinkingLevel;
+        }
         console.log("Sending INIT message with session_id:", this.config.sessionId);
         this.sendMessage(createMessage(MessageType.INIT, initData));
 
@@ -238,7 +247,15 @@ export class WebSocketBus {
 export const createWebSocketBus = (
   url: string,
   messageBus: MessageBus,
-  sessionId?: string
+  sessionId?: string,
+  permissionMode?: PermissionMode,
+  thinkingLevel?: ThinkingLevel
 ): WebSocketBus => {
-  return new WebSocketBus({ url, messageBus, sessionId });
+  return new WebSocketBus({
+    url,
+    messageBus,
+    sessionId,
+    permissionMode,
+    thinkingLevel,
+  });
 };
