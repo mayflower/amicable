@@ -2040,6 +2040,7 @@ class Agent:
         from src.deepagents_backend.screenshot_tools import get_screenshot_tools
         from src.deepagents_backend.session_sandbox_manager import SessionSandboxManager
         from src.deepagents_backend.tool_journal import append as _append_tool_journal
+        from src.deepagents_backend.web_tools import get_web_tools
 
         if self._session_manager is None:
             self._session_manager = SessionSandboxManager()
@@ -2110,6 +2111,12 @@ class Agent:
         except Exception:
             logger.exception("Screenshot tools unavailable; continuing without them")
 
+        web_tools = []
+        try:
+            web_tools = get_web_tools()
+        except Exception:
+            logger.exception("Web tools unavailable; continuing without them")
+
         memory_sources = _deepagents_memory_sources()
 
         self._deep_agent = create_deep_agent(
@@ -2118,7 +2125,7 @@ class Agent:
             checkpointer=checkpointer or MemorySaver(),
             backend=backend_factory,
             middleware=middleware,
-            tools=[*db_tools, *screenshot_tools],
+            tools=[*db_tools, *screenshot_tools, *web_tools],
             memory=memory_sources,
             skills=_deepagents_skills_sources(),
             interrupt_on=_deepagents_interrupt_on(),

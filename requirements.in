@@ -9,6 +9,7 @@ pydantic
 pydantic-settings
 httpx
 requests
+trafilatura
 websockets
 python-multipart
 python-dotenv

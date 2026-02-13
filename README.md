@@ -142,6 +142,13 @@ Key configuration:
 | `AMICABLE_TRACE_NARRATOR_ENABLED` | `false` | Optional tool-trace narrator (adds short explanations after tool calls) |
 | `AMICABLE_TRACE_NARRATOR_MODEL` | `anthropic:claude-haiku-4-5` | Narrator model |
 | `AMICABLE_TRACE_NARRATOR_MAX_CHARS` | `280` | Narrator maximum explanation length |
+| `AMICABLE_WEB_TOOLS_ENABLED` | `true` | Enable Claude-style `WebSearch` / `WebFetch` tools |
+| `AMICABLE_WEB_FETCH_MODEL` | `anthropic:claude-haiku-4-5` | Small model used to answer `WebFetch` prompts from page content |
+| `AMICABLE_WEB_FETCH_TIMEOUT_S` | `20` | HTTP timeout for `WebFetch` URL retrieval |
+| `AMICABLE_WEB_FETCH_MAX_CONTENT_CHARS` | `25000` | Max extracted page chars passed to the `WebFetch` model prompt |
+| `AMICABLE_WEB_SEARCH_TIMEOUT_S` | `10` | HTTP timeout for `WebSearch` providers |
+| `AMICABLE_WEB_SEARCH_MAX_RESULTS` | `8` | Max normalized results returned by `WebSearch` |
+| `AMICABLE_WEB_SEARCH_USER_AGENT` | unset | Optional User-Agent override for `WebSearch`/`WebFetch` HTTP requests |
 
 ### GitLab Persistence (Optional)
 

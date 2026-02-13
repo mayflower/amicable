@@ -6,6 +6,7 @@ kubernetes
 authlib
 itsdangerous
 httpx
+trafilatura
 
 # DeepAgents (LangChain OSS) engine
 # Keep in sync with our docs/production runtime.

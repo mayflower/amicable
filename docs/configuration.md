@@ -11,6 +11,13 @@ This page summarizes the main runtime configuration knobs. For exhaustive enviro
 - `DEEPAGENTS_SELF_HEAL_MAX_ROUNDS`: maximum self-heal loops.
 - `DEEPAGENTS_MEMORY_SOURCES`: memory file locations loaded into agent context.
 - `DEEPAGENTS_SKILLS_SOURCES`: skill directories loaded into agent context.
+- `AMICABLE_WEB_TOOLS_ENABLED`: enable Claude-style `WebSearch`/`WebFetch` tools.
+- `AMICABLE_WEB_FETCH_MODEL`: model used for `WebFetch(url, prompt)` grounded answers.
+- `AMICABLE_WEB_FETCH_TIMEOUT_S`: fetch timeout for `WebFetch` HTTP requests.
+- `AMICABLE_WEB_FETCH_MAX_CONTENT_CHARS`: max extracted page chars sent to the fetch-QA model.
+- `AMICABLE_WEB_SEARCH_TIMEOUT_S`: timeout for `WebSearch` provider calls.
+- `AMICABLE_WEB_SEARCH_MAX_RESULTS`: max normalized `WebSearch` results returned.
+- `AMICABLE_WEB_SEARCH_USER_AGENT`: optional User-Agent override for web search/fetch requests.
 
 ## Auth and Session
 
