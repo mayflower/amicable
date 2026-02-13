@@ -1,4 +1,4 @@
-FROM elixir:1.17-bookworm
+FROM elixir:1.18
 
 # Install Python for the runtime API.
 RUN apt-get update \
