@@ -7,7 +7,6 @@ export type TemplateId =
   | "nuxt3"
   | "sveltekit"
   | "laravel"
-  | "flutter";
   | "flutter"
   | "phoenix"
   | "aspnetcore"

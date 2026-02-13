@@ -121,7 +121,6 @@ Backend template ids (and default):
 - `sveltekit`
 - `laravel`
 - `flutter`
-- `flutter`
 - `phoenix`
 - `aspnetcore`
 - `quarkus`
