@@ -126,7 +126,8 @@ def build_controller_graph(
         deep_agent_for_node = deep_agent_runnable.with_config(
             configurable={"checkpoint_ns": "deep_agent"}
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("Could not set checkpoint_ns on deep agent: %s", exc)
         deep_agent_for_node = deep_agent_runnable
 
     # Update only the `messages` key, preserving other controller state keys.
@@ -218,8 +219,8 @@ def build_controller_graph(
                     "If dependencies are missing, run `pip install -r requirements.txt`. "
                     "After edits, ensure `ruff check .` succeeds."
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not detect project type for self-heal hint: %s", exc)
         msg += hint
 
         messages = list(state.get("messages") or [])

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import html
+import ipaddress
+import logging
 import os
 import re
+import socket
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse, urlunparse
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_SEARCH_USER_AGENT = (
     "Mozilla/5.0 (compatible; AmicableWebTools/1.0; +https://example.invalid)"
@@ -25,7 +30,8 @@ def _env_int(name: str, default: int) -> int:
         return int(default)
     try:
         return int(raw)
-    except Exception:
+    except ValueError:
+        logger.warning("Invalid integer for %s=%r, using default %d", name, raw, default)
         return int(default)
 
 
@@ -56,9 +62,41 @@ def web_search_max_results() -> int:
     return max(1, _env_int("AMICABLE_WEB_SEARCH_MAX_RESULTS", 8))
 
 
+def web_fetch_max_response_bytes() -> int:
+    return max(100_000, _env_int("AMICABLE_WEB_FETCH_MAX_RESPONSE_BYTES", 5_000_000))
+
+
 def web_search_user_agent() -> str:
     raw = (os.environ.get("AMICABLE_WEB_SEARCH_USER_AGENT") or "").strip()
     return raw or _DEFAULT_SEARCH_USER_AGENT
+
+
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
+
+
+def _is_private_url(url: str) -> bool:
+    """Return True if the URL resolves to a private/loopback/link-local address."""
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    if not hostname:
+        return True
+    try:
+        for info in socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM):
+            addr = ipaddress.ip_address(info[4][0])
+            if any(addr in net for net in _BLOCKED_NETWORKS):
+                return True
+    except (socket.gaierror, ValueError, OSError):
+        return True  # fail closed on resolution errors
+    return False
 
 
 @dataclass
@@ -316,6 +354,7 @@ def _search_web(
     http = session or _new_http_session()
 
     results: list[_SearchResult] = []
+    warnings: list[str] = []
 
     ddg_html = ""
     ddg_challenge = False
@@ -329,9 +368,13 @@ def _search_web(
         )
         ddg_html = ddg_resp.text or ""
         ddg_challenge = _is_duckduckgo_challenge(ddg_html)
-        if not ddg_challenge:
+        if ddg_challenge:
+            warnings.append("DuckDuckGo challenge detected")
+        else:
             results = _parse_duckduckgo_results(ddg_html)
-    except Exception:
+    except Exception as exc:
+        logger.warning("DuckDuckGo search failed for query=%r: %s", q, exc)
+        warnings.append("DuckDuckGo search failed")
         results = []
 
     if ddg_challenge or not results:
@@ -344,8 +387,13 @@ def _search_web(
                 user_agent=ua,
             )
             results = _parse_brave_results(brave_resp.text or "")
-        except Exception:
+        except Exception as exc:
+            logger.warning("Brave search failed for query=%r: %s", q, exc)
+            warnings.append("Brave search failed")
             results = []
+
+    if not results and len(warnings) >= 2:
+        logger.error("Both search providers failed for query=%r", q)
 
     filtered = _apply_domain_filters(
         _dedupe_results(results),
@@ -353,13 +401,23 @@ def _search_web(
         blocked_domains=blocked_domains,
     )
     limited = filtered[: web_search_max_results()]
-    return {"results": [r.to_dict() for r in limited]}
+    out: dict[str, Any] = {"results": [r.to_dict() for r in limited]}
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
+_trafilatura_import_warned = False
 
 
 def _extract_with_trafilatura(html_text: str) -> str:
+    global _trafilatura_import_warned
     try:
         import trafilatura
-    except Exception:
+    except ImportError:
+        if not _trafilatura_import_warned:
+            logger.error("trafilatura is not installed; content extraction degraded")
+            _trafilatura_import_warned = True
         return ""
 
     try:
@@ -371,6 +429,7 @@ def _extract_with_trafilatura(html_text: str) -> str:
             favor_recall=True,
         )
     except Exception:
+        logger.warning("trafilatura markdown extraction failed", exc_info=True)
         markdown = None
     if isinstance(markdown, str) and markdown.strip():
         return markdown.strip()
@@ -383,6 +442,7 @@ def _extract_with_trafilatura(html_text: str) -> str:
             favor_recall=True,
         )
     except Exception:
+        logger.warning("trafilatura plaintext extraction failed", exc_info=True)
         plain = None
     if isinstance(plain, str) and plain.strip():
         return plain.strip()
@@ -413,14 +473,21 @@ def _coerce_model_text(content: Any) -> str:
 def _answer_from_small_model(*, model: str, prompt_text: str) -> tuple[str | None, str | None]:
     try:
         from langchain.chat_models import init_chat_model  # type: ignore
-    except Exception as exc:
-        return None, f"model init unavailable: {exc}"
+    except ImportError as exc:
+        logger.error("Failed to import langchain chat_models: %s", exc)
+        return None, "model init unavailable"
 
     try:
         llm = init_chat_model(model)
+    except Exception as exc:
+        logger.error("Failed to init model %s: %s", model, exc)
+        return None, "model init failed"
+
+    try:
         msg = llm.invoke(prompt_text)
     except Exception as exc:
-        return None, f"model invocation failed: {exc}"
+        logger.warning("Model invocation failed for %s: %s", model, exc)
+        return None, "model invocation failed"
 
     text = _coerce_model_text(getattr(msg, "content", ""))
     if not text:
@@ -475,26 +542,49 @@ def _web_fetch(
             "status_code": 0,
         }
 
+    if _is_private_url(normalized_src):
+        logger.warning("Blocked SSRF attempt to private URL: %s", normalized_src)
+        return {
+            "response": "URL points to a private or internal address and cannot be fetched.",
+            "url": normalized_src,
+            "final_url": normalized_src,
+            "status_code": 0,
+        }
+
     http = session or _new_http_session()
     final_url = normalized_src
     status_code = 0
     html_text = ""
+    max_bytes = web_fetch_max_response_bytes()
     try:
         resp = http.get(
             normalized_src,
             timeout=float(web_fetch_timeout_s()),
             allow_redirects=True,
             headers={"User-Agent": web_search_user_agent()},
+            stream=True,
         )
         status_code = int(resp.status_code)
         final_url = str(resp.url or normalized_src)
-        html_text = resp.text or ""
+        raw_bytes = resp.content[:max_bytes]
+        resp.close()
+        html_text = raw_bytes.decode("utf-8", errors="replace")
     except Exception as exc:
+        logger.warning("WebFetch HTTP request failed for url=%s: %s", normalized_src, exc)
         return {
-            "response": f"Web fetch failed: {exc}",
+            "response": "Web fetch failed due to a network error.",
             "url": normalized_src,
             "final_url": final_url,
             "status_code": 0,
+        }
+
+    if status_code >= 400:
+        logger.info("WebFetch got HTTP %d for %s", status_code, normalized_src)
+        return {
+            "response": f"HTTP {status_code} error fetching the URL.",
+            "url": normalized_src,
+            "final_url": final_url,
+            "status_code": status_code,
         }
 
     extracted = _extract_with_trafilatura(html_text)
