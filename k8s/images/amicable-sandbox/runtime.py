@@ -219,7 +219,7 @@ def _safe_path(rel_path: str) -> Path:
 
 
 def _start_preview() -> None:
-    # Start the preview server in the background. If it exits, we just log.
+    # Start the preview server in the background with auto-respawn.
     env = os.environ.copy()
     raw = (env.get("AMICABLE_PREVIEW_CMD") or "").strip()
     if raw:
@@ -227,15 +227,19 @@ def _start_preview() -> None:
     else:
         cmd = ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "3000"]
 
+    max_restarts = 100
+
     def _run() -> None:
-        try:
-            log_path = (env.get("AMICABLE_PREVIEW_LOG_PATH") or "/tmp/amicable-preview.log").strip()
-            pid_path = (env.get("AMICABLE_PREVIEW_PID_PATH") or "/tmp/amicable-preview.pid").strip()
+        restarts = 0
+        log_path = (env.get("AMICABLE_PREVIEW_LOG_PATH") or "/tmp/amicable-preview.log").strip()
+        pid_path = (env.get("AMICABLE_PREVIEW_PID_PATH") or "/tmp/amicable-preview.pid").strip()
+        while restarts < max_restarts:
+            logf = None
             try:
-                logf = open(log_path, "a", encoding="utf-8", errors="replace")
-            except Exception:
-                logf = None
-            try:
+                try:
+                    logf = open(log_path, "a", encoding="utf-8", errors="replace")
+                except Exception:
+                    logf = None
                 proc = subprocess.Popen(
                     cmd,
                     cwd=str(APP_ROOT),
@@ -248,14 +252,18 @@ def _start_preview() -> None:
                 except Exception:
                     pass
                 proc.wait()
+            except Exception as exc:
+                print(f"Preview server error: {exc}")
             finally:
                 try:
                     if logf is not None:
                         logf.close()
                 except Exception:
                     pass
-        except Exception as exc:
-            print(f"Failed to start preview server: {exc}")
+            restarts += 1
+            print(f"Preview server exited, restarting ({restarts}/{max_restarts}) in 3s...")
+            time.sleep(3)
+        print(f"Preview server exceeded {max_restarts} restarts, giving up.")
 
     threading.Thread(target=_run, daemon=True).start()
 
