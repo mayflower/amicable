@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from dataclasses import dataclass
 from typing import Any
 
@@ -139,6 +140,21 @@ def _exists_in_app(backend: Any, rel_path: str) -> bool:
     return _execute_result_exit_code(res) == 0
 
 
+def _find_pattern_in_app(backend: Any, pattern: str) -> bool:
+    q = shlex.quote(pattern)
+    res = backend.execute(
+        f"cd /app && find . -maxdepth 4 -name {q} -print -quit | grep -q ."
+    )
+    return _execute_result_exit_code(res) == 0
+
+
+def _file_contains_in_app(backend: Any, rel_path: str, pattern: str) -> bool:
+    rp = shlex.quote(rel_path)
+    pat = shlex.quote(pattern)
+    res = backend.execute(f"cd /app && grep -q {pat} {rp}")
+    return _execute_result_exit_code(res) == 0
+
+
 def python_project_present(backend: Any) -> bool:
     return _exists_in_app(backend, "pyproject.toml") or _exists_in_app(
         backend, "requirements.txt"
@@ -156,6 +172,59 @@ def python_qa_commands(*, run_tests: bool) -> list[str]:
     ]
     if run_tests:
         cmds.append("pytest")
+    return cmds
+
+
+def flutter_project_present(backend: Any) -> bool:
+    return _exists_in_app(backend, "pubspec.yaml")
+
+
+def flutter_qa_commands(*, run_tests: bool) -> list[str]:
+    cmds = [
+        "flutter pub get",
+        "flutter analyze",
+    ]
+    if run_tests:
+        cmds.append("flutter test")
+    return cmds
+
+
+def aspnetcore_project_present(backend: Any) -> bool:
+    return _find_pattern_in_app(backend, "*.csproj") or _find_pattern_in_app(
+        backend, "*.sln"
+    )
+
+
+def aspnetcore_qa_commands(*, run_tests: bool) -> list[str]:
+    cmds = ["dotnet build"]
+    if run_tests:
+        cmds.append("dotnet test")
+    return cmds
+
+
+def quarkus_project_present(backend: Any) -> bool:
+    if not _exists_in_app(backend, "pom.xml"):
+        return False
+    return _file_contains_in_app(backend, "pom.xml", "io.quarkus")
+
+
+def quarkus_qa_commands(*, run_tests: bool) -> list[str]:
+    cmds = ["./mvnw -q -DskipTests compile"]
+    if run_tests:
+        cmds.append("./mvnw -q test")
+    return cmds
+
+
+def phoenix_project_present(backend: Any) -> bool:
+    if not _exists_in_app(backend, "mix.exs"):
+        return False
+    return _file_contains_in_app(backend, "mix.exs", "phoenix")
+
+
+def phoenix_qa_commands(*, run_tests: bool) -> list[str]:
+    cmds = ["mix compile"]
+    if run_tests:
+        cmds.append("mix test")
     return cmds
 
 
@@ -212,6 +281,18 @@ def effective_qa_commands_for_backend(
     # catch syntax/type/build errors in common stacks.
     if pkg.exists:
         return fallback_qa_commands(backend, package_json=pkg.data)
+
+    if aspnetcore_project_present(backend):
+        return aspnetcore_qa_commands(run_tests=qa_run_tests_enabled())
+
+    if quarkus_project_present(backend):
+        return quarkus_qa_commands(run_tests=qa_run_tests_enabled())
+
+    if phoenix_project_present(backend):
+        return phoenix_qa_commands(run_tests=qa_run_tests_enabled())
+
+    if flutter_project_present(backend):
+        return flutter_qa_commands(run_tests=qa_run_tests_enabled())
 
     return []
 

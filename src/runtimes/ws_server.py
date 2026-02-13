@@ -264,6 +264,7 @@ def _project_dto(p: Any) -> dict[str, Any]:
         "project_id": getattr(p, "project_id", None),
         "name": getattr(p, "name", None),
         "slug": getattr(p, "slug", None),
+        "project_prompt": getattr(p, "project_prompt", None),
         "template_id": getattr(p, "template_id", None),
         "gitlab_project_id": getattr(p, "gitlab_project_id", None),
         "gitlab_path": getattr(p, "gitlab_path", None),
@@ -582,7 +583,11 @@ async def api_create_project(request: Request) -> JSONResponse:
         client = hasura_client_from_env()
         owner = ProjectOwner(sub=sub, email=email)
         return create_project(
-            client, owner=owner, name=name, template_id=effective_template_id
+            client,
+            owner=owner,
+            name=name,
+            template_id=effective_template_id,
+            project_prompt=prompt or None,
         )
 
     p = await asyncio.to_thread(_create_sync)
@@ -2349,6 +2354,14 @@ async def _handle_ws(ws: WebSocket) -> None:
                             msg = deterministic_bootstrap_commit_message(
                                 project_slug=slug_for_commit,
                                 template_id=str(template_id) if template_id else None,
+                                project_name=str(getattr(project, "name", "") or "")
+                                if project is not None
+                                else None,
+                                project_prompt=str(
+                                    getattr(project, "project_prompt", "") or ""
+                                )
+                                if project is not None
+                                else None,
                             )
                             await asyncio.to_thread(
                                 bootstrap_repo_if_empty,

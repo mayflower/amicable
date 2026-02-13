@@ -4,7 +4,9 @@ from src.platform_scaffold.scaffold import (
     ScaffoldContext,
     build_scaffold_context,
     render_catalog_info,
+    render_docs_index,
     render_mkdocs_yml,
+    render_root_readme,
     render_sonar_properties,
 )
 
@@ -16,6 +18,7 @@ class TestPlatformScaffold(unittest.TestCase):
             template_id=template_id,
             project_name="My Project",
             project_slug="my-project",
+            project_prompt="Build a dashboard for team goals and weekly status.",
             repo_web_url="https://git.example.com/group/my-project",
             branch="main",
             gitlab_base_url="https://git.example.com",
@@ -38,6 +41,7 @@ class TestPlatformScaffold(unittest.TestCase):
             template_id="vite",
             project_name="My Project",
             project_slug="my-project",
+            project_prompt="A small analytics app for internal metrics.",
             repo_web_url="",
             branch="main",
             gitlab_base_url="https://git.example.com",
@@ -81,6 +85,27 @@ class TestPlatformScaffold(unittest.TestCase):
         c1 = render_mkdocs_yml(ctx)
         c2 = render_mkdocs_yml(ctx)
         self.assertEqual(c1, c2)
+
+    def test_root_readme_includes_prompt_derived_about(self):
+        ctx = self._ctx("vite")
+        text = render_root_readme(ctx)
+        self.assertIn("## What This Project Is About", text)
+        self.assertIn("Build a dashboard for team goals and weekly status.", text)
+
+    def test_docs_index_falls_back_when_prompt_missing(self):
+        ctx = build_scaffold_context(
+            project_id="abc-321",
+            template_id="vite",
+            project_name="Fallback App",
+            project_slug="fallback-app",
+            project_prompt=None,
+            repo_web_url="",
+            branch="main",
+            gitlab_base_url="https://git.example.com",
+            gitlab_group_path="mygroup",
+        )
+        text = render_docs_index(ctx)
+        self.assertIn("This project was created with Amicable.", text)
 
 
 if __name__ == "__main__":

@@ -190,7 +190,7 @@ def _deepagents_qa_enabled() -> bool:
     return qa_enabled_from_env(legacy_validate_env=_deepagents_validate())
 
 
-_DEEPAGENTS_SYSTEM_PROMPT = """You are Amicable, an AI editor for sandboxed web application workspaces.
+_DEEPAGENTS_SYSTEM_PROMPT = """You are Amicable, an AI editor for sandboxed application workspaces.
 
 Your job: implement the user's request by editing the live sandboxed codebase. The user can see a live preview.
 
@@ -215,11 +215,10 @@ Keep UI blocks small. Do not include secrets.
 
 Hard rules:
 - Prefer editing existing files over creating new ones.
-- Do not add new dependencies unless absolutely necessary. If you must, update /package.json and explain why.
-- Use Tailwind CSS for styling, and prefer shadcn/ui components where applicable.
-- Ensure changes render correctly inside an iframe.
-- Always produce responsive layouts.
-- react-router-dom: use Routes (not Switch).
+- Do not add new dependencies unless absolutely necessary. If you must, update the appropriate project manifest (for example `/package.json`, `/pubspec.yaml`, `/requirements.txt`, or `/composer.json`) and explain why.
+- Follow stack-specific conventions from `/AGENTS.md` and existing project files.
+- For web UI changes, ensure changes render correctly inside an iframe and remain responsive.
+- For React projects using `react-router-dom`, use `Routes` (not `Switch`).
 - For visual/UI bugs, use the `capture_preview_screenshot` tool to inspect the live preview before guessing.
 
 Workflow (always):
@@ -530,6 +529,7 @@ class Agent:
 
                 project_name = None
                 project_slug = slug
+                project_prompt = None
                 repo_web_url = None
 
                 # Best-effort project metadata from Hasura (no ownership enforcement).
@@ -541,6 +541,7 @@ class Agent:
                     if p is not None:
                         project_name = p.name
                         project_slug = p.slug
+                        project_prompt = p.project_prompt
                         repo_web_url = p.gitlab_web_url
                 except Exception:
                     pass
@@ -567,6 +568,7 @@ class Agent:
                     template_id=str(effective_template_id),
                     project_name=project_name,
                     project_slug=project_slug,
+                    project_prompt=project_prompt,
                     repo_web_url=repo_web_url,
                     branch=str(branch or "main"),
                     gitlab_base_url=base,
@@ -1266,6 +1268,26 @@ class Agent:
                                 session_id=session_id,
                             ).to_dict()
                             sent_qa_failed_error = True
+                    if name == "git_sync":
+                        out = data.get("output")
+                        if isinstance(out, dict):
+                            raw_warnings = out.get("git_warnings")
+                            warnings = (
+                                [
+                                    str(w).strip()
+                                    for w in raw_warnings
+                                    if isinstance(w, str) and str(w).strip()
+                                ]
+                                if isinstance(raw_warnings, list)
+                                else []
+                            )
+                            if warnings:
+                                yield Message.new(
+                                    MessageType.UPDATE_FILE,
+                                    {"text": f"README policy warning: {warnings[0]}"},
+                                    id=file_msg_id,
+                                    session_id=session_id,
+                                ).to_dict()
 
                     # Try to extract the final assistant message even when the provider
                     # does not emit token stream events.
@@ -1299,8 +1321,11 @@ class Agent:
 
                 if git_sync_enabled() and (controller_failed or not saw_git_sync):
                     from src.gitlab.commit_message import (
+                        append_commit_warnings,
+                        evaluate_agent_readme_policy,
                         generate_agent_commit_message_llm,
                     )
+                    from src.gitlab.config import git_agent_readme_policy_enabled
                     from src.gitlab.sync import sync_sandbox_tree_to_repo
 
                     repo_http_url = config.get("configurable", {}).get(
@@ -1324,12 +1349,13 @@ class Agent:
                         ).to_dict()
                         assert self._session_manager is not None
                         backend = self._session_manager.get_backend(session_id)
+                        policy_warnings: list[str] = []
 
                         def _msg(diff_stat: str, name_status: str) -> str:
                             agent_summary = (
                                 buffer.strip() or (final_from_end or "")
                             ).strip()
-                            return generate_agent_commit_message_llm(
+                            msg = generate_agent_commit_message_llm(
                                 user_request=user_text,
                                 agent_summary=agent_summary,
                                 project_slug=str(project_slug),
@@ -1339,6 +1365,11 @@ class Agent:
                                 name_status=name_status,
                                 tool_journal_summary=None,
                             )
+                            if git_agent_readme_policy_enabled():
+                                warnings = evaluate_agent_readme_policy(name_status)
+                                policy_warnings[:] = warnings
+                                return append_commit_warnings(msg, warnings)
+                            return msg
 
                         await asyncio.to_thread(
                             sync_sandbox_tree_to_repo,
@@ -1347,6 +1378,13 @@ class Agent:
                             project_slug=str(project_slug),
                             commit_message_fn=_msg,
                         )
+                        if policy_warnings:
+                            yield Message.new(
+                                MessageType.UPDATE_FILE,
+                                {"text": f"README policy warning: {policy_warnings[0]}"},
+                                id=file_msg_id,
+                                session_id=session_id,
+                            ).to_dict()
             except Exception as e:
                 logger.exception("git sync fallback failed")
                 yield Message.new(
@@ -1875,6 +1913,26 @@ class Agent:
                                 session_id=session_id,
                             ).to_dict()
                             sent_qa_failed_error = True
+                    if name == "git_sync":
+                        out = data.get("output")
+                        if isinstance(out, dict):
+                            raw_warnings = out.get("git_warnings")
+                            warnings = (
+                                [
+                                    str(w).strip()
+                                    for w in raw_warnings
+                                    if isinstance(w, str) and str(w).strip()
+                                ]
+                                if isinstance(raw_warnings, list)
+                                else []
+                            )
+                            if warnings:
+                                yield Message.new(
+                                    MessageType.UPDATE_FILE,
+                                    {"text": f"README policy warning: {warnings[0]}"},
+                                    id=file_msg_id,
+                                    session_id=session_id,
+                                ).to_dict()
 
                     output = data.get("output")
                     if isinstance(output, dict):
@@ -1904,8 +1962,11 @@ class Agent:
 
                 if git_sync_enabled() and (controller_failed or not saw_git_sync):
                     from src.gitlab.commit_message import (
+                        append_commit_warnings,
+                        evaluate_agent_readme_policy,
                         generate_agent_commit_message_llm,
                     )
+                    from src.gitlab.config import git_agent_readme_policy_enabled
                     from src.gitlab.sync import sync_sandbox_tree_to_repo
 
                     repo_http_url = config.get("configurable", {}).get(
@@ -1929,12 +1990,13 @@ class Agent:
                         ).to_dict()
                         assert self._session_manager is not None
                         backend = self._session_manager.get_backend(session_id)
+                        policy_warnings: list[str] = []
 
                         def _msg(diff_stat: str, name_status: str) -> str:
                             agent_summary = (
                                 buffer.strip() or (final_from_end or "")
                             ).strip()
-                            return generate_agent_commit_message_llm(
+                            msg = generate_agent_commit_message_llm(
                                 user_request="(resumed after approval)",
                                 agent_summary=agent_summary,
                                 project_slug=str(project_slug),
@@ -1944,6 +2006,11 @@ class Agent:
                                 name_status=name_status,
                                 tool_journal_summary=None,
                             )
+                            if git_agent_readme_policy_enabled():
+                                warnings = evaluate_agent_readme_policy(name_status)
+                                policy_warnings[:] = warnings
+                                return append_commit_warnings(msg, warnings)
+                            return msg
 
                         await asyncio.to_thread(
                             sync_sandbox_tree_to_repo,
@@ -1952,6 +2019,13 @@ class Agent:
                             project_slug=str(project_slug),
                             commit_message_fn=_msg,
                         )
+                        if policy_warnings:
+                            yield Message.new(
+                                MessageType.UPDATE_FILE,
+                                {"text": f"README policy warning: {policy_warnings[0]}"},
+                                id=file_msg_id,
+                                session_id=session_id,
+                            ).to_dict()
             except Exception as e:
                 logger.exception("git sync fallback failed")
                 yield Message.new(

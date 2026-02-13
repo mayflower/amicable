@@ -56,6 +56,7 @@ class FakeHasuraClient:
                 "owner_email",
                 "name",
                 "slug",
+                "project_prompt",
                 "template_id",
                 "created_at",
                 "updated_at",
@@ -66,6 +67,7 @@ class FakeHasuraClient:
                 row["owner_email"],
                 row["name"],
                 row["slug"],
+                row.get("project_prompt"),
                 row.get("template_id"),
                 row.get("created_at"),
                 row.get("updated_at"),
@@ -99,6 +101,7 @@ class FakeHasuraClient:
                 "owner_email",
                 "name",
                 "slug",
+                "project_prompt",
                 "template_id",
                 "created_at",
                 "updated_at",
@@ -109,6 +112,7 @@ class FakeHasuraClient:
                 row["owner_email"],
                 row["name"],
                 row["slug"],
+                row.get("project_prompt"),
                 row.get("template_id"),
                 row.get("created_at"),
                 row.get("updated_at"),
@@ -130,6 +134,7 @@ class FakeHasuraClient:
                 "owner_email",
                 "name",
                 "slug",
+                "project_prompt",
                 "template_id",
                 "created_at",
                 "updated_at",
@@ -143,6 +148,7 @@ class FakeHasuraClient:
                         r["owner_email"],
                         r["name"],
                         r["slug"],
+                        r.get("project_prompt"),
                         r.get("template_id"),
                         r.get("created_at"),
                         r.get("updated_at"),
@@ -152,17 +158,29 @@ class FakeHasuraClient:
 
         # INSERT project.
         if sql_l.startswith("insert into amicable_meta.projects"):
-            vals = re.search(r"values\s*\((.*)\)\s*on conflict", sql, flags=re.I | re.S)
-            assert vals
-            parts = [p.strip() for p in vals.group(1).split(",")]
-            pid = parts[0].strip("'")
-            owner_sub = parts[1].strip("'")
-            owner_email = parts[2].strip("'")
-            name = parts[3].strip("'")
-            slug = parts[4].strip("'")
-            template_id = (
-                parts[5].strip("'") if len(parts) > 5 and parts[5] != "NULL" else None
+            cols_match = re.search(
+                r"insert into amicable_meta.projects\s*\((.*)\)\s*values",
+                sql,
+                flags=re.I | re.S,
             )
+            vals = re.search(r"values\s*\((.*)\)\s*on conflict", sql, flags=re.I | re.S)
+            assert cols_match
+            assert vals
+            cols = [c.strip() for c in cols_match.group(1).split(",")]
+            raw_parts = re.findall(r"'(?:''|[^'])*'|NULL", vals.group(1))
+            parts = [
+                p[1:-1].replace("''", "'") if p.startswith("'") and p.endswith("'") else None
+                for p in raw_parts
+            ]
+            values_by_col = {col: parts[idx] for idx, col in enumerate(cols)}
+
+            pid = values_by_col["project_id"] or ""
+            owner_sub = values_by_col["owner_sub"] or ""
+            owner_email = values_by_col["owner_email"] or ""
+            name = values_by_col["name"] or ""
+            slug = values_by_col["slug"] or ""
+            template_id = values_by_col.get("template_id")
+            project_prompt = values_by_col.get("project_prompt")
             # Enforce uniqueness on slug unless deleted.
             if any(
                 (r.get("slug") == slug and not r.get("deleted_at"))
@@ -178,6 +196,7 @@ class FakeHasuraClient:
                 "name": name,
                 "slug": slug,
                 "template_id": template_id,
+                "project_prompt": project_prompt,
                 "created_at": "t0",
                 "updated_at": "t0",
                 "deleted_at": None,
@@ -252,17 +271,27 @@ def test_create_list_get_rename_delete() -> None:
     c = FakeHasuraClient()
     owner = ProjectOwner(sub="u1", email="u1@example.com")
 
-    p1 = create_project(c, owner=owner, name="Todo App", template_id="vite")
+    p1 = create_project(
+        c,
+        owner=owner,
+        name="Todo App",
+        template_id="vite",
+        project_prompt="Build a todo app with due dates and project tags.",
+    )
     p2 = create_project(c, owner=owner, name="Todo App")
     assert p1.slug != p2.slug
     assert p1.template_id == "vite"
+    assert p1.project_prompt == "Build a todo app with due dates and project tags."
     assert p2.template_id is None
+    assert p2.project_prompt is None
 
     got = get_project_by_slug(c, owner=owner, slug=p1.slug)
     assert got and got.project_id == p1.project_id
 
     lst = list_projects(c, owner=owner)
     assert {p.project_id for p in lst} == {p1.project_id, p2.project_id}
+    p1_list = next(p for p in lst if p.project_id == p1.project_id)
+    assert p1_list.project_prompt == p1.project_prompt
 
     renamed = rename_project(
         c, owner=owner, project_id=p1.project_id, new_name="New Name"

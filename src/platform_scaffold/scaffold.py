@@ -20,6 +20,7 @@ class ScaffoldContext:
     template_id: str
     project_name: str
     project_slug: str
+    project_about: str
     repo_url: str
     branch: str
     sonar_project_key: str
@@ -54,6 +55,15 @@ def _normalize_sonar_key(s: str) -> str:
     return s
 
 
+def _normalize_about_text(prompt: str | None) -> str:
+    raw = " ".join(str(prompt or "").split()).strip()
+    if not raw:
+        return "This project was created with Amicable."
+    if len(raw) > 280:
+        raw = raw[:277].rstrip() + "..."
+    return raw
+
+
 def _backstage_type_for(template_id: str) -> str:
     tid = (template_id or "").strip().lower()
     if tid in ("fastapi", "hono"):
@@ -79,6 +89,12 @@ def _tags_for(template_id: str) -> tuple[str, ...]:
         return ("amicable", "typescript", "hono")
     if tid == "laravel":
         return ("amicable", "php", "laravel")
+    if tid == "phoenix":
+        return ("amicable", "elixir", "phoenix")
+    if tid == "aspnetcore":
+        return ("amicable", "csharp", "aspnetcore")
+    if tid == "quarkus":
+        return ("amicable", "java", "quarkus")
     # Unknown/future templates: keep stable but minimal.
     return ("amicable",)
 
@@ -95,6 +111,12 @@ def _sonar_sources_for(template_id: str) -> str:
         return "app"
     if tid == "laravel":
         return "app,resources,routes"
+    if tid == "phoenix":
+        return "lib"
+    if tid == "aspnetcore":
+        return "."
+    if tid == "quarkus":
+        return "src"
     return "."
 
 
@@ -104,6 +126,7 @@ def build_scaffold_context(
     template_id: str,
     project_name: str | None,
     project_slug: str | None,
+    project_prompt: str | None,
     repo_web_url: str | None,
     branch: str | None,
     gitlab_base_url: str | None,
@@ -149,6 +172,7 @@ def build_scaffold_context(
         template_id=tid,
         project_name=name,
         project_slug=slug,
+        project_about=_normalize_about_text(project_prompt),
         repo_url=repo_url,
         branch=br,
         sonar_project_key=sonar_project_key,
@@ -315,6 +339,26 @@ def _dev_commands_for(template_id: str) -> tuple[str, str]:
             "composer install\nnpm install\nphp artisan serve --host 0.0.0.0 --port 3000",
             "php artisan test",
         )
+    if tid == "flutter":
+        return (
+            "flutter pub get\nflutter run -d web-server --web-hostname 0.0.0.0 --web-port 3000",
+            "flutter analyze\nflutter test",
+        )
+    if tid == "phoenix":
+        return (
+            "mix deps.get\nmix phx.server",
+            "mix compile\nmix test",
+        )
+    if tid == "aspnetcore":
+        return (
+            "dotnet restore\ndotnet watch run --urls http://0.0.0.0:3000",
+            "dotnet build\ndotnet test",
+        )
+    if tid == "quarkus":
+        return (
+            "./mvnw quarkus:dev -Dquarkus.http.host=0.0.0.0 -Dquarkus.http.port=3000",
+            "./mvnw -q -DskipTests compile\n./mvnw -q test",
+        )
     return ("<fill in>", "<fill in>")
 
 
@@ -324,6 +368,9 @@ def render_docs_index(ctx: ScaffoldContext) -> str:
         f"# {ctx.project_name}\n"
         "\n"
         "This is the TechDocs documentation site for this Amicable project.\n"
+        "\n"
+        "## What This Project Is About\n"
+        f"{ctx.project_about}\n"
         "\n"
         "## Links\n" + repo_line + "\n"
         "## Quick Start\n"
@@ -388,6 +435,9 @@ def render_root_readme(ctx: ScaffoldContext) -> str:
         f"# {ctx.project_name}\n"
         "\n"
         "This project was created with Amicable.\n"
+        "\n"
+        "## What This Project Is About\n"
+        f"{ctx.project_about}\n"
         "\n"
         "## Documentation\n"
         "- TechDocs: see `mkdocs.yml` and `docs/`\n"
@@ -494,6 +544,7 @@ def ensure_platform_scaffold(
     template_id: str,
     project_name: str | None,
     project_slug: str | None,
+    project_prompt: str | None,
     repo_web_url: str | None,
     branch: str,
     gitlab_base_url: str | None,
@@ -505,6 +556,7 @@ def ensure_platform_scaffold(
         template_id=template_id,
         project_name=project_name,
         project_slug=project_slug,
+        project_prompt=project_prompt,
         repo_web_url=repo_web_url,
         branch=branch,
         gitlab_base_url=gitlab_base_url,

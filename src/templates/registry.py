@@ -14,6 +14,10 @@ TemplateId = Literal[
     "nuxt3",
     "sveltekit",
     "laravel",
+    "flutter",
+    "phoenix",
+    "aspnetcore",
+    "quarkus",
 ]
 
 DEFAULT_TEMPLATE_ID: TemplateId = "vite"
@@ -87,6 +91,30 @@ _DEFAULT_SPECS: dict[TemplateId, TemplateSpec] = {
         label="Full-Stack Web App (Laravel)",
         k8s_sandbox_template_name="amicable-sandbox-laravel",
         db_inject_kind="laravel_blade",
+    ),
+    "flutter": TemplateSpec(
+        template_id="flutter",
+        label="Mobile App (Flutter, Web-First)",
+        k8s_sandbox_template_name="amicable-sandbox-flutter",
+        db_inject_kind="none",
+    ),
+    "phoenix": TemplateSpec(
+        template_id="phoenix",
+        label="Full-Stack Web App (Phoenix)",
+        k8s_sandbox_template_name="amicable-sandbox-phoenix",
+        db_inject_kind="none",
+    ),
+    "aspnetcore": TemplateSpec(
+        template_id="aspnetcore",
+        label="Full-Stack Web App (ASP.NET Core)",
+        k8s_sandbox_template_name="amicable-sandbox-aspnetcore",
+        db_inject_kind="none",
+    ),
+    "quarkus": TemplateSpec(
+        template_id="quarkus",
+        label="Full-Stack Web App (Quarkus)",
+        k8s_sandbox_template_name="amicable-sandbox-quarkus",
+        db_inject_kind="none",
     ),
 }
 

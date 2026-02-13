@@ -6,7 +6,11 @@ export type TemplateId =
   | "remix"
   | "nuxt3"
   | "sveltekit"
-  | "laravel";
+  | "laravel"
+  | "flutter"
+  | "phoenix"
+  | "aspnetcore"
+  | "quarkus";
 
 export const TEMPLATES: Array<{
   id: TemplateId;
@@ -52,6 +56,30 @@ export const TEMPLATES: Array<{
     id: "laravel",
     title: "Laravel Full-Stack App",
     description: "Best for PHP ecosystems and traditional MVC apps. Laravel + PHP.",
+  },
+  {
+    id: "flutter",
+    title: "Flutter Mobile App (Web-First)",
+    description:
+      "Best for cross-platform mobile apps with fast web preview iteration. Flutter + Dart.",
+  },
+  {
+    id: "phoenix",
+    title: "Phoenix Full-Stack App",
+    description:
+      "Best for Elixir teams that want LiveView-first development and fast code reloading. Phoenix + Elixir.",
+  },
+  {
+    id: "aspnetcore",
+    title: "ASP.NET Core Web App",
+    description:
+      "Best for C# teams that need enterprise APIs and robust tooling. ASP.NET Core + dotnet watch.",
+  },
+  {
+    id: "quarkus",
+    title: "Quarkus Full-Stack App",
+    description:
+      "Best for Java teams wanting fast startup and productive dev mode. Quarkus + Maven dev mode.",
   },
 ];
 

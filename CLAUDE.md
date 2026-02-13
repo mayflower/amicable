@@ -32,7 +32,7 @@ npm run lint                        # ESLint
 Images (built/published via GitHub Actions) live under `k8s/images/`:
 - Agent: `amicable-agent`
 - Editor: `amicable-editor`
-- Sandbox runtimes/templates: `amicable-sandbox`, `amicable-sandbox-lovable-vite`, `amicable-sandbox-nextjs15`, `amicable-sandbox-remix`, `amicable-sandbox-nuxt3`, `amicable-sandbox-sveltekit`, `amicable-sandbox-fastapi`, `amicable-sandbox-hono`, `amicable-sandbox-laravel`
+- Sandbox runtimes/templates: `amicable-sandbox`, `amicable-sandbox-lovable-vite`, `amicable-sandbox-nextjs15`, `amicable-sandbox-remix`, `amicable-sandbox-nuxt3`, `amicable-sandbox-sveltekit`, `amicable-sandbox-fastapi`, `amicable-sandbox-hono`, `amicable-sandbox-laravel`, `amicable-sandbox-flutter`, `amicable-sandbox-phoenix`, `amicable-sandbox-aspnetcore`, `amicable-sandbox-quarkus`
 
 CI workflow: `.github/workflows/build-images.yml`.
 
@@ -122,6 +122,13 @@ Preview URLs are generally `https://<sandbox_id>.<PREVIEW_BASE_DOMAIN>/`. In clu
 - `AMICABLE_TRACE_NARRATOR_ENABLED` (default `false`) — enable short tool explanations (sidecar)
 - `AMICABLE_TRACE_NARRATOR_MODEL` (default `anthropic:claude-haiku-4-5`)
 - `AMICABLE_TRACE_NARRATOR_MAX_CHARS` (default `280`)
+- `AMICABLE_WEB_TOOLS_ENABLED` (default `true`) — enable Claude-style `WebSearch` / `WebFetch` tools
+- `AMICABLE_WEB_FETCH_MODEL` (default `anthropic:claude-haiku-4-5`) — small model used for `WebFetch` prompt answering from extracted page text
+- `AMICABLE_WEB_FETCH_TIMEOUT_S` (default `20`) — fetch timeout for `WebFetch` HTTP requests
+- `AMICABLE_WEB_FETCH_MAX_CONTENT_CHARS` (default `25000`) — max extracted page chars passed to the `WebFetch` model prompt
+- `AMICABLE_WEB_SEARCH_TIMEOUT_S` (default `10`) — timeout for `WebSearch` provider calls
+- `AMICABLE_WEB_SEARCH_MAX_RESULTS` (default `8`) — max normalized `WebSearch` results returned
+- `AMICABLE_WEB_SEARCH_USER_AGENT` (optional) — override User-Agent header for web search/fetch requests
 - `AMICABLE_BACKSTAGE_OWNER` (default `group:platform`) — default `spec.owner` for generated `catalog-info.yaml`
 - `AMICABLE_BACKSTAGE_SYSTEM` (optional) — default `spec.system` for generated `catalog-info.yaml`
 - `AMICABLE_BACKSTAGE_LIFECYCLE` (default `experimental`) — default `spec.lifecycle` for generated `catalog-info.yaml`
@@ -152,9 +159,14 @@ Preview URLs are generally `https://<sandbox_id>.<PREVIEW_BASE_DOMAIN>/`. In clu
 - `AMICABLE_GIT_SYNC_BRANCH` (default `main`)
 - `AMICABLE_GIT_SYNC_CACHE_DIR` (default `/tmp/amicable-git-cache`)
 - `AMICABLE_GIT_SYNC_EXCLUDES` (CSV override; defaults include `node_modules/`, `.env*`, build caches)
+- `AMICABLE_GIT_AGENT_README_POLICY_ENABLED` (default `true`) — warn-only policy for agent-generated commits when non-doc changes do not update `README.md` or `docs/index.md`
 - `AMICABLE_GITLAB_REPO_VISIBILITY` (default `internal`)
 - `AMICABLE_GIT_COMMIT_AUTHOR_NAME` (default `amicable-bot`)
 - `AMICABLE_GIT_COMMIT_AUTHOR_EMAIL` (default `amicable@mayflower.de`)
+
+Commit documentation policy:
+- Bootstrap commit includes a short "what this project is about" description from the saved project creation prompt.
+- Agent-generated commits keep running if docs are not updated, but append a README policy warning in the commit body.
 
 ## Code Style
 

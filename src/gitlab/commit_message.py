@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Any
 
@@ -39,6 +40,15 @@ def _sanitize_commit_message(msg: str) -> str:
     return subj if not rest else (subj + "\n" + rest)
 
 
+def _normalize_project_about(prompt: str | None, *, max_chars: int = 220) -> str:
+    raw = re.sub(r"\s+", " ", str(prompt or "")).strip()
+    if not raw:
+        return "No project description was provided at creation time."
+    if len(raw) > max_chars:
+        return raw[: max_chars - 3].rstrip() + "..."
+    return raw
+
+
 def deterministic_agent_commit_message(
     *,
     project_slug: str,
@@ -67,13 +77,18 @@ def deterministic_bootstrap_commit_message(
     *,
     project_slug: str,
     template_id: str | None,
+    project_name: str | None,
+    project_prompt: str | None,
 ) -> str:
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    about = _normalize_project_about(project_prompt)
     lines = [
         "Bootstrap sandbox template",
         "",
+        f"Project Name: {project_name or project_slug}",
         f"Project: {project_slug}",
         f"Template: {template_id or '<unknown>'}",
+        f"About: {about}",
         f"Time: {ts}",
         "",
         "Initial baseline commit created from the sandbox template state.",
@@ -147,3 +162,61 @@ def generate_agent_commit_message_llm(
         return out + ("\n" if not out.endswith("\n") else "")
     except Exception as e:  # pragma: no cover
         raise RuntimeError("commit-message model invocation failed") from e
+
+
+def _parse_name_status_paths(name_status: str) -> list[str]:
+    paths: list[str] = []
+    for raw in (name_status or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split("\t")
+        if not parts:
+            continue
+        status = parts[0].strip().upper()
+        if status.startswith(("R", "C")) and len(parts) >= 3:
+            # For rename/copy, include source and destination.
+            paths.extend([parts[1].strip(), parts[2].strip()])
+            continue
+        if len(parts) >= 2:
+            paths.append(parts[-1].strip())
+    return [p.lstrip("./") for p in paths if p.strip()]
+
+
+def _is_doc_path(path: str) -> bool:
+    p = (path or "").strip().lstrip("/")
+    if not p:
+        return False
+    pl = p.lower()
+    if pl.startswith("docs/"):
+        return True
+    return bool(pl.endswith(".md") or pl.endswith(".mdx"))
+
+
+def _satisfies_readme_requirement(path: str) -> bool:
+    p = (path or "").strip().lstrip("/").lower()
+    return p in ("readme.md", "docs/index.md")
+
+
+def evaluate_agent_readme_policy(name_status: str) -> list[str]:
+    """Return policy warnings for agent commits based on staged name-status."""
+    paths = _parse_name_status_paths(name_status)
+    if not paths:
+        return []
+
+    has_non_doc = any(not _is_doc_path(p) for p in paths)
+    has_readme_update = any(_satisfies_readme_requirement(p) for p in paths)
+    if not has_non_doc or has_readme_update:
+        return []
+
+    return [
+        "README policy: non-doc files changed without updating README.md or docs/index.md."
+    ]
+
+
+def append_commit_warnings(message: str, warnings: list[str]) -> str:
+    msg = (message or "").rstrip()
+    if not warnings:
+        return msg + "\n"
+    block = "\n".join(f"- {w}" for w in warnings)
+    return msg + "\n\nREADME Policy Warnings:\n" + block + "\n"

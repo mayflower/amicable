@@ -41,6 +41,14 @@ jobs:
             dockerfile: k8s/images/amicable-sandbox-sveltekit/Dockerfile
           - name: amicable-sandbox-laravel
             dockerfile: k8s/images/amicable-sandbox-laravel/Dockerfile
+          - name: amicable-sandbox-flutter
+            dockerfile: k8s/images/amicable-sandbox-flutter/Dockerfile
+          - name: amicable-sandbox-phoenix
+            dockerfile: k8s/images/amicable-sandbox-phoenix/Dockerfile
+          - name: amicable-sandbox-aspnetcore
+            dockerfile: k8s/images/amicable-sandbox-aspnetcore/Dockerfile
+          - name: amicable-sandbox-quarkus
+            dockerfile: k8s/images/amicable-sandbox-quarkus/Dockerfile
           - name: amicable-editor
             dockerfile: k8s/images/amicable-editor/Dockerfile
 
