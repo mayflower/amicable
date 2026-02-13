@@ -98,6 +98,10 @@ def git_sync_excludes() -> list[str]:
     return out
 
 
+def git_agent_readme_policy_enabled() -> bool:
+    return _env_bool("AMICABLE_GIT_AGENT_README_POLICY_ENABLED", default=True)
+
+
 def git_commit_author_name() -> str:
     return (
         os.environ.get("AMICABLE_GIT_COMMIT_AUTHOR_NAME") or "amicable-bot"

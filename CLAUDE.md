@@ -152,9 +152,14 @@ Preview URLs are generally `https://<sandbox_id>.<PREVIEW_BASE_DOMAIN>/`. In clu
 - `AMICABLE_GIT_SYNC_BRANCH` (default `main`)
 - `AMICABLE_GIT_SYNC_CACHE_DIR` (default `/tmp/amicable-git-cache`)
 - `AMICABLE_GIT_SYNC_EXCLUDES` (CSV override; defaults include `node_modules/`, `.env*`, build caches)
+- `AMICABLE_GIT_AGENT_README_POLICY_ENABLED` (default `true`) — warn-only policy for agent-generated commits when non-doc changes do not update `README.md` or `docs/index.md`
 - `AMICABLE_GITLAB_REPO_VISIBILITY` (default `internal`)
 - `AMICABLE_GIT_COMMIT_AUTHOR_NAME` (default `amicable-bot`)
 - `AMICABLE_GIT_COMMIT_AUTHOR_EMAIL` (default `amicable@mayflower.de`)
+
+Commit documentation policy:
+- Bootstrap commit includes a short "what this project is about" description from the saved project creation prompt.
+- Agent-generated commits keep running if docs are not updated, but append a README policy warning in the commit body.
 
 ## Code Style
 

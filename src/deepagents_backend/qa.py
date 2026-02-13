@@ -159,6 +159,20 @@ def python_qa_commands(*, run_tests: bool) -> list[str]:
     return cmds
 
 
+def flutter_project_present(backend: Any) -> bool:
+    return _exists_in_app(backend, "pubspec.yaml")
+
+
+def flutter_qa_commands(*, run_tests: bool) -> list[str]:
+    cmds = [
+        "flutter pub get",
+        "flutter analyze",
+    ]
+    if run_tests:
+        cmds.append("flutter test")
+    return cmds
+
+
 def _tsconfig_present(backend: Any) -> bool:
     return _exists_in_app(backend, "tsconfig.json")
 
@@ -212,6 +226,9 @@ def effective_qa_commands_for_backend(
     # catch syntax/type/build errors in common stacks.
     if pkg.exists:
         return fallback_qa_commands(backend, package_json=pkg.data)
+
+    if flutter_project_present(backend):
+        return flutter_qa_commands(run_tests=qa_run_tests_enabled())
 
     return []
 

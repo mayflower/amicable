@@ -11,6 +11,7 @@ from src.deepagents_backend.qa import (
     PackageJsonReadResult,
     QaCommandResult,
     effective_qa_commands_for_backend,
+    flutter_project_present,
     python_project_present,
     python_qa_commands,
     qa_run_tests_enabled,
@@ -35,6 +36,7 @@ class ControllerState(TypedDict, total=False):
     git_pushed: bool
     git_last_commit: str | None
     git_error: str | None
+    git_warnings: list[str]
 
 
 GetBackendFn = Callable[[str], Any]
@@ -218,6 +220,12 @@ def build_controller_graph(
                     "If dependencies are missing, run `pip install -r requirements.txt`. "
                     "After edits, ensure `ruff check .` succeeds."
                 )
+            elif not pkg.exists and flutter_project_present(backend):
+                hint = (
+                    "\n\nPlease fix the cause, then make QA pass. "
+                    "If dependencies are missing, run `flutter pub get`. "
+                    "After edits, ensure `flutter analyze` succeeds."
+                )
         except Exception:
             pass
         msg += hint
@@ -257,9 +265,14 @@ def build_controller_graph(
             from src.deepagents_backend.tool_journal import (
                 summarize as summarize_tool_journal,
             )
-            from src.gitlab.commit_message import generate_agent_commit_message_llm
+            from src.gitlab.commit_message import (
+                append_commit_warnings,
+                evaluate_agent_readme_policy,
+                generate_agent_commit_message_llm,
+            )
             from src.gitlab.config import (
                 ensure_git_sync_configured,
+                git_agent_readme_policy_enabled,
                 git_sync_enabled,
                 git_sync_required,
             )
@@ -268,7 +281,12 @@ def build_controller_graph(
             ensure_git_sync_configured()
             required = git_sync_required()
             if not git_sync_enabled():
-                return {"git_pushed": False, "git_last_commit": None, "git_error": None}
+                return {
+                    "git_pushed": False,
+                    "git_last_commit": None,
+                    "git_error": None,
+                    "git_warnings": [],
+                }
 
             thread_id = _thread_id_from_config(config)
             cfg = (config or {}).get("configurable") if isinstance(config, dict) else {}
@@ -285,6 +303,7 @@ def build_controller_graph(
                     "git_pushed": False,
                     "git_last_commit": None,
                     "git_error": "git repo url missing",
+                    "git_warnings": [],
                 }
 
             backend = get_backend(thread_id)
@@ -333,8 +352,10 @@ def build_controller_graph(
                     if isinstance(out, str):
                         qa_last_output = out
 
+            policy_warnings: list[str] = []
+
             def _commit_message(diff_stat: str, name_status: str) -> str:
-                return generate_agent_commit_message_llm(
+                msg = generate_agent_commit_message_llm(
                     user_request=user_request,
                     agent_summary=agent_summary,
                     project_slug=str(project_slug),
@@ -344,6 +365,11 @@ def build_controller_graph(
                     name_status=name_status,
                     tool_journal_summary=journal_summary,
                 )
+                if git_agent_readme_policy_enabled():
+                    warnings = evaluate_agent_readme_policy(name_status)
+                    policy_warnings[:] = warnings
+                    return append_commit_warnings(msg, warnings)
+                return msg
 
             pushed, sha, _diff_stat, _name_status = await asyncio.to_thread(
                 sync_sandbox_tree_to_repo,
@@ -356,6 +382,7 @@ def build_controller_graph(
                 "git_pushed": bool(pushed),
                 "git_last_commit": sha,
                 "git_error": None,
+                "git_warnings": list(policy_warnings),
             }
         except Exception as e:
             logger.exception("git_sync failed")
@@ -367,7 +394,12 @@ def build_controller_graph(
                     raise
             except Exception:
                 raise
-            return {"git_pushed": False, "git_last_commit": None, "git_error": str(e)}
+            return {
+                "git_pushed": False,
+                "git_last_commit": None,
+                "git_error": str(e),
+                "git_warnings": [],
+            }
 
     def route_after_qa(state: ControllerState) -> Literal["pass", "heal", "fail"]:
         passed = bool(state.get("qa_passed"))

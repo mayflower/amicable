@@ -6,7 +6,8 @@ export type TemplateId =
   | "remix"
   | "nuxt3"
   | "sveltekit"
-  | "laravel";
+  | "laravel"
+  | "flutter";
 
 export const TEMPLATES: Array<{
   id: TemplateId;
@@ -52,6 +53,12 @@ export const TEMPLATES: Array<{
     id: "laravel",
     title: "Laravel Full-Stack App",
     description: "Best for PHP ecosystems and traditional MVC apps. Laravel + PHP.",
+  },
+  {
+    id: "flutter",
+    title: "Flutter Mobile App (Web-First)",
+    description:
+      "Best for cross-platform mobile apps with fast web preview iteration. Flutter + Dart.",
   },
 ];
 

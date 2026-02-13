@@ -141,6 +141,20 @@ sandboxTemplates:
       limits:
         cpu: "1000m"
         memory: "1Gi"
+  - name: amicable-sandbox-flutter
+    image:
+      repository: ghcr.io/mayflower/amicable-sandbox-flutter
+      tag: main
+      pullPolicy: IfNotPresent
+    additionalAllowedHosts: ".amicable-preview.data.mayflower.tech"
+    runtimeClassName: ""
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
 
 agent:
   replicas: 2

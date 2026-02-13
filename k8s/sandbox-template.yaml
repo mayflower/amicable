@@ -9,6 +9,7 @@
 #   docker build -t amicable-sandbox-nuxt3:latest         k8s/images/amicable-sandbox-nuxt3
 #   docker build -t amicable-sandbox-sveltekit:latest     k8s/images/amicable-sandbox-sveltekit
 #   docker build -t amicable-sandbox-laravel:latest       k8s/images/amicable-sandbox-laravel
+#   docker build -t amicable-sandbox-flutter:latest       k8s/images/amicable-sandbox-flutter
 #
 # Then load into your cluster (example for kind):
 #   kind load docker-image amicable-sandbox-lovable-vite:latest --name <cluster>
@@ -286,6 +287,40 @@ spec:
             limits:
               cpu: "1000m"
               memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+          workingDir: /app
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxTemplate
+metadata:
+  name: amicable-sandbox-flutter
+spec:
+  podTemplateSpec:
+    metadata:
+      labels:
+        app: amicable-sandbox-flutter
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: amicable-sandbox
+          image: amicable-sandbox-flutter:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: runtime
+              containerPort: 8888
+            - name: preview
+              containerPort: 3000
+          env:
+            - name: __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+              value: ".preview.example.com"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
           securityContext:
             allowPrivilegeEscalation: false
           workingDir: /app

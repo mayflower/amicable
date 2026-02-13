@@ -14,6 +14,7 @@ TemplateId = Literal[
     "nuxt3",
     "sveltekit",
     "laravel",
+    "flutter",
 ]
 
 DEFAULT_TEMPLATE_ID: TemplateId = "vite"
@@ -87,6 +88,12 @@ _DEFAULT_SPECS: dict[TemplateId, TemplateSpec] = {
         label="Full-Stack Web App (Laravel)",
         k8s_sandbox_template_name="amicable-sandbox-laravel",
         db_inject_kind="laravel_blade",
+    ),
+    "flutter": TemplateSpec(
+        template_id="flutter",
+        label="Mobile App (Flutter, Web-First)",
+        k8s_sandbox_template_name="amicable-sandbox-flutter",
+        db_inject_kind="none",
     ),
 }
 

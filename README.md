@@ -154,6 +154,12 @@ Common optional env vars:
 - `GITLAB_BASE_URL` (default `https://git.mayflower.de`)
 - `GITLAB_GROUP_PATH` (default `amicable`)
 - `AMICABLE_GIT_SYNC_ENABLED` (default: enabled iff token present)
+- `AMICABLE_GIT_AGENT_README_POLICY_ENABLED` (default `true`; warn-only README policy on agent-generated commits)
+
+Commit documentation policy:
+- The first bootstrap commit includes a short description of what the project is about, derived from the project creation prompt.
+- Agent-generated commits emit a warning in the commit body when non-doc files changed without updating `README.md` or `docs/index.md`.
+- This policy is warn-only and does not block commit/push.
 
 Implementation lives in `src/gitlab/` and failures are best-effort (do not block the edit loop).
 

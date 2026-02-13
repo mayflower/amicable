@@ -4,6 +4,8 @@ from src.deepagents_backend.qa import (
     PackageJsonReadResult,
     detect_qa_commands,
     effective_qa_commands_for_backend,
+    flutter_project_present,
+    flutter_qa_commands,
     python_project_present,
     python_qa_commands,
     qa_enabled_from_env,
@@ -136,6 +138,77 @@ class TestDeepAgentsQa(unittest.TestCase):
             python_qa_commands(run_tests=True),
             ["python -m compileall -q .", "ruff check .", "pytest"],
         )
+
+    def test_flutter_project_present_detects_pubspec(self):
+        class _ExistsBackend:
+            def execute(self, command: str):
+                if "test -e pubspec.yaml" in command:
+                    return {"exit_code": 0, "output": "", "truncated": False}
+                return {"exit_code": 1, "output": "", "truncated": False}
+
+        self.assertTrue(flutter_project_present(_ExistsBackend()))
+
+    def test_flutter_qa_commands(self):
+        self.assertEqual(
+            flutter_qa_commands(run_tests=False),
+            ["flutter pub get", "flutter analyze"],
+        )
+        self.assertEqual(
+            flutter_qa_commands(run_tests=True),
+            ["flutter pub get", "flutter analyze", "flutter test"],
+        )
+
+    def test_effective_qa_commands_detects_flutter_when_no_package_json(self):
+        import os
+
+        old = os.environ.get("DEEPAGENTS_QA_RUN_TESTS")
+        try:
+            os.environ["DEEPAGENTS_QA_RUN_TESTS"] = "0"
+
+            class _Backend:
+                def execute(self, command: str):
+                    if "test -e package.json" in command:
+                        return {"exit_code": 1, "output": "", "truncated": False}
+                    if "test -e pubspec.yaml" in command:
+                        return {"exit_code": 0, "output": "", "truncated": False}
+                    return {"exit_code": 1, "output": "", "truncated": False}
+
+            pkg = PackageJsonReadResult(exists=False, data=None, error=None)
+            cmds = effective_qa_commands_for_backend(_Backend(), pkg)
+            self.assertEqual(cmds, ["flutter pub get", "flutter analyze"])
+        finally:
+            if old is None:
+                os.environ.pop("DEEPAGENTS_QA_RUN_TESTS", None)
+            else:
+                os.environ["DEEPAGENTS_QA_RUN_TESTS"] = old
+
+    def test_effective_qa_commands_override_takes_precedence_for_flutter(self):
+        import os
+
+        old_override = os.environ.get("DEEPAGENTS_QA_COMMANDS")
+        old_run_tests = os.environ.get("DEEPAGENTS_QA_RUN_TESTS")
+        try:
+            os.environ["DEEPAGENTS_QA_COMMANDS"] = "echo one,echo two"
+            os.environ["DEEPAGENTS_QA_RUN_TESTS"] = "1"
+
+            class _Backend:
+                def execute(self, command: str):
+                    if "test -e pubspec.yaml" in command:
+                        return {"exit_code": 0, "output": "", "truncated": False}
+                    return {"exit_code": 1, "output": "", "truncated": False}
+
+            pkg = PackageJsonReadResult(exists=False, data=None, error=None)
+            cmds = effective_qa_commands_for_backend(_Backend(), pkg)
+            self.assertEqual(cmds, ["echo one", "echo two"])
+        finally:
+            if old_override is None:
+                os.environ.pop("DEEPAGENTS_QA_COMMANDS", None)
+            else:
+                os.environ["DEEPAGENTS_QA_COMMANDS"] = old_override
+            if old_run_tests is None:
+                os.environ.pop("DEEPAGENTS_QA_RUN_TESTS", None)
+            else:
+                os.environ["DEEPAGENTS_QA_RUN_TESTS"] = old_run_tests
 
 
 if __name__ == "__main__":

@@ -57,6 +57,7 @@ def ensure_projects_schema(client: HasuraClient) -> None:
               owner_email text NOT NULL,
               name text NOT NULL,
               slug text NOT NULL UNIQUE,
+              project_prompt text NULL,
               sandbox_id text NULL,
               template_id text NULL,
               gitlab_project_id bigint NULL,
@@ -70,6 +71,8 @@ def ensure_projects_schema(client: HasuraClient) -> None:
               ADD COLUMN IF NOT EXISTS sandbox_id text NULL;
             ALTER TABLE amicable_meta.projects
               ADD COLUMN IF NOT EXISTS template_id text NULL;
+            ALTER TABLE amicable_meta.projects
+              ADD COLUMN IF NOT EXISTS project_prompt text NULL;
             ALTER TABLE amicable_meta.projects
               ADD COLUMN IF NOT EXISTS gitlab_project_id bigint NULL;
             ALTER TABLE amicable_meta.projects
@@ -94,6 +97,7 @@ class Project:
     owner_email: str
     name: str
     slug: str
+    project_prompt: str | None = None
     sandbox_id: str | None = None
     template_id: str | None = None
     gitlab_project_id: int | None = None
@@ -124,32 +128,16 @@ def _tuples_to_dicts(res: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _get_project_by_id_any_owner(
-    client: HasuraClient, *, project_id: str
-) -> Project | None:
-    ensure_projects_schema(client)
-    # Note: this helper intentionally filters out soft-deleted projects.
-    res = client.run_sql(
-        f"""
-        SELECT project_id, owner_sub, owner_email, name, slug, sandbox_id, template_id,
-               gitlab_project_id, gitlab_path, gitlab_web_url,
-               created_at, updated_at
-        FROM amicable_meta.projects
-        WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL
-        LIMIT 1;
-        """.strip(),
-        read_only=True,
-    )
-    rows = _tuples_to_dicts(res)
-    if not rows:
-        return None
-    r = rows[0]
+def _project_from_row(r: dict[str, Any]) -> Project:
     return Project(
         project_id=str(r["project_id"]),
         owner_sub=str(r["owner_sub"]),
         owner_email=str(r["owner_email"]),
         name=str(r["name"]),
         slug=str(r["slug"]),
+        project_prompt=str(r.get("project_prompt"))
+        if r.get("project_prompt") is not None
+        else None,
         sandbox_id=str(r.get("sandbox_id"))
         if r.get("sandbox_id") is not None
         else None,
@@ -172,6 +160,28 @@ def _get_project_by_id_any_owner(
         if r.get("updated_at") is not None
         else None,
     )
+
+
+def _get_project_by_id_any_owner(
+    client: HasuraClient, *, project_id: str
+) -> Project | None:
+    ensure_projects_schema(client)
+    # Note: this helper intentionally filters out soft-deleted projects.
+    res = client.run_sql(
+        f"""
+        SELECT project_id, owner_sub, owner_email, name, slug, project_prompt, sandbox_id, template_id,
+               gitlab_project_id, gitlab_path, gitlab_web_url,
+               created_at, updated_at
+        FROM amicable_meta.projects
+        WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL
+        LIMIT 1;
+        """.strip(),
+        read_only=True,
+    )
+    rows = _tuples_to_dicts(res)
+    if not rows:
+        return None
+    return _project_from_row(rows[0])
 
 
 def _project_row_by_id_including_deleted(
@@ -243,7 +253,7 @@ def get_project_by_slug(
     ensure_projects_schema(client)
     res = client.run_sql(
         f"""
-        SELECT project_id, owner_sub, owner_email, name, slug, sandbox_id, template_id,
+        SELECT project_id, owner_sub, owner_email, name, slug, project_prompt, sandbox_id, template_id,
                gitlab_project_id, gitlab_path, gitlab_web_url,
                created_at, updated_at
         FROM amicable_meta.projects
@@ -258,34 +268,7 @@ def get_project_by_slug(
     r = rows[0]
     if str(r.get("owner_sub")) != owner.sub:
         return None
-    return Project(
-        project_id=str(r["project_id"]),
-        owner_sub=str(r["owner_sub"]),
-        owner_email=str(r["owner_email"]),
-        name=str(r["name"]),
-        slug=str(r["slug"]),
-        sandbox_id=str(r.get("sandbox_id"))
-        if r.get("sandbox_id") is not None
-        else None,
-        template_id=str(r.get("template_id"))
-        if r.get("template_id") is not None
-        else None,
-        gitlab_project_id=int(r["gitlab_project_id"])
-        if r.get("gitlab_project_id") is not None
-        else None,
-        gitlab_path=str(r.get("gitlab_path"))
-        if r.get("gitlab_path") is not None
-        else None,
-        gitlab_web_url=str(r.get("gitlab_web_url"))
-        if r.get("gitlab_web_url") is not None
-        else None,
-        created_at=str(r.get("created_at"))
-        if r.get("created_at") is not None
-        else None,
-        updated_at=str(r.get("updated_at"))
-        if r.get("updated_at") is not None
-        else None,
-    )
+    return _project_from_row(r)
 
 
 def get_project_by_slug_any_owner(client: HasuraClient, *, slug: str) -> Project | None:
@@ -297,7 +280,7 @@ def get_project_by_slug_any_owner(client: HasuraClient, *, slug: str) -> Project
     ensure_projects_schema(client)
     res = client.run_sql(
         f"""
-        SELECT project_id, owner_sub, owner_email, name, slug, sandbox_id, template_id,
+        SELECT project_id, owner_sub, owner_email, name, slug, project_prompt, sandbox_id, template_id,
                gitlab_project_id, gitlab_path, gitlab_web_url,
                created_at, updated_at
         FROM amicable_meta.projects
@@ -309,35 +292,7 @@ def get_project_by_slug_any_owner(client: HasuraClient, *, slug: str) -> Project
     rows = _tuples_to_dicts(res)
     if not rows:
         return None
-    r = rows[0]
-    return Project(
-        project_id=str(r["project_id"]),
-        owner_sub=str(r["owner_sub"]),
-        owner_email=str(r["owner_email"]),
-        name=str(r["name"]),
-        slug=str(r["slug"]),
-        sandbox_id=str(r.get("sandbox_id"))
-        if r.get("sandbox_id") is not None
-        else None,
-        template_id=str(r.get("template_id"))
-        if r.get("template_id") is not None
-        else None,
-        gitlab_project_id=int(r["gitlab_project_id"])
-        if r.get("gitlab_project_id") is not None
-        else None,
-        gitlab_path=str(r.get("gitlab_path"))
-        if r.get("gitlab_path") is not None
-        else None,
-        gitlab_web_url=str(r.get("gitlab_web_url"))
-        if r.get("gitlab_web_url") is not None
-        else None,
-        created_at=str(r.get("created_at"))
-        if r.get("created_at") is not None
-        else None,
-        updated_at=str(r.get("updated_at"))
-        if r.get("updated_at") is not None
-        else None,
-    )
+    return _project_from_row(rows[0])
 
 
 def set_project_sandbox_id_any_owner(
@@ -357,7 +312,7 @@ def list_projects(client: HasuraClient, *, owner: ProjectOwner) -> list[Project]
     ensure_projects_schema(client)
     res = client.run_sql(
         f"""
-        SELECT project_id, owner_sub, owner_email, name, slug, sandbox_id, template_id,
+        SELECT project_id, owner_sub, owner_email, name, slug, project_prompt, sandbox_id, template_id,
                gitlab_project_id, gitlab_path, gitlab_web_url,
                created_at, updated_at
         FROM amicable_meta.projects
@@ -368,36 +323,7 @@ def list_projects(client: HasuraClient, *, owner: ProjectOwner) -> list[Project]
     )
     out: list[Project] = []
     for r in _tuples_to_dicts(res):
-        out.append(
-            Project(
-                project_id=str(r["project_id"]),
-                owner_sub=str(r["owner_sub"]),
-                owner_email=str(r["owner_email"]),
-                name=str(r["name"]),
-                slug=str(r["slug"]),
-                sandbox_id=str(r.get("sandbox_id"))
-                if r.get("sandbox_id") is not None
-                else None,
-                template_id=str(r.get("template_id"))
-                if r.get("template_id") is not None
-                else None,
-                gitlab_project_id=int(r["gitlab_project_id"])
-                if r.get("gitlab_project_id") is not None
-                else None,
-                gitlab_path=str(r.get("gitlab_path"))
-                if r.get("gitlab_path") is not None
-                else None,
-                gitlab_web_url=str(r.get("gitlab_web_url"))
-                if r.get("gitlab_web_url") is not None
-                else None,
-                created_at=str(r.get("created_at"))
-                if r.get("created_at") is not None
-                else None,
-                updated_at=str(r.get("updated_at"))
-                if r.get("updated_at") is not None
-                else None,
-            )
-        )
+        out.append(_project_from_row(r))
     return out
 
 
@@ -476,6 +402,7 @@ def create_project(
     owner: ProjectOwner,
     name: str,
     template_id: str | None = None,
+    project_prompt: str | None = None,
 ) -> Project:
     ensure_projects_schema(client)
     project_id = str(uuid.uuid4())
@@ -491,8 +418,8 @@ def create_project(
 
         client.run_sql(
             f"""
-            INSERT INTO amicable_meta.projects (project_id, owner_sub, owner_email, name, slug, template_id)
-            VALUES ({_sql_str(project_id)}, {_sql_str(owner.sub)}, {_sql_str(owner.email)}, {_sql_str(name)}, {_sql_str(slug)}, {_sql_str(template_id) if template_id is not None else "NULL"})
+            INSERT INTO amicable_meta.projects (project_id, owner_sub, owner_email, name, slug, template_id, project_prompt)
+            VALUES ({_sql_str(project_id)}, {_sql_str(owner.sub)}, {_sql_str(owner.email)}, {_sql_str(name)}, {_sql_str(slug)}, {_sql_str(template_id) if template_id is not None else "NULL"}, {_sql_str(project_prompt) if project_prompt is not None else "NULL"})
             ON CONFLICT DO NOTHING;
             """.strip()
         )

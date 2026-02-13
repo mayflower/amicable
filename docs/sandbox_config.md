@@ -120,6 +120,7 @@ Backend template ids (and default):
 - `nuxt3`
 - `sveltekit`
 - `laravel`
+- `flutter`
 
 The backend default is `DEFAULT_TEMPLATE_ID = "vite"` in `src/templates/registry.py`.
 
