@@ -39,6 +39,9 @@ WORKDIR /app
 RUN flutter create --platforms=android,ios,web --org com.amicable --project-name amicable_starter . \
   && flutter pub get
 
+# Pre-warm the dart2js compiler cache so first release build at runtime is fast.
+RUN flutter build web --release && rm -rf build/web
+
 # Default DeepAgents memory/skills locations.
 COPY k8s/images/amicable-sandbox-flutter/AGENTS.md /app/AGENTS.md
 COPY k8s/images/amicable-sandbox-flutter/.deepagents/AGENTS.md /app/.deepagents/AGENTS.md
@@ -48,7 +51,7 @@ COPY k8s/images/amicable-sandbox-flutter/.deepagents/skills/ /app/.deepagents/sk
 WORKDIR /runtime
 COPY k8s/images/amicable-sandbox-flutter/runtime.py ./runtime.py
 
-ENV AMICABLE_PREVIEW_CMD="flutter run -d web-server --web-hostname 0.0.0.0 --web-port 3000"
+ENV AMICABLE_PREVIEW_CMD="flutter run -d web-server --web-hostname 0.0.0.0 --web-port 3000 --release"
 
 EXPOSE 8888
 EXPOSE 3000
