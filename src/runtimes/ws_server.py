@@ -1064,7 +1064,7 @@ async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
 
     from fastapi import BackgroundTasks
 
-    from src.db.cleanup import cleanup_app_db
+    from src.db.cleanup import cleanup_app_db, cleanup_langgraph_data
     from src.deepagents_backend.session_sandbox_manager import SessionSandboxManager
     from src.gitlab.integration import delete_gitlab_repo_for_project
     from src.projects.store import (
@@ -1113,6 +1113,9 @@ async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
         # Best-effort DB cleanup.
         with contextlib.suppress(Exception):
             cleanup_app_db(client, app_id=project_id)
+        # Best-effort LangGraph checkpoint/store cleanup.
+        with contextlib.suppress(Exception):
+            cleanup_langgraph_data(thread_id=project_id)
         # Finally remove row.
         with contextlib.suppress(Exception):
             hard_delete_project_row(client, owner=owner, project_id=project_id)

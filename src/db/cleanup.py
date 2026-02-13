@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+import os
 from typing import Any
 
 from src.db.hasura_client import HasuraClient, HasuraError
+
+logger = logging.getLogger(__name__)
 
 
 def _sql_str(value: str) -> str:
@@ -88,3 +92,54 @@ def cleanup_app_db(client: HasuraClient, *, app_id: str) -> None:
     # Drop schema and meta row.
     client.run_sql(f"DROP SCHEMA IF EXISTS {schema} CASCADE;")
     client.run_sql(f"DELETE FROM amicable_meta.apps WHERE app_id = {_sql_str(app_id)};")
+
+
+def _langgraph_database_url() -> str:
+    return (
+        os.environ.get("AMICABLE_LANGGRAPH_DATABASE_URL")
+        or os.environ.get("LANGGRAPH_DATABASE_URL")
+        or os.environ.get("DATABASE_URL")
+        or ""
+    ).strip()
+
+
+def cleanup_langgraph_data(*, thread_id: str) -> None:
+    """Best-effort cleanup of LangGraph checkpoint and store rows for a thread.
+
+    Deletes from checkpoint_writes, checkpoint_blobs, checkpoints, and store.
+    Each table is handled independently so a missing table doesn't block the others.
+    """
+    dsn = _langgraph_database_url()
+    if not dsn:
+        logger.debug("cleanup_langgraph_data: no database URL configured, skipping")
+        return
+
+    try:
+        import psycopg
+    except ImportError:
+        logger.debug("cleanup_langgraph_data: psycopg not installed, skipping")
+        return
+
+    try:
+        conn = psycopg.connect(dsn, autocommit=True)
+    except Exception:
+        logger.warning("cleanup_langgraph_data: failed to connect to LangGraph DB", exc_info=True)
+        return
+
+    try:
+        for table, where, params in [
+            ("checkpoint_writes", "thread_id = %s", (thread_id,)),
+            ("checkpoint_blobs", "thread_id = %s", (thread_id,)),
+            ("checkpoints", "thread_id = %s", (thread_id,)),
+            ("store", "prefix LIKE %s", (f"{thread_id}.%",)),
+        ]:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(f"DELETE FROM {table} WHERE {where}", params)
+                    deleted = cur.rowcount
+                if deleted:
+                    logger.info("cleanup_langgraph_data: deleted %d rows from %s (thread_id=%s)", deleted, table, thread_id)
+            except Exception:
+                logger.debug("cleanup_langgraph_data: failed to clean %s (may not exist)", table, exc_info=True)
+    finally:
+        conn.close()
