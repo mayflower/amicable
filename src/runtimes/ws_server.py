@@ -2733,19 +2733,7 @@ async def _handle_ws(ws: WebSocket) -> None:
                     session_id,
                     e.detail,
                 )
-                await ws.send_json(
-                    Message.new(
-                        MessageType.ERROR,
-                        {
-                            "error": e.code,
-                            "detail": e.detail,
-                            "text": e.detail,
-                        },
-                        session_id=session_id,
-                    ).to_dict()
-                )
-                await ws.close(code=1011)
-                return
+                conversation_history = []
             except Exception as e:
                 logger.exception("WS INIT agent init failed (session_id=%s)", session_id)
                 await ws.send_json(
