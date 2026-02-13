@@ -37,7 +37,7 @@ import { Button } from "@/components/ui/button";
 import { CodePane } from "@/components/CodePane";
 import { DatabasePane } from "@/components/DatabasePane";
 import { Input } from "@/components/ui/input";
-import type { Message } from "../../types/messages";
+import type { ConversationHistoryEntry, Message } from "../../types/messages";
 import { cn } from "@/lib/utils";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMessageBus } from "../../hooks/useMessageBus";
@@ -154,6 +154,25 @@ const asObj = (v: unknown): Record<string, unknown> | null => {
   return v && typeof v === "object" && !Array.isArray(v)
     ? (v as Record<string, unknown>)
     : null;
+};
+
+const asConversationHistory = (v: unknown): ConversationHistoryEntry[] => {
+  if (!Array.isArray(v)) return [];
+  const out: ConversationHistoryEntry[] = [];
+  for (const item of v) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const rec = item as Record<string, unknown>;
+    const role = rec.role;
+    const text = rec.text;
+    if (
+      (role === "user" || role === "assistant") &&
+      typeof text === "string" &&
+      text.trim()
+    ) {
+      out.push({ role, text: text.trim() });
+    }
+  }
+  return out;
 };
 
 const Create = () => {
@@ -477,7 +496,52 @@ const Create = () => {
         console.log("Sandbox already exists, skipping initial prompt");
       }
 
+      const conversationHistory = asConversationHistory(
+        message.data.conversation_history
+      );
+
       setMessages((prev) => {
+        const hasLocalChat = prev.some((msg) => {
+          if (
+            msg.type !== MessageType.USER &&
+            msg.type !== MessageType.AGENT_PARTIAL &&
+            msg.type !== MessageType.AGENT_FINAL
+          ) {
+            return false;
+          }
+          const sender = msg.data?.sender;
+          const text = typeof msg.data?.text === "string" ? msg.data.text : "";
+          if (!text.trim()) return false;
+          if (text === "Workspace loaded! You can now make edits here.") return false;
+          return sender === Sender.USER || sender === Sender.ASSISTANT;
+        });
+
+        if (!hasLocalChat && conversationHistory.length > 0) {
+          const baseTs =
+            typeof message.timestamp === "number" ? message.timestamp : Date.now();
+          const startTs = Math.max(0, baseTs - conversationHistory.length);
+          const sessionKey =
+            (typeof message.session_id === "string" && message.session_id) ||
+            resolvedSessionId ||
+            "session";
+
+          return conversationHistory.map((entry, idx) => {
+            const isUser = entry.role === "user";
+            const text = entry.text;
+            return {
+              type: isUser ? MessageType.USER : MessageType.AGENT_FINAL,
+              id: `history-${sessionKey}-${idx}-${hash(`${entry.role}:${text}`)}`,
+              timestamp: startTs + idx,
+              session_id: resolvedSessionId || message.session_id || undefined,
+              data: {
+                text,
+                sender: isUser ? Sender.USER : Sender.ASSISTANT,
+                isStreaming: false,
+              },
+            };
+          });
+        }
+
         // Only show one "Workspace loaded!" message — update in place on reconnect.
         const existingInitIndex = prev.findIndex(
           (msg) =>

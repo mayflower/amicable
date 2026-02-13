@@ -30,7 +30,7 @@ try:
 except Exception:  # pragma: no cover
     SessionMiddleware = None  # type: ignore[assignment,misc]
 
-from src.agent_core import Agent, Message, MessageType
+from src.agent_core import Agent, ChatHistoryPersistenceError, Message, MessageType
 
 # Load local env after imports to keep linting (E402) happy.
 load_dotenv()
@@ -2328,9 +2328,43 @@ async def _handle_ws(ws: WebSocket) -> None:
             project_slug = (
                 getattr(project, "slug", None) if project is not None else None
             )
-            exists = await agent.init(
-                session_id=session_id, template_id=template_id, slug=project_slug
-            )
+            try:
+                exists = await agent.init(
+                    session_id=session_id, template_id=template_id, slug=project_slug
+                )
+                conversation_history = await agent.ensure_ws_chat_history_ready(
+                    str(session_id)
+                )
+            except ChatHistoryPersistenceError as e:
+                logger.warning(
+                    "WS INIT chat history unavailable (session_id=%s): %s",
+                    session_id,
+                    e.detail,
+                )
+                await ws.send_json(
+                    Message.new(
+                        MessageType.ERROR,
+                        {
+                            "error": e.code,
+                            "detail": e.detail,
+                            "text": e.detail,
+                        },
+                        session_id=session_id,
+                    ).to_dict()
+                )
+                await ws.close(code=1011)
+                return
+            except Exception as e:
+                logger.exception("WS INIT agent init failed (session_id=%s)", session_id)
+                await ws.send_json(
+                    Message.new(
+                        MessageType.ERROR,
+                        {"error": "project_init_failed", "detail": str(e)},
+                        session_id=session_id,
+                    ).to_dict()
+                )
+                await ws.close(code=1011)
+                return
             agent.set_session_controls(
                 session_id,
                 permission_mode=requested_permission_mode,
@@ -2338,6 +2372,7 @@ async def _handle_ws(ws: WebSocket) -> None:
             )
             init_data = agent.session_data[session_id]
             init_data["exists"] = exists
+            init_data["conversation_history"] = conversation_history
             if project is not None:
                 init_data["project"] = _project_dto(project)
                 init_data["template_id"] = getattr(project, "template_id", None)

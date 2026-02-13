@@ -317,6 +317,13 @@ class Message:
         }
 
 
+class ChatHistoryPersistenceError(RuntimeError):
+    def __init__(self, *, code: str, detail: str):
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
 class Agent:
     def __init__(self):
         # map of session_id -> {sandbox_id, url, ...}
@@ -479,6 +486,214 @@ class Agent:
         history.append({"role": role, "text": t[:4000]})
         if len(history) > 250:
             del history[: len(history) - 250]
+
+    def _normalize_history_role(self, raw: Any) -> str | None:
+        role = str(raw or "").strip().lower()
+        if role in ("human", "user"):
+            return "user"
+        if role in ("ai", "assistant"):
+            return "assistant"
+        return None
+
+    def _message_content_to_text(self, content: Any) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                text = self._message_content_to_text(item)
+                if text:
+                    parts.append(text)
+            return "".join(parts)
+        if isinstance(content, dict):
+            text = content.get("text")
+            if isinstance(text, str):
+                return text
+            nested = content.get("content")
+            return self._message_content_to_text(nested)
+        text_attr = getattr(content, "text", None)
+        if isinstance(text_attr, str):
+            return text_attr
+        nested_attr = getattr(content, "content", None)
+        return self._message_content_to_text(nested_attr)
+
+    def _strip_thinking_prefix(self, text: str) -> str:
+        out = text.strip()
+        if not out.startswith("Thinking level:"):
+            return out
+        sep = "\n\n"
+        idx = out.find(sep)
+        if idx < 0:
+            return out
+        return out[idx + len(sep) :].strip()
+
+    def _sanitize_user_history_text(self, text: str) -> str:
+        out = self._strip_thinking_prefix(text)
+
+        workspace_prefix = "Workspace instruction context:\n"
+        workspace_marker = "\n\nUser request:\n"
+        if out.startswith(workspace_prefix):
+            idx = out.rfind(workspace_marker)
+            if idx >= 0:
+                out = out[idx + len(workspace_marker) :].strip()
+
+        out = self._strip_thinking_prefix(out)
+
+        compact_prefix = "Compacted conversation context:\n"
+        compact_marker = "\n\nCurrent request:\n"
+        if out.startswith(compact_prefix):
+            idx = out.rfind(compact_marker)
+            if idx >= 0:
+                out = out[idx + len(compact_marker) :].strip()
+
+        return self._strip_thinking_prefix(out)
+
+    def _is_internal_self_heal_prompt(self, text: str) -> bool:
+        t = text.strip()
+        if "Please fix the cause, then make QA pass." not in t:
+            return False
+        return t.startswith("QA failed on `") or t.startswith(
+            "QA failed, but no command output was captured."
+        )
+
+    def _history_item_role_text(self, item: Any) -> tuple[str, str] | None:
+        role_raw: Any = None
+        content: Any = None
+
+        if isinstance(item, tuple) and len(item) >= 2:
+            role_raw = item[0]
+            content = item[1]
+        elif isinstance(item, dict):
+            role_raw = item.get("role") or item.get("type")
+            content = item.get("content")
+            if content is None and isinstance(item.get("text"), str):
+                content = item.get("text")
+        else:
+            role_raw = getattr(item, "role", None) or getattr(item, "type", None)
+            content = getattr(item, "content", None)
+
+        role = self._normalize_history_role(role_raw)
+        if role is None:
+            return None
+
+        text = self._message_content_to_text(content).strip()
+        if not text:
+            return None
+        if role == "user":
+            text = self._sanitize_user_history_text(text)
+            if not text or self._is_internal_self_heal_prompt(text):
+                return None
+        return role, text[:4000]
+
+    def _normalize_conversation_history(
+        self, items: list[Any]
+    ) -> list[dict[str, str]]:
+        out: list[dict[str, str]] = []
+        for item in items:
+            parsed = self._history_item_role_text(item)
+            if parsed is None:
+                continue
+            role, text = parsed
+            out.append({"role": role, "text": text})
+        if len(out) > 250:
+            out = out[-250:]
+        return out
+
+    def _set_conversation_history(
+        self, session_id: str, history: list[dict[str, str]]
+    ) -> None:
+        init_data = self.session_data.get(session_id)
+        if not isinstance(init_data, dict):
+            init_data = {}
+            self.session_data[session_id] = init_data
+        init_data["_conversation_history"] = history[-250:]
+
+    def _state_values_from_snapshot(self, snapshot: Any) -> dict[str, Any]:
+        if isinstance(snapshot, dict):
+            values = snapshot.get("values")
+            if isinstance(values, dict):
+                return values
+            return snapshot
+        values = getattr(snapshot, "values", None)
+        if isinstance(values, dict):
+            return values
+        return {}
+
+    async def _controller_state_snapshot(self, session_id: str) -> Any:
+        if self._deep_controller is None:
+            return None
+        config: dict[str, Any] = {
+            "configurable": {"thread_id": session_id, "checkpoint_ns": "controller"}
+        }
+        controller = self._deep_controller
+
+        aget_state = getattr(controller, "aget_state", None)
+        if callable(aget_state):
+            try:
+                return await aget_state(config=config)
+            except TypeError:
+                return await aget_state(config)
+
+        get_state = getattr(controller, "get_state", None)
+        if callable(get_state):
+            def _call_get_state():
+                try:
+                    return get_state(config=config)
+                except TypeError:
+                    return get_state(config)
+
+            return await asyncio.to_thread(_call_get_state)
+
+        return None
+
+    async def _restore_conversation_history_from_checkpoint(
+        self, session_id: str
+    ) -> list[dict[str, str]]:
+        snapshot = await self._controller_state_snapshot(session_id)
+        values = self._state_values_from_snapshot(snapshot)
+        raw_messages = values.get("messages")
+        if not isinstance(raw_messages, list):
+            return []
+        return self._normalize_conversation_history(raw_messages)
+
+    async def ensure_ws_chat_history_ready(
+        self, session_id: str
+    ) -> list[dict[str, str]]:
+        checkpointer = await self._get_langgraph_checkpointer()
+        if checkpointer is None:
+            raise ChatHistoryPersistenceError(
+                code="chat_history_persistence_required",
+                detail=(
+                    "Chat history persistence is required for this workspace. "
+                    "Configure AMICABLE_LANGGRAPH_DATABASE_URL and ensure "
+                    "langgraph-checkpoint-postgres is installed."
+                ),
+            )
+
+        history = self._normalize_conversation_history(
+            self._conversation_history(session_id)
+        )
+        if history:
+            self._set_conversation_history(session_id, history)
+            return history[-20:]
+
+        try:
+            await self._ensure_deep_agent()
+            restored = await self._restore_conversation_history_from_checkpoint(
+                session_id
+            )
+        except ChatHistoryPersistenceError:
+            raise
+        except Exception as exc:
+            raise ChatHistoryPersistenceError(
+                code="chat_history_restore_failed",
+                detail=f"Failed to restore persisted chat history: {exc}",
+            ) from exc
+
+        self._set_conversation_history(session_id, restored)
+        return restored[-20:]
 
     def _compose_workspace_instruction_context(self, session_id: str) -> str:
         if self._session_manager is None:

@@ -63,12 +63,18 @@ export interface RuntimeErrorPayload {
   extra?: JsonObject;
 }
 
+export interface ConversationHistoryEntry {
+  role: "user" | "assistant";
+  text: string;
+}
+
 export type MessageData = JsonObject & {
   text?: string;
   sender?: Sender;
   isStreaming?: boolean;
   error?: RuntimeErrorPayload | unknown;
   content_blocks?: JsonObject[];
+  conversation_history?: ConversationHistoryEntry[];
 
   // Optional: associate trace events with the assistant message they belong to.
   // (Backend may omit this; frontend can best-effort infer in that case.)
