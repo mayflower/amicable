@@ -2392,8 +2392,8 @@ async def _handle_ws(ws: WebSocket) -> None:
 
                         client = hasura_client_from_env()
                         release_project_lock(client, project_id=sess_id, user_sub=u_sub)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("Failed to release lock for session %s: %s", sess_id, exc)
 
                 # Run lock release in background to avoid blocking
                 asyncio.create_task(asyncio.to_thread(_release_lock_on_disconnect))
@@ -2526,7 +2526,19 @@ async def _handle_ws(ws: WebSocket) -> None:
                             pass
                         _ws_session_map.pop(other_ws, None)
 
-            lock_status, lock_info = await asyncio.to_thread(_check_and_acquire_lock)
+            try:
+                lock_status, lock_info = await asyncio.to_thread(_check_and_acquire_lock)
+            except Exception as exc:
+                logger.exception("Lock acquisition failed for session %s: %s", session_id, exc)
+                await ws.send_json(
+                    Message.new(
+                        MessageType.ERROR,
+                        {"code": "lock_error", "error": "Failed to check session lock"},
+                        session_id=session_id,
+                    ).to_dict()
+                )
+                await ws.close(code=1011)
+                return
             if lock_status == "locked":
                 await ws.send_json(
                     Message.new(

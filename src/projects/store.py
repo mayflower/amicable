@@ -5,6 +5,7 @@ import re
 import threading
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -63,6 +64,7 @@ def ensure_projects_schema(client: HasuraClient) -> None:
               gitlab_path text NULL,
               gitlab_web_url text NULL,
               locked_by_sub text NULL,
+              locked_by_email text NULL,
               locked_at timestamptz NULL,
               created_at timestamptz NOT NULL DEFAULT now(),
               updated_at timestamptz NOT NULL DEFAULT now(),
@@ -80,6 +82,8 @@ def ensure_projects_schema(client: HasuraClient) -> None:
               ADD COLUMN IF NOT EXISTS gitlab_web_url text NULL;
             ALTER TABLE amicable_meta.projects
               ADD COLUMN IF NOT EXISTS locked_by_sub text NULL;
+            ALTER TABLE amicable_meta.projects
+              ADD COLUMN IF NOT EXISTS locked_by_email text NULL;
             ALTER TABLE amicable_meta.projects
               ADD COLUMN IF NOT EXISTS locked_at timestamptz NULL;
 
@@ -475,7 +479,7 @@ def set_project_slug(
           AND EXISTS (
             SELECT 1 FROM amicable_meta.project_members pm
             WHERE pm.project_id = p.project_id
-              AND (pm.user_sub = {_sql_str(owner.sub)} OR pm.user_email = {_sql_str(owner.email)})
+              AND (pm.user_sub = {_sql_str(owner.sub)} OR pm.user_email = {_sql_str(owner.email.lower())})
           );
         """.strip()
     )
@@ -507,7 +511,7 @@ def set_gitlab_metadata(
           AND EXISTS (
             SELECT 1 FROM amicable_meta.project_members pm
             WHERE pm.project_id = p.project_id
-              AND (pm.user_sub = {_sql_str(owner.sub)} OR pm.user_email = {_sql_str(owner.email)})
+              AND (pm.user_sub = {_sql_str(owner.sub)} OR pm.user_email = {_sql_str(owner.email.lower())})
           );
         """.strip()
     )
@@ -784,6 +788,7 @@ def add_project_member(
         user_sub=user_sub,
         user_email=user_email,
         added_by_sub=added_by_sub,
+        added_at=datetime.now(tz=timezone.utc).isoformat(),
     )
 
 
@@ -875,7 +880,7 @@ def get_project_lock(client: HasuraClient, *, project_id: str) -> ProjectLock | 
     ensure_projects_schema(client)
     res = client.run_sql(
         f"""
-        SELECT locked_by_sub, locked_at
+        SELECT locked_by_sub, locked_by_email, locked_at
         FROM amicable_meta.projects
         WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL AND locked_by_sub IS NOT NULL
         LIMIT 1;
@@ -886,21 +891,10 @@ def get_project_lock(client: HasuraClient, *, project_id: str) -> ProjectLock | 
     if not rows or not rows[0].get("locked_by_sub"):
         return None
     r = rows[0]
-    # Get email from members table
-    email_res = client.run_sql(
-        f"""
-        SELECT user_email FROM amicable_meta.project_members
-        WHERE project_id = {_sql_str(project_id)} AND user_sub = {_sql_str(str(r["locked_by_sub"]))}
-        LIMIT 1;
-        """.strip(),
-        read_only=True,
-    )
-    email_rows = _tuples_to_dicts(email_res)
-    email = str(email_rows[0]["user_email"]) if email_rows else ""
     return ProjectLock(
         project_id=project_id,
         locked_by_sub=str(r["locked_by_sub"]),
-        locked_by_email=email,
+        locked_by_email=str(r.get("locked_by_email") or ""),
         locked_at=str(r.get("locked_at") or ""),
     )
 
@@ -922,7 +916,8 @@ def acquire_project_lock(
         client.run_sql(
             f"""
             UPDATE amicable_meta.projects
-            SET locked_by_sub = {_sql_str(user_sub)}, locked_at = now(), updated_at = now()
+            SET locked_by_sub = {_sql_str(user_sub)}, locked_by_email = {_sql_str(user_email)},
+                locked_at = now(), updated_at = now()
             WHERE project_id = {_sql_str(project_id)} AND deleted_at IS NULL;
             """.strip()
         )
@@ -931,7 +926,8 @@ def acquire_project_lock(
         client.run_sql(
             f"""
             UPDATE amicable_meta.projects
-            SET locked_by_sub = {_sql_str(user_sub)}, locked_at = now(), updated_at = now()
+            SET locked_by_sub = {_sql_str(user_sub)}, locked_by_email = {_sql_str(user_email)},
+                locked_at = now(), updated_at = now()
             WHERE project_id = {_sql_str(project_id)}
               AND deleted_at IS NULL
               AND (locked_by_sub IS NULL OR locked_by_sub = {_sql_str(user_sub)});
@@ -958,7 +954,7 @@ def release_project_lock(
     client.run_sql(
         f"""
         UPDATE amicable_meta.projects
-        SET locked_by_sub = NULL, locked_at = NULL, updated_at = now()
+        SET locked_by_sub = NULL, locked_by_email = NULL, locked_at = NULL, updated_at = now()
         WHERE project_id = {_sql_str(project_id)} AND locked_by_sub = {_sql_str(user_sub)} AND deleted_at IS NULL;
         """.strip()
     )

@@ -7,6 +7,7 @@ import {
   Play,
   RotateCcw,
   TabletIcon,
+  Users,
   X,
 } from "lucide-react";
 import {
@@ -21,6 +22,7 @@ import {
   type RuntimeErrorPayload,
 } from "../../types/messages";
 import { ProjectLockedModal } from "@/components/ProjectLockedModal";
+import { ProjectMembers } from "@/components/ProjectMembers";
 import { SessionClaimedModal } from "@/components/SessionClaimedModal";
 import {
   useCallback,
@@ -229,6 +231,7 @@ const Create = () => {
   const [sessionClaimed, setSessionClaimed] = useState<{
     byEmail?: string;
   } | null>(null);
+  const [showMembers, setShowMembers] = useState(false);
 
   type ToolRun = {
     runId: string;
@@ -1097,7 +1100,7 @@ const Create = () => {
     return combined;
   }, [messages, toolRunsByAssistantMsgId, reasoningByAssistantMsgId, resolvedSessionId]);
 
-  const { isConnecting, isConnected, error, connect, send } = useMessageBus({
+  const { isConnecting, isConnected, error, connect, connectWithExtra, send } = useMessageBus({
     wsUrl: AGENT_CONFIG.WS_URL,
     sessionId: resolvedSessionId || undefined,
     handlers: messageHandlers,
@@ -1161,11 +1164,12 @@ const Create = () => {
   }, [isChatResizing, chatWidth]);
 
   const handleTakeOverSession = useCallback(() => {
-    // Reconnect with force=true to take over the session
     setProjectLockedInfo(null);
-    // Send INIT with force_claim to take over the session
-    send(MessageType.INIT, { force_claim: true });
-  }, [send]);
+    // Reconnect with force_claim in the INIT payload to take over the session
+    connectWithExtra({ force_claim: true }).catch((e) =>
+      console.error("Force-claim reconnect failed:", e)
+    );
+  }, [connectWithExtra]);
 
   const handleGoBackToProjects = useCallback(() => {
     navigate("/");
@@ -2397,10 +2401,32 @@ const Create = () => {
               ) : null}
             </div>
           </div>
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-end gap-2">
+            {projectInfo && (
+              <button
+                type="button"
+                onClick={() => setShowMembers((v) => !v)}
+                className={cn(
+                  "p-1.5 rounded-md transition-colors",
+                  showMembers
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                )}
+                title="Share project"
+              >
+                <Users size={16} />
+              </button>
+            )}
             <AgentAuthStatus />
           </div>
         </div>
+
+        {showMembers && projectInfo && (
+          <ProjectMembers
+            projectId={projectInfo.project_id}
+            className="border-b border-border pb-4"
+          />
+        )}
 
         <div className="flex flex-col min-h-0 flex-1">
           <div

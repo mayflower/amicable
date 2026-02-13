@@ -20,6 +20,7 @@ interface UseMessageBusReturn {
   isConnected: boolean;
   error: string | null;
   connect: () => Promise<void>;
+  connectWithExtra: (extra: Record<string, unknown>) => Promise<void>;
   disconnect: () => void;
   send: (type: MessageType, payload: Record<string, unknown>) => void;
 }
@@ -116,7 +117,7 @@ export const useMessageBus = ({
     };
   }, []);
 
-  const connect = useCallback(async () => {
+  const connectInner = useCallback(async (initExtra?: Record<string, unknown>) => {
     if (!messageBusRef.current) {
       throw new Error("MessageBus not initialized");
     }
@@ -134,7 +135,8 @@ export const useMessageBus = ({
       prevParams.wsUrl === nextParams.wsUrl &&
       prevParams.sessionId === nextParams.sessionId;
 
-    if (isConnected && webSocketRef.current && sameParams) {
+    // Skip "already connected" check when initExtra is provided (force reconnect)
+    if (!initExtra && isConnected && webSocketRef.current && sameParams) {
       console.log("Already connected with same parameters, skipping...");
       return;
     }
@@ -158,7 +160,8 @@ export const useMessageBus = ({
       webSocketRef.current = createWebSocketBus(
         wsUrl,
         messageBusRef.current,
-        sessionId
+        sessionId,
+        initExtra
       );
       lastConnectParamsRef.current = nextParams;
       await webSocketRef.current.connect();
@@ -170,6 +173,14 @@ export const useMessageBus = ({
       setError(err instanceof Error ? err.message : "Failed to connect");
     }
   }, [wsUrl, sessionId, isConnected]);
+
+  const connect = useCallback(async () => {
+    await connectInner();
+  }, [connectInner]);
+
+  const connectWithExtra = useCallback(async (extra: Record<string, unknown>) => {
+    await connectInner(extra);
+  }, [connectInner]);
 
   const disconnect = useCallback(() => {
     if (webSocketRef.current) {
@@ -228,6 +239,7 @@ export const useMessageBus = ({
     isConnected,
     error,
     connect,
+    connectWithExtra,
     disconnect,
     send,
   };

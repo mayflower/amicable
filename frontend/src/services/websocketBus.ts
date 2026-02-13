@@ -9,6 +9,7 @@ export interface WebSocketBusConfig {
   url: string;
   messageBus: MessageBus;
   sessionId?: string;
+  initExtra?: Record<string, unknown>;
 }
 
 export class WebSocketBus {
@@ -83,11 +84,14 @@ export class WebSocketBus {
         this.reconnectAttempts = 0;
         this.config.messageBus.setConnected(true);
 
-        const initData = this.config.sessionId
-          ? { session_id: this.config.sessionId }
-          : {};
+        const initData = {
+          ...(this.config.sessionId ? { session_id: this.config.sessionId } : {}),
+          ...this.config.initExtra,
+        };
         console.log("Sending INIT message with session_id:", this.config.sessionId);
         this.sendMessage(createMessage(MessageType.INIT, initData));
+        // Clear initExtra after first use so reconnects don't replay it
+        this.config.initExtra = undefined;
 
         if (!settled) {
           settled = true;
@@ -110,6 +114,7 @@ export class WebSocketBus {
 
         if (
           event.code !== 1000 &&
+          event.code !== 1008 && // Don't auto-reconnect on policy violations (e.g. project_locked)
           this.reconnectAttempts < this.maxReconnectAttempts
         ) {
           this.scheduleReconnect();
@@ -238,7 +243,8 @@ export class WebSocketBus {
 export const createWebSocketBus = (
   url: string,
   messageBus: MessageBus,
-  sessionId?: string
+  sessionId?: string,
+  initExtra?: Record<string, unknown>
 ): WebSocketBus => {
-  return new WebSocketBus({ url, messageBus, sessionId });
+  return new WebSocketBus({ url, messageBus, sessionId, initExtra });
 };

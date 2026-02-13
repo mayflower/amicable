@@ -61,13 +61,13 @@ class FakeHasuraClient:
                     return {
                         "result_type": "TuplesOk",
                         "result": [
-                            ["locked_by_sub", "locked_at"],
-                            [row["locked_by_sub"], row.get("locked_at")],
+                            ["locked_by_sub", "locked_by_email", "locked_at"],
+                            [row["locked_by_sub"], row.get("locked_by_email", ""), row.get("locked_at")],
                         ],
                     }
                 return {
                     "result_type": "TuplesOk",
-                    "result": [["locked_by_sub", "locked_at"]],
+                    "result": [["locked_by_sub", "locked_by_email", "locked_at"]],
                 }
 
         # UPDATE lock (acquire/release) - check for "set locked_by_sub"
@@ -86,14 +86,19 @@ class FakeHasuraClient:
                         )
                         if sub_match and row.get("locked_by_sub") == sub_match.group(1):
                             row["locked_by_sub"] = None
+                            row["locked_by_email"] = None
                             row["locked_at"] = None
                     else:
-                        # Acquire - extract the new user_sub
+                        # Acquire - extract the new user_sub and email
                         sub_match = re.search(
                             r"set locked_by_sub\s*=\s*'([^']+)'", sql, flags=re.I
                         )
+                        email_match = re.search(
+                            r"locked_by_email\s*=\s*'([^']+)'", sql, flags=re.I
+                        )
                         if sub_match:
                             new_sub = sub_match.group(1)
+                            new_email = email_match.group(1) if email_match else ""
                             # Check for atomic conditional update pattern:
                             # (locked_by_sub IS NULL OR locked_by_sub = 'user')
                             if "locked_by_sub is null or locked_by_sub" in sql_l:
@@ -101,11 +106,13 @@ class FakeHasuraClient:
                                 current_holder = row.get("locked_by_sub")
                                 if current_holder is None or current_holder == new_sub:
                                     row["locked_by_sub"] = new_sub
+                                    row["locked_by_email"] = new_email
                                     row["locked_at"] = "now"
                                 # else: don't update (someone else holds it)
                             else:
                                 # Unconditional (force) acquire
                                 row["locked_by_sub"] = new_sub
+                                row["locked_by_email"] = new_email
                                 row["locked_at"] = "now"
             return {"result_type": "CommandOk", "result": []}
 
@@ -455,9 +462,19 @@ class FakeHasuraClient:
         if sql_l.startswith("delete from amicable_meta.project_members"):
             pid_match = re.search(r"where project_id\s*=\s*'([^']+)'", sql, flags=re.I)
             sub_match = re.search(r"and user_sub\s*=\s*'([^']+)'", sql, flags=re.I)
+            email_match = re.search(r"and user_email\s*=\s*'([^']+)'", sql, flags=re.I)
             if pid_match and sub_match:
                 key = (pid_match.group(1), sub_match.group(1))
                 self.members.pop(key, None)
+            elif pid_match and email_match:
+                target_pid = pid_match.group(1)
+                target_email = email_match.group(1).lower()
+                to_remove = [
+                    k for k, v in self.members.items()
+                    if v["project_id"] == target_pid and v["user_email"] == target_email
+                ]
+                for k in to_remove:
+                    self.members.pop(k, None)
             return {"result_type": "CommandOk", "result": []}
 
         raise AssertionError(f"Unhandled SQL in test fake: {sql}")
@@ -588,7 +605,6 @@ def test_project_locking() -> None:
     """Test session locking prevents concurrent access."""
     c = FakeHasuraClient()
     owner1 = ProjectOwner(sub="u1", email="u1@example.com")
-    owner2 = ProjectOwner(sub="u2", email="u2@example.com")
 
     p = create_project(c, owner=owner1, name="Lockable")
 
