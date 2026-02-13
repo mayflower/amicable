@@ -217,11 +217,10 @@ const TableNodeCard = ({ data }: { data: TableNodeData }) => {
   const selected = data.selectedTable === table.name;
   return (
     <div
-      className="rounded-md border bg-white shadow-md min-w-[220px]"
-      style={{ borderColor: selected ? "#2563eb" : "#d1d5db" }}
+      className={`rounded-md border shadow-md min-w-[220px] bg-white dark:bg-slate-800 ${selected ? "border-blue-600" : "border-gray-300 dark:border-slate-600"}`}
     >
       <div
-        className="px-3 py-2 border-b bg-gray-100 text-sm font-semibold cursor-pointer"
+        className="px-3 py-2 border-b bg-gray-100 dark:bg-slate-700 text-sm font-semibold cursor-pointer"
         onClick={() => data.onSelect(table.name)}
       >
         {table.label}
@@ -784,14 +783,14 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
         </div>
       </div>
 
-      <div className="border-b px-3 py-3 bg-emerald-50/60">
+      <div className="border-b px-3 py-3 bg-emerald-50/60 dark:bg-emerald-950/40">
         <div className="text-xs font-semibold mb-2">Describe the data your app needs</div>
         <div className="grid grid-cols-[1fr_auto_auto] gap-2 items-start">
           <Textarea
             value={intentText}
             onChange={(e) => setIntentText(e.target.value)}
             placeholder="Example: I need customers, orders, and each order should belong to a customer."
-            className="min-h-[72px] bg-white"
+            className="min-h-[72px] bg-white dark:bg-slate-800"
           />
           <Button size="sm" onClick={() => void applyIntent()} disabled={askingAi || !intentText.trim()}>
             {askingAi ? "Thinking..." : "Ask AI"}
@@ -819,14 +818,14 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
       </div>
 
       {error ? (
-        <div className="border-b px-3 py-2 text-sm text-red-700 bg-red-50">Error: {error}</div>
+        <div className="border-b px-3 py-2 text-sm text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/40">Error: {error}</div>
       ) : null}
 
       {assistantMessage || changeCards.length ? (
-        <div className="border-b px-3 py-3 bg-white">
+        <div className="border-b px-3 py-3 bg-white dark:bg-slate-900">
           {assistantMessage ? <div className="text-sm mb-2">{assistantMessage}</div> : null}
           {needsClarification && clarificationQuestion ? (
-            <div className="mb-2 text-sm text-amber-800 bg-amber-50 border rounded px-2 py-1">
+            <div className="mb-2 text-sm text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border rounded px-2 py-1">
               {clarificationQuestion}
             </div>
           ) : null}
@@ -850,7 +849,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
           {changeCards.length ? (
             <div className="grid md:grid-cols-2 gap-2">
               {changeCards.map((card) => (
-                <div key={card.id} className="border rounded p-2 bg-slate-50">
+                <div key={card.id} className="border rounded p-2 bg-slate-50 dark:bg-slate-800">
                   <div className="text-xs font-semibold">{card.title}</div>
                   <div className="text-xs text-muted-foreground">{card.description}</div>
                 </div>
@@ -868,7 +867,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
             placeholder="Search tables"
           />
 
-          <div className="border rounded p-2 mt-3 bg-blue-50">
+          <div className="border rounded p-2 mt-3 bg-blue-50 dark:bg-blue-950/40">
             <div className="text-xs font-semibold mb-1">
               {draft.tables.length ? "Create another table" : "Create your first table"}
             </div>
@@ -888,7 +887,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
           </div>
 
           {!draft.tables.length ? (
-            <div className="border rounded p-2 mt-3 bg-emerald-50">
+            <div className="border rounded p-2 mt-3 bg-emerald-50 dark:bg-emerald-950/40">
               <div className="text-xs font-semibold mb-1">Quick walkthrough</div>
               <ol className="text-[11px] list-decimal pl-4 space-y-1">
                 <li>Describe your data in the AI box above.</li>
@@ -902,11 +901,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
             {filteredTables.map((t) => (
               <div
                 key={t.name}
-                className="border rounded p-2 cursor-pointer"
-                style={{
-                  borderColor: selectedTable === t.name ? "#2563eb" : "#d1d5db",
-                  background: selectedTable === t.name ? "#eff6ff" : "transparent",
-                }}
+                className={`border rounded p-2 cursor-pointer ${selectedTable === t.name ? "bg-blue-50 dark:bg-blue-950/40 border-blue-600" : "border-gray-300 dark:border-slate-600"}`}
                 onClick={() => {
                   setSelectedRelationship(null);
                   setSelectedTable(t.name);
@@ -930,7 +925,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
           </div>
 
           {warnings.length ? (
-            <div className="mt-4 border rounded p-2 text-xs bg-amber-50">
+            <div className="mt-4 border rounded p-2 text-xs bg-amber-50 dark:bg-amber-950/40 dark:text-amber-200">
               <div className="font-semibold mb-1">Notes</div>
               <ul className="list-disc pl-4">
                 {warnings.map((w, idx) => (
@@ -1005,7 +1000,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
               <div className="border rounded p-2 space-y-2">
                 <div className="text-xs font-semibold">Fields</div>
                 {selectedTableObj.columns.map((c) => (
-                  <div key={`${selectedTableObj.name}:${c.name}`} className="border rounded p-2 bg-slate-50">
+                  <div key={`${selectedTableObj.name}:${c.name}`} className="border rounded p-2 bg-slate-50 dark:bg-slate-800">
                     <div className="flex gap-2 items-start">
                       <div className="flex-1">
                         <Input
@@ -1036,7 +1031,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
                   </div>
                 ))}
 
-                <div className="border rounded p-2 bg-white">
+                <div className="border rounded p-2 bg-white dark:bg-slate-800">
                   <div className="text-xs font-semibold mb-2">Add field</div>
                   <div className="grid grid-cols-2 gap-2">
                     <Input
@@ -1045,7 +1040,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
                       onChange={(e) => setNewFieldLabel(e.target.value)}
                     />
                     <select
-                      className="border rounded px-2 py-1 text-sm"
+                      className="border rounded px-2 py-1 text-sm dark:bg-slate-800 dark:border-slate-600"
                       value={newFieldPreset}
                       onChange={(e) => setNewFieldPreset(e.target.value as FieldPresetKey)}
                     >
@@ -1067,7 +1062,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
                 <label className="text-xs block">
                   Target table
                   <select
-                    className="mt-1 w-full border rounded px-2 py-1 text-sm"
+                    className="mt-1 w-full border rounded px-2 py-1 text-sm dark:bg-slate-800 dark:border-slate-600"
                     value={relationTargetTable}
                     onChange={(e) => setRelationTargetTable(e.target.value)}
                   >
@@ -1082,7 +1077,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
                 <label className="text-xs block">
                   Relationship type
                   <select
-                    className="mt-1 w-full border rounded px-2 py-1 text-sm"
+                    className="mt-1 w-full border rounded px-2 py-1 text-sm dark:bg-slate-800 dark:border-slate-600"
                     value={relationKind}
                     onChange={(e) => setRelationKind(e.target.value as RelationKind)}
                   >
@@ -1127,7 +1122,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
                   <label className="text-xs block">
                     On delete
                     <select
-                      className="mt-1 w-full border rounded px-2 py-1 text-sm"
+                      className="mt-1 w-full border rounded px-2 py-1 text-sm dark:bg-slate-800 dark:border-slate-600"
                       value={selectedRelationshipObj.on_delete || "NO ACTION"}
                       onChange={(e) => {
                         const next = e.target.value;
@@ -1148,7 +1143,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
                   <label className="text-xs block mt-2">
                     On update
                     <select
-                      className="mt-1 w-full border rounded px-2 py-1 text-sm"
+                      className="mt-1 w-full border rounded px-2 py-1 text-sm dark:bg-slate-800 dark:border-slate-600"
                       value={selectedRelationshipObj.on_update || "NO ACTION"}
                       onChange={(e) => {
                         const next = e.target.value;
@@ -1177,13 +1172,13 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
                   </div>
                   <div className="space-y-2">
                     {selectedTableObj.columns.map((c) => (
-                      <div key={`adv-${selectedTableObj.name}-${c.name}`} className="border rounded p-2 bg-slate-50">
+                      <div key={`adv-${selectedTableObj.name}-${c.name}`} className="border rounded p-2 bg-slate-50 dark:bg-slate-800">
                         <div className="text-[11px] font-mono mb-1">{c.name}</div>
                         <div className="grid grid-cols-2 gap-2">
                           <label className="text-xs block">
                             Type
                             <select
-                              className="mt-1 w-full border rounded px-2 py-1 text-sm"
+                              className="mt-1 w-full border rounded px-2 py-1 text-sm dark:bg-slate-800 dark:border-slate-600"
                               value={c.type}
                               onChange={(e) => {
                                 const next = e.target.value;

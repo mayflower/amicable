@@ -858,7 +858,7 @@ class Agent:
         config: dict[str, Any] = {
             "configurable": {"thread_id": session_id, "checkpoint_ns": "controller"},
             "metadata": {"assistant_id": session_id},
-            "recursion_limit": 150,
+            "recursion_limit": 500,
         }
 
         # Provide project/git metadata to the controller graph (best-effort).
@@ -1524,7 +1524,7 @@ class Agent:
         config: dict[str, Any] = {
             "configurable": {"thread_id": session_id, "checkpoint_ns": "controller"},
             "metadata": {"assistant_id": session_id},
-            "recursion_limit": 150,
+            "recursion_limit": 500,
         }
 
         # Provide project/git metadata to the controller graph (required for git_sync).
