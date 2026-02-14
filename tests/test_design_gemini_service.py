@@ -92,3 +92,63 @@ def test_generate_design_approaches_maps_provider_errors(monkeypatch) -> None:
                 viewport_height=800,
             )
         )
+
+
+def test_generate_design_approaches_includes_platform_and_device_context(
+    monkeypatch,
+) -> None:
+    _set_env(monkeypatch)
+    seen_prompts: list[str] = []
+
+    async def _fake_post_generate_content(**kwargs):
+        seen_prompts.append(str(kwargs.get("text_prompt") or ""))
+        model = kwargs["model"]
+        if model == "text-model":
+            return {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "text": '{"approaches":[{"title":"A","rationale":"R1","render_prompt":"P1"},{"title":"B","rationale":"R2","render_prompt":"P2"}]}'
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        return {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "inlineData": {
+                                    "mimeType": "image/png",
+                                    "data": "abcd",
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(gemini_design, "_post_generate_content", _fake_post_generate_content)
+
+    out = asyncio.run(
+        gemini_design.generate_design_approaches(
+            screenshot_base64="abcd",
+            screenshot_mime_type="image/png",
+            viewport_width=1280,
+            viewport_height=800,
+            app_context="project",
+            instruction="improve nav",
+            platform_target="Web browser layout (HTML/CSS/JS), responsive",
+            device_target="mobile",
+        )
+    )
+    assert len(out) == 2
+    merged = "\n".join(seen_prompts)
+    assert "Target platform/runtime: Web browser layout" in merged
+    assert "Target device class: mobile" in merged

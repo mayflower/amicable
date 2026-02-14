@@ -277,18 +277,23 @@ def _approach_prompt(
     viewport_height: int,
     app_context: str,
     instruction: str,
+    platform_target: str,
+    device_target: str,
 ) -> str:
     return (
         "You are a senior product designer.\n"
         "Given the current app screenshot and viewport, recommend exactly two different design approaches.\n"
         "Goal: improve usability and visual design for the current application type and expected user base.\n"
         "Preserve core information architecture.\n"
+        "The proposal must respect the target platform and device form factor.\n"
         "Return JSON only with shape:\n"
         '{ "approaches": ['
         '{"title":"...","rationale":"...","render_prompt":"..."},'
         '{"title":"...","rationale":"...","render_prompt":"..."}'
         "] }\n"
         f"Viewport: {viewport_width}x{viewport_height}\n"
+        f"Target platform/runtime: {platform_target or '<unknown>'}\n"
+        f"Target device class: {device_target or '<unknown>'}\n"
         f"Application context: {app_context or '<unknown>'}\n"
         f"User refinement: {instruction or '<none>'}\n"
         "Ensure the two approaches are meaningfully distinct."
@@ -303,11 +308,15 @@ def _render_prompt(
     viewport_width: int,
     viewport_height: int,
     app_context: str,
+    platform_target: str,
+    device_target: str,
 ) -> str:
     return (
         "Generate a redesigned UI mockup image based on the attached screenshot.\n"
         "Keep the same product purpose and plausible interaction model, but improve usability.\n"
         f"Target viewport: {viewport_width}x{viewport_height}.\n"
+        f"Target platform/runtime: {platform_target or '<unknown>'}.\n"
+        f"Target device class: {device_target or '<unknown>'}.\n"
         f"Approach title: {approach_title}\n"
         f"Approach rationale: {approach_rationale}\n"
         f"Design directive: {approach_render_prompt}\n"
@@ -324,6 +333,8 @@ async def generate_design_approaches(
     viewport_height: int,
     app_context: str = "",
     instruction: str = "",
+    platform_target: str = "",
+    device_target: str = "",
 ) -> list[DesignApproach]:
     import httpx
 
@@ -340,6 +351,8 @@ async def generate_design_approaches(
                 viewport_height=viewport_height,
                 app_context=app_context,
                 instruction=instruction,
+                platform_target=platform_target,
+                device_target=device_target,
             ),
             image_base64=screenshot_base64,
             image_mime_type=screenshot_mime_type,
@@ -360,6 +373,8 @@ async def generate_design_approaches(
                     viewport_width=viewport_width,
                     viewport_height=viewport_height,
                     app_context=app_context,
+                    platform_target=platform_target,
+                    device_target=device_target,
                 ),
                 image_base64=screenshot_base64,
                 image_mime_type=screenshot_mime_type,

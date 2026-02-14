@@ -1170,7 +1170,9 @@ def _design_viewport_dimension(
     return int(value)
 
 
-def _design_request_settings(body: dict[str, Any]) -> tuple[str, int, int, bool, str]:
+def _design_request_settings(
+    body: dict[str, Any],
+) -> tuple[str, int, int, bool, str, str]:
     path = str(body.get("path") or "/").strip() or "/"
     viewport_width = _design_viewport_dimension(
         body.get("viewport_width"), default=1280
@@ -1180,7 +1182,36 @@ def _design_request_settings(body: dict[str, Any]) -> tuple[str, int, int, bool,
     )
     full_page = bool(body.get("full_page", False))
     instruction = str(body.get("instruction") or "").strip()
-    return path, viewport_width, viewport_height, full_page, instruction
+    device_type = str(body.get("device_type") or "").strip().lower()
+    if device_type not in {"mobile", "tablet", "desktop"}:
+        device_type = "desktop"
+    return path, viewport_width, viewport_height, full_page, instruction, device_type
+
+
+def _platform_context_for_template(template_id: str | None) -> str:
+    tid = str(template_id or "").strip().lower()
+    if not tid:
+        return "Web browser layout (HTML/CSS/JS)"
+    if tid == "flutter":
+        return "Mobile app layout (Flutter)"
+    if tid in {
+        "lovable-vite",
+        "nextjs15",
+        "remix",
+        "nuxt3",
+        "sveltekit",
+    }:
+        return "Web browser layout (HTML/CSS/JS), responsive"
+    if tid in {
+        "fastapi",
+        "hono",
+        "laravel",
+        "phoenix",
+        "aspnetcore",
+        "quarkus",
+    }:
+        return "Web application layout (browser-based frontend with server runtime)"
+    return f"Platform template: {tid}"
 
 
 async def _design_capture_snapshot(
@@ -1735,9 +1766,14 @@ async def api_design_approaches(project_id: str, request: Request) -> JSONRespon
     if not isinstance(body, dict):
         body = {}
 
-    path, viewport_width, viewport_height, full_page, instruction = _design_request_settings(
-        body
-    )
+    (
+        path,
+        viewport_width,
+        viewport_height,
+        full_page,
+        instruction,
+        device_type,
+    ) = _design_request_settings(body)
 
     agent = _get_agent()
     await agent.init(
@@ -1771,6 +1807,10 @@ async def api_design_approaches(project_id: str, request: Request) -> JSONRespon
                 viewport_height=int(snap.get("height") or viewport_height),
                 app_context=str(getattr(proj, "project_prompt", "") or ""),
                 instruction=instruction,
+                platform_target=_platform_context_for_template(
+                    getattr(proj, "template_id", None)
+                ),
+                device_target=device_type,
             )
             state = set_state(
                 DesignState(
@@ -1837,6 +1877,9 @@ async def api_design_approaches_regenerate(
     height_raw = body.get("viewport_height")
     full_page = bool(body.get("full_page", False))
     instruction = str(body.get("instruction") or "").strip()
+    device_type = str(body.get("device_type") or "").strip().lower()
+    if device_type not in {"mobile", "tablet", "desktop"}:
+        device_type = "desktop"
 
     path = str(path_raw).strip() if isinstance(path_raw, str) and path_raw else current.path
     viewport_width = _design_viewport_dimension(
@@ -1881,6 +1924,10 @@ async def api_design_approaches_regenerate(
                 viewport_height=int(snap.get("height") or viewport_height),
                 app_context=str(getattr(proj, "project_prompt", "") or ""),
                 instruction=final_instruction,
+                platform_target=_platform_context_for_template(
+                    getattr(proj, "template_id", None)
+                ),
+                device_target=device_type,
             )
             state = set_state(
                 DesignState(
@@ -1981,9 +2028,14 @@ async def api_design_snapshot(project_id: str, request: Request) -> JSONResponse
     if not isinstance(body, dict):
         body = {}
 
-    path, viewport_width, viewport_height, full_page, _instruction = _design_request_settings(
-        body
-    )
+    (
+        path,
+        viewport_width,
+        viewport_height,
+        full_page,
+        _instruction,
+        _device_type,
+    ) = _design_request_settings(body)
 
     agent = _get_agent()
     await agent.init(

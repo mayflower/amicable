@@ -104,6 +104,12 @@ export const DesignPane = ({
                   key={approach.approach_id}
                   className="border border-border rounded-md bg-background overflow-hidden flex flex-col"
                 >
+                  <div className="p-3 flex flex-col gap-2">
+                    <div className="font-medium text-sm">{approach.title}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {approach.rationale}
+                    </div>
+                  </div>
                   <div className="aspect-video bg-muted/20 flex items-center justify-center">
                     {approach.image_base64 ? (
                       <img
@@ -118,10 +124,6 @@ export const DesignPane = ({
                     )}
                   </div>
                   <div className="p-3 flex flex-col gap-2">
-                    <div className="font-medium text-sm">{approach.title}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {approach.rationale}
-                    </div>
                     <Button
                       onClick={() => onAccept(approach.approach_id)}
                       disabled={loading || iterating}
@@ -139,4 +141,3 @@ export const DesignPane = ({
     </div>
   );
 };
-

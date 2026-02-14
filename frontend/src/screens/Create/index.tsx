@@ -600,6 +600,7 @@ const Create = () => {
           viewport_height: currentViewport.height,
           full_page: false,
           instruction: (args.instruction || "").trim() || undefined,
+          device_type: selectedDevice,
         };
         const out =
           args.forceCreate || !designStateRef.current
@@ -619,6 +620,7 @@ const Create = () => {
       currentPreviewPath,
       currentViewport.width,
       currentViewport.height,
+      selectedDevice,
       apiErrorMessage,
     ]
   );
@@ -673,6 +675,7 @@ const Create = () => {
             viewport_width: currentViewport.width,
             viewport_height: currentViewport.height,
             full_page: false,
+            device_type: selectedDevice,
           });
           if (!snap.ok || !snap.image_base64) {
             throw new Error(snap.error || "Could not capture preview screenshot.");
@@ -732,6 +735,7 @@ const Create = () => {
       currentPreviewPath,
       currentViewport.width,
       currentViewport.height,
+      selectedDevice,
       waitForDesignIterationCompletion,
       syncDesignSelection,
       pushAssistantMessage,

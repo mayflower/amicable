@@ -100,6 +100,7 @@ export const designCaptureSnapshot = async (
     viewport_width?: number;
     viewport_height?: number;
     full_page?: boolean;
+    device_type?: "mobile" | "tablet" | "desktop";
   }
 ): Promise<DesignSnapshotResponse> => {
   const url = agentUrl(`/api/design/${encodeURIComponent(projectId)}/snapshot`);

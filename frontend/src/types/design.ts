@@ -39,4 +39,5 @@ export type DesignGeneratePayload = {
   viewport_height?: number;
   full_page?: boolean;
   instruction?: string;
+  device_type?: "mobile" | "tablet" | "desktop";
 };
