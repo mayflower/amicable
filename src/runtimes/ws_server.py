@@ -236,6 +236,47 @@ def _sanitize_user_content_blocks(
     return (out or None), None
 
 
+def _sanitize_user_ui_context(raw_ctx: Any) -> dict[str, Any] | None:
+    if not isinstance(raw_ctx, dict):
+        return None
+
+    out: dict[str, Any] = {}
+
+    active_view = str(raw_ctx.get("active_view") or "").strip().lower()
+    if active_view in {"preview", "code", "database", "design"}:
+        out["active_view"] = active_view
+
+    preview_path = raw_ctx.get("preview_path")
+    if isinstance(preview_path, str) and preview_path.strip():
+        out["preview_path"] = preview_path.strip()[:200]
+
+    device_type = raw_ctx.get("device_type")
+    if isinstance(device_type, str) and device_type.strip():
+        out["device_type"] = device_type.strip()[:40]
+
+    selected_design_approach_id = raw_ctx.get("selected_design_approach_id")
+    if (
+        isinstance(selected_design_approach_id, str)
+        and selected_design_approach_id.strip()
+    ):
+        out["selected_design_approach_id"] = selected_design_approach_id.strip()[:120]
+
+    for key in (
+        "viewport_width",
+        "viewport_height",
+        "design_total_iterations",
+        "design_iteration",
+    ):
+        value = raw_ctx.get(key)
+        if isinstance(value, (int, float)):
+            out[key] = int(value)
+
+    if isinstance(raw_ctx.get("database_editor"), bool):
+        out["database_editor"] = bool(raw_ctx.get("database_editor"))
+
+    return out or None
+
+
 def _get_owner_from_request(request: Request) -> tuple[str, str]:
     """Return (sub, email) for project ownership checks."""
     mode = _auth_mode()
@@ -2956,6 +2997,7 @@ async def _handle_ws(ws: WebSocket) -> None:
             session_id = data.get("session_id")
             text_raw = data.get("text")
             text = text_raw if isinstance(text_raw, str) else ""
+            ui_context = _sanitize_user_ui_context(data.get("ui_context"))
             user_blocks, blocks_err = _sanitize_user_content_blocks(
                 data.get("content_blocks")
             )
@@ -3021,6 +3063,7 @@ async def _handle_ws(ws: WebSocket) -> None:
                     session_id=str(session_id),
                     feedback=text,
                     user_content_blocks=user_blocks,
+                    ui_context=ui_context,
                 ):
                     await ws.send_json(out)
             continue

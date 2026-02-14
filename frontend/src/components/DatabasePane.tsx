@@ -13,11 +13,10 @@ import {
   type Node,
   type NodeMouseHandler,
 } from "@xyflow/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   dbSchemaApply,
   dbSchemaGet,
@@ -46,12 +45,6 @@ const TYPE_OPTIONS = [
 ] as const;
 
 const FK_RULES = ["NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"] as const;
-
-const SUGGESTED_INTENTS = [
-  "Add customers and orders",
-  "Track order status",
-  "Link orders to customers",
-] as const;
 
 const FIELD_PRESETS = [
   { key: "name", label: "Name", type: "text", nullable: false as const },
@@ -259,7 +252,17 @@ const TableNodeCard = ({ data }: { data: TableNodeData }) => {
   );
 };
 
-export const DatabasePane = ({ projectId }: { projectId: string }) => {
+type DbChatPrompt = { id: number; text: string };
+
+export const DatabasePane = ({
+  projectId,
+  chatPrompt,
+  onChatReply,
+}: {
+  projectId: string;
+  chatPrompt?: DbChatPrompt | null;
+  onChatReply?: (text: string) => void;
+}) => {
   const [loading, setLoading] = useState(true);
   const [askingAi, setAskingAi] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -272,7 +275,6 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [selectedRelationship, setSelectedRelationship] = useState<string | null>(null);
 
-  const [intentText, setIntentText] = useState("");
   const [assistantMessage, setAssistantMessage] = useState("");
   const [changeCards, setChangeCards] = useState<CitizenChangeCard[]>([]);
   const [needsClarification, setNeedsClarification] = useState(false);
@@ -293,6 +295,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
   const [newFieldPreset, setNewFieldPreset] = useState<FieldPresetKey>("custom");
   const [relationTargetTable, setRelationTargetTable] = useState("");
   const [relationKind, setRelationKind] = useState<RelationKind>("one_to_many");
+  const handledChatPromptIdRef = useRef<number | null>(null);
 
   const loadSchema = useCallback(async () => {
     setLoading(true);
@@ -619,11 +622,14 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
   );
 
   const applyIntent = useCallback(
-    async (forcedIntent?: string) => {
+    async (
+      forcedIntent: string,
+      opts?: { fromChat?: boolean }
+    ) => {
       if (!draft) return;
-      const text = (forcedIntent ?? intentText).trim();
+      const text = forcedIntent.trim();
       if (!text) {
-        setStatus("Describe what data your app needs first.");
+        setStatus("Please describe the data change in chat.");
         return;
       }
 
@@ -651,21 +657,51 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
           if (prev && res.draft.tables.some((t) => t.name === prev)) return prev;
           return res.draft.tables[0]?.name || null;
         });
+        if (opts?.fromChat && onChatReply) {
+          const highlights = (res.change_cards || [])
+            .slice(0, 3)
+            .map((card) => `- ${card.title}: ${card.description}`);
+          const reply = [
+            res.assistant_message || "Updated the database draft.",
+            highlights.length ? `\nPlanned changes:\n${highlights.join("\n")}` : "",
+            res.needs_clarification && res.clarification_question
+              ? `\nNeed input: ${res.clarification_question}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+            .trim();
+          onChatReply(reply);
+        }
       } catch (e: unknown) {
         const err = e as { status?: number; data?: unknown };
         const data = asRecord(err?.data);
         if (err?.status === 409 && data?.error === "version_conflict") {
           setStatus("Schema changed remotely; reloading.");
           await loadSchema();
+          if (opts?.fromChat && onChatReply) {
+            onChatReply("The schema changed remotely, so I reloaded it. Please send the request again.");
+          }
           return;
         }
         setError(e instanceof Error ? e.message : "intent_failed");
+        if (opts?.fromChat && onChatReply) {
+          onChatReply("I couldn't update the database draft from that request.");
+        }
       } finally {
         setAskingAi(false);
       }
     },
-    [draft, intentText, loadSchema, projectId, schemaVersion]
+    [draft, loadSchema, onChatReply, projectId, schemaVersion]
   );
+
+  useEffect(() => {
+    if (!chatPrompt) return;
+    if (!chatPrompt.text.trim()) return;
+    if (handledChatPromptIdRef.current === chatPrompt.id) return;
+    handledChatPromptIdRef.current = chatPrompt.id;
+    void applyIntent(chatPrompt.text, { fromChat: true });
+  }, [applyIntent, chatPrompt]);
 
   const runTechnicalReview = useCallback(async () => {
     if (!draft) return;
@@ -768,10 +804,16 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
       <div className="border-b px-3 py-2 flex items-center gap-3">
         <div className="text-sm font-semibold">Database</div>
         <div className="text-xs text-muted-foreground">{status || "Ready"}</div>
+        {askingAi ? (
+          <div className="text-xs text-muted-foreground">AI is updating draft...</div>
+        ) : null}
         <div className="text-xs text-muted-foreground">Last applied: {lastApplied || "Not yet"}</div>
         <div className="ml-auto flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={() => void loadSchema()}>
             Reload
+          </Button>
+          <Button size="sm" onClick={() => void runApply()} disabled={applying || askingAi}>
+            {applying ? "Applying..." : "Apply"}
           </Button>
           <Button
             size="sm"
@@ -784,36 +826,10 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
       </div>
 
       <div className="border-b px-3 py-3 bg-emerald-50/60 dark:bg-emerald-950/40">
-        <div className="text-xs font-semibold mb-2">Describe the data your app needs</div>
-        <div className="grid grid-cols-[1fr_auto_auto] gap-2 items-start">
-          <Textarea
-            value={intentText}
-            onChange={(e) => setIntentText(e.target.value)}
-            placeholder="Example: I need customers, orders, and each order should belong to a customer."
-            className="min-h-[72px] bg-white dark:bg-slate-800"
-          />
-          <Button size="sm" onClick={() => void applyIntent()} disabled={askingAi || !intentText.trim()}>
-            {askingAi ? "Thinking..." : "Ask AI"}
-          </Button>
-          <Button size="sm" onClick={() => void runApply()} disabled={applying}>
-            {applying ? "Applying..." : "Apply"}
-          </Button>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {SUGGESTED_INTENTS.map((chip) => (
-            <Button
-              key={chip}
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setIntentText(chip);
-                void applyIntent(chip);
-              }}
-              disabled={askingAi}
-            >
-              {chip}
-            </Button>
-          ))}
+        <div className="text-sm font-medium">Use chat to modify your database</div>
+        <div className="text-xs text-muted-foreground mt-1">
+          Ask in plain language in the regular chat panel, for example:
+          "Add customers and orders", "Track order status", or "Link orders to customers".
         </div>
       </div>
 
@@ -837,8 +853,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
                   size="sm"
                   variant="outline"
                   onClick={() => {
-                    setIntentText(opt.label);
-                    void applyIntent(opt.label);
+                    void applyIntent(opt.label, { fromChat: true });
                   }}
                 >
                   {opt.label}
@@ -890,7 +905,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
             <div className="border rounded p-2 mt-3 bg-emerald-50 dark:bg-emerald-950/40">
               <div className="text-xs font-semibold mb-1">Quick walkthrough</div>
               <ol className="text-[11px] list-decimal pl-4 space-y-1">
-                <li>Describe your data in the AI box above.</li>
+                <li>Describe your data using the regular chat panel.</li>
                 <li>Review the visual tables and links.</li>
                 <li>Click Apply to update your app database.</li>
               </ol>
@@ -1105,7 +1120,7 @@ export const DatabasePane = ({ projectId }: { projectId: string }) => {
           ) : (
             <div className="space-y-2 text-sm text-muted-foreground">
               <div>Select a table or relationship from the diagram.</div>
-              <div className="text-xs">Tip: Start with the AI intent box to generate your first draft.</div>
+              <div className="text-xs">Tip: Start by asking for a change in the regular chat panel.</div>
             </div>
           )}
 

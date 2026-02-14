@@ -74,6 +74,7 @@ export type MessageData = JsonObject & {
   isStreaming?: boolean;
   error?: RuntimeErrorPayload | unknown;
   content_blocks?: JsonObject[];
+  ui_context?: JsonObject;
   conversation_history?: ConversationHistoryEntry[];
 
   // Optional: associate trace events with the assistant message they belong to.

@@ -256,6 +256,10 @@ const Create = () => {
   const [designBatchStarting, setDesignBatchStarting] = useState(false);
   const [designBatchProgress, setDesignBatchProgress] = useState(0);
   const [designError, setDesignError] = useState<string | null>(null);
+  const [dbChatPrompt, setDbChatPrompt] = useState<{ id: number; text: string } | null>(
+    null
+  );
+  const dbChatPromptSeqRef = useRef(0);
   const designIterationWaiterRef = useRef<{
     resolve: () => void;
     reject: (error: Error) => void;
@@ -578,6 +582,31 @@ const Create = () => {
     [resolvedSessionId]
   );
 
+  const buildChatUiContext = useCallback((): Record<string, unknown> => {
+    const ctx: Record<string, unknown> = { active_view: mainView };
+    if (mainView === "preview" || mainView === "code" || mainView === "design") {
+      ctx.preview_path = currentPreviewPath;
+      ctx.viewport_width = currentViewport.width;
+      ctx.viewport_height = currentViewport.height;
+      ctx.device_type = selectedDevice;
+    }
+    if (mainView === "design") {
+      const st = designStateRef.current;
+      ctx.selected_design_approach_id = st?.selected_approach_id || null;
+      ctx.design_total_iterations = st?.total_iterations || 0;
+    }
+    if (mainView === "database") {
+      ctx.database_editor = true;
+    }
+    return ctx;
+  }, [
+    mainView,
+    currentPreviewPath,
+    currentViewport.width,
+    currentViewport.height,
+    selectedDevice,
+  ]);
+
   const loadDesignState = useCallback(async () => {
     if (!resolvedSessionId) return;
     try {
@@ -725,6 +754,12 @@ const Create = () => {
                 mime_type: selected.mime_type || "image/png",
               },
             ],
+            ui_context: {
+              ...buildChatUiContext(),
+              active_view: "design",
+              design_iteration: iterationNumber,
+              selected_design_approach_id: selected.approach_id,
+            },
           });
           await waitForDesignIterationCompletion();
           completed += 1;
@@ -759,6 +794,7 @@ const Create = () => {
       currentViewport.width,
       currentViewport.height,
       selectedDevice,
+      buildChatUiContext,
       waitForDesignIterationCompletion,
       syncDesignSelection,
       pushAssistantMessage,
@@ -1599,6 +1635,32 @@ const Create = () => {
       return;
     }
 
+    if (mainView === "database") {
+      if (!text) return;
+      if (imgs.length > 0) {
+        setAttachmentError("Image attachments are disabled in Database mode.");
+      } else {
+        setAttachmentError(null);
+      }
+      setInputValue("");
+      setPendingImages([]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          type: MessageType.USER,
+          timestamp: Date.now(),
+          data: {
+            text,
+            sender: Sender.USER,
+          },
+          session_id: resolvedSessionId || undefined,
+        },
+      ]);
+      dbChatPromptSeqRef.current += 1;
+      setDbChatPrompt({ id: dbChatPromptSeqRef.current, text });
+      return;
+    }
+
     const content_blocks =
       imgs.length > 0
         ? [
@@ -1614,7 +1676,11 @@ const Create = () => {
       text ||
       `[Attached ${imgs.length} image${imgs.length === 1 ? "" : "s"}]`;
 
-    send(MessageType.USER, { text, content_blocks });
+    send(MessageType.USER, {
+      text,
+      content_blocks,
+      ui_context: buildChatUiContext(),
+    });
     setInputValue("");
     setPendingImages([]);
     setAttachmentError(null);
@@ -1636,7 +1702,7 @@ const Create = () => {
   const sendUserMessage = (text: string) => {
     const t = (text || "").trim();
     if (!t) return;
-    send(MessageType.USER, { text: t });
+    send(MessageType.USER, { text: t, ui_context: buildChatUiContext() });
     setMessages((prev) => [
       ...prev,
       {
@@ -1652,8 +1718,12 @@ const Create = () => {
   };
 
   const handleAttachClick = () => {
-    if (mainView === "design") {
-      setAttachmentError("Image attachments are disabled in Design mode.");
+    if (mainView === "design" || mainView === "database") {
+      setAttachmentError(
+        mainView === "design"
+          ? "Image attachments are disabled in Design mode."
+          : "Image attachments are disabled in Database mode."
+      );
       return;
     }
     fileInputRef.current?.click();
@@ -2111,7 +2181,7 @@ const Create = () => {
     ) {
       const prompt = routeState.initialPrompt;
       // Send as user message (so it appears in chat)
-      send(MessageType.USER, { text: prompt });
+      send(MessageType.USER, { text: prompt, ui_context: buildChatUiContext() });
       setMessages((prev) => [
         ...prev,
         {
@@ -2131,6 +2201,7 @@ const Create = () => {
     sandboxExists,
     routeState,
     send,
+    buildChatUiContext,
     setMessages,
     resolvedSessionId,
   ]);
@@ -2571,7 +2642,11 @@ const Create = () => {
         ) : mainView === "database" ? (
           <div style={{ height: "100%", minHeight: 0 }}>
             {resolvedSessionId ? (
-              <DatabasePane projectId={resolvedSessionId} />
+              <DatabasePane
+                projectId={resolvedSessionId}
+                chatPrompt={dbChatPrompt}
+                onChatReply={pushAssistantMessage}
+              />
             ) : (
               <div style={{ padding: 16 }}>Loading project...</div>
             )}
@@ -3089,7 +3164,13 @@ const Create = () => {
             <Button
               variant="outline"
               onClick={handleAttachClick}
-              disabled={!isConnected || !iframeReady || !!pendingHitl || mainView === "design"}
+              disabled={
+                !isConnected ||
+                (mainView !== "database" && !iframeReady) ||
+                !!pendingHitl ||
+                mainView === "design" ||
+                mainView === "database"
+              }
               title="Attach screenshot or diagram image"
             >
               <Paperclip size={14} />
@@ -3098,6 +3179,8 @@ const Create = () => {
               placeholder={
                 mainView === "design"
                   ? "Refine both design approaches..."
+                  : mainView === "database"
+                    ? "Ask database changes in plain language..."
                   : "Ask Amicable..."
               }
               value={inputValue}
@@ -3108,16 +3191,22 @@ const Create = () => {
                   handleSendMessage();
                 }
               }}
-              disabled={!isConnected || !iframeReady || !!pendingHitl}
+              disabled={
+                !isConnected ||
+                (mainView !== "database" && !iframeReady) ||
+                !!pendingHitl
+              }
             />
             <Button
               onClick={handleSendMessage}
               disabled={
                 !isConnected ||
-                !iframeReady ||
+                (mainView !== "database" && !iframeReady) ||
                 !!pendingHitl ||
                 (mainView === "design"
                   ? !inputValue.trim()
+                  : mainView === "database"
+                    ? !inputValue.trim()
                   : !inputValue.trim() && pendingImages.length === 0)
               }
             >

@@ -1476,6 +1476,7 @@ class Agent:
         session_id: str,
         feedback: str,
         user_content_blocks: list[dict[str, Any]] | None = None,
+        ui_context: dict[str, Any] | None = None,
     ):
         # Per-run tool journal: cleared at the start so the eventual git commit
         # message only describes this run.
@@ -1590,6 +1591,7 @@ class Agent:
                 "permission_mode": permission_mode,
                 "thinking_level": thinking_level,
                 "user_text": raw_user_text[:4000],
+                "ui_context": _safe_trace_payload(ui_context) if ui_context else None,
             },
         )
         if submit_hook.get("called"):
@@ -1637,6 +1639,47 @@ class Agent:
                 f"{workspace_ctx}\n\n"
                 "User request:\n"
                 f"{user_text}"
+            )
+
+        ui_context_lines: list[str] = []
+        if isinstance(ui_context, dict):
+            active_view = str(ui_context.get("active_view") or "").strip().lower()
+            if active_view in {"preview", "code", "database", "design"}:
+                ui_context_lines.append(f"- Active editor view: {active_view}")
+
+            preview_path = ui_context.get("preview_path")
+            if isinstance(preview_path, str) and preview_path.strip():
+                ui_context_lines.append(f"- Current preview path: {preview_path.strip()[:200]}")
+
+            device_type = ui_context.get("device_type")
+            if isinstance(device_type, str) and device_type.strip():
+                ui_context_lines.append(f"- Device preset: {device_type.strip()[:40]}")
+
+            selected_design = ui_context.get("selected_design_approach_id")
+            if isinstance(selected_design, str) and selected_design.strip():
+                ui_context_lines.append(
+                    f"- Selected design approach id: {selected_design.strip()[:120]}"
+                )
+
+            for key, label in (
+                ("design_iteration", "Design iteration"),
+                ("design_total_iterations", "Design iterations completed"),
+                ("viewport_width", "Viewport width"),
+                ("viewport_height", "Viewport height"),
+            ):
+                value = ui_context.get(key)
+                if isinstance(value, int):
+                    ui_context_lines.append(f"- {label}: {value}")
+
+            if ui_context.get("database_editor") is True:
+                ui_context_lines.append("- Database editor context is active")
+
+        if ui_context_lines:
+            user_text = (
+                "Editor UI context for this request:\n"
+                + "\n".join(ui_context_lines)
+                + "\n\nUser request:\n"
+                + user_text
             )
 
         if thinking_level != "none":
