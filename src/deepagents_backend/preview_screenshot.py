@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import posixpath
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -78,7 +80,33 @@ def _capture_single_url(
                 )
                 page = context.new_page()
                 # `networkidle` is unreliable for dev servers (for example Vite HMR keeps websockets open).
+                started = time.monotonic()
                 page.goto(target_url, wait_until="load", timeout=timeout_ms)
+
+                # Flutter previews can report `load` before the render surface is attached.
+                # When this looks like a Flutter page, wait for `flt-glass-pane` within the
+                # remaining timeout budget to avoid repeated polling screenshots.
+                try:
+                    is_flutter_page = bool(
+                        page.evaluate(
+                            """() => {
+                              const html = String(document.documentElement?.outerHTML || '').toLowerCase();
+                              return html.includes('flutter_bootstrap.js') || html.includes('flt-glass-pane');
+                            }"""
+                        )
+                    )
+                except Exception:
+                    is_flutter_page = False
+                if is_flutter_page:
+                    elapsed_ms = int((time.monotonic() - started) * 1000)
+                    remaining_ms = max(1, int(timeout_ms) - elapsed_ms)
+                    if remaining_ms > 0:
+                        with contextlib.suppress(PlaywrightTimeoutError):
+                            page.wait_for_selector(
+                                "flt-glass-pane",
+                                state="attached",
+                                timeout=remaining_ms,
+                            )
                 page.wait_for_timeout(250)
                 image_bytes = page.screenshot(
                     type="jpeg",

@@ -2,8 +2,10 @@ import unittest
 
 from src.deepagents_backend.qa import (
     PackageJsonReadResult,
+    QaCommandResult,
     aspnetcore_project_present,
     aspnetcore_qa_commands,
+    classify_qa_failure,
     detect_qa_commands,
     effective_qa_commands_for_backend,
     flutter_project_present,
@@ -221,6 +223,28 @@ class TestDeepAgentsQa(unittest.TestCase):
                 os.environ.pop("DEEPAGENTS_QA_RUN_TESTS", None)
             else:
                 os.environ["DEEPAGENTS_QA_RUN_TESTS"] = old_run_tests
+
+    def test_classify_qa_failure_marks_missing_flutter_binary_as_environment(self):
+        results = [
+            QaCommandResult(
+                command="flutter pub get",
+                exit_code=127,
+                output="sh: 1: flutter: not found",
+                truncated=False,
+            )
+        ]
+        self.assertEqual(classify_qa_failure(results), "environment")
+
+    def test_classify_qa_failure_keeps_code_errors_as_code(self):
+        results = [
+            QaCommandResult(
+                command="flutter analyze",
+                exit_code=1,
+                output="lib/main.dart:10:1: Error: Expected ';'",
+                truncated=False,
+            )
+        ]
+        self.assertEqual(classify_qa_failure(results), "code")
 
     def test_aspnetcore_project_present_detects_csproj(self):
         class _ExistsBackend:

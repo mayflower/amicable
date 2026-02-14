@@ -11,6 +11,7 @@ from src.deepagents_backend.qa import (
     PackageJsonReadResult,
     QaCommandResult,
     aspnetcore_project_present,
+    classify_qa_failure,
     effective_qa_commands_for_backend,
     flutter_project_present,
     phoenix_project_present,
@@ -34,6 +35,7 @@ class ControllerState(TypedDict, total=False):
     attempt: int
     qa_passed: bool
     qa_results: list[dict[str, Any]]
+    qa_failure_kind: Literal["none", "code", "environment"]
     final_status: Literal["success", "failed_qa"]
 
     git_pushed: bool
@@ -252,9 +254,11 @@ def build_controller_graph(
                 )
             ]
 
+        failure_kind = classify_qa_failure(results)
         return {
             "qa_passed": bool(passed),
             "qa_results": _qa_results_to_dicts(results),
+            "qa_failure_kind": failure_kind if not passed else "none",
         }
 
     async def self_heal_message(state: ControllerState, config: Any) -> dict[str, Any]:
@@ -318,15 +322,25 @@ def build_controller_graph(
         _ = config
 
         qa_results = state.get("qa_results") or []
+        failure_kind = str(state.get("qa_failure_kind") or "code")
         attempt = int(state.get("attempt") or 0)
         max_rounds = self_heal_max_rounds()
 
-        summary = (
-            f"I couldn't get the project into a passing state after {attempt} self-heal round(s) "
-            f"(max {max_rounds}).\n\n"
-            f"{_format_last_failure(qa_results)}\n\n"
-            "Tell me if you want me to keep trying (increase self-heal rounds) or if we should change the approach."
-        )
+        if failure_kind == "environment":
+            summary = (
+                "QA failed due to a sandbox environment/setup issue, so I skipped self-heal retries "
+                "(code edits cannot fix missing runtime tooling).\n\n"
+                f"{_format_last_failure(qa_results)}\n\n"
+                "Please fix the sandbox/runtime environment (for example tool PATH/image setup), "
+                "then rerun."
+            )
+        else:
+            summary = (
+                f"I couldn't get the project into a passing state after {attempt} self-heal round(s) "
+                f"(max {max_rounds}).\n\n"
+                f"{_format_last_failure(qa_results)}\n\n"
+                "Tell me if you want me to keep trying (increase self-heal rounds) or if we should change the approach."
+            )
 
         messages = list(state.get("messages") or [])
         messages.append(AIMessage(content=summary))
@@ -483,6 +497,8 @@ def build_controller_graph(
         passed = bool(state.get("qa_passed"))
         if passed:
             return "pass"
+        if str(state.get("qa_failure_kind") or "") == "environment":
+            return "fail"
 
         attempt = int(state.get("attempt") or 0)
         if attempt < self_heal_max_rounds():

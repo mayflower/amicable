@@ -4,7 +4,7 @@ import json
 import os
 import shlex
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -321,6 +321,62 @@ def run_qa(
         if exit_code != 0:
             return False, results
     return True, results
+
+
+QaFailureKind = Literal["none", "code", "environment"]
+
+
+def _command_program(command: str) -> str | None:
+    try:
+        tokens = shlex.split(command)
+    except Exception:
+        tokens = str(command or "").split()
+    if not tokens:
+        return None
+    prog = str(tokens[0] or "").strip()
+    return prog or None
+
+
+def classify_qa_failure(results: list[QaCommandResult]) -> QaFailureKind:
+    if not results:
+        return "code"
+
+    last = results[-1]
+    if int(last.exit_code) == 0:
+        return "none"
+
+    output = str(last.output or "").lower()
+    command = str(last.command or "")
+    program = (_command_program(command) or "").lower()
+
+    if "executable file not found in $path" in output:
+        return "environment"
+    if "is not recognized as an internal or external command" in output:
+        return "environment"
+    if "not on path" in output:
+        return "environment"
+    if program and (
+        f"{program}: not found" in output or f"{program}: command not found" in output
+    ):
+        return "environment"
+
+    # Exit code 127 commonly indicates the command binary itself could not be started.
+    if int(last.exit_code) == 127 and program in {
+        "flutter",
+        "dart",
+        "dotnet",
+        "mix",
+        "mvn",
+        "java",
+        "python",
+        "python3",
+        "node",
+        "npm",
+        "npx",
+    } and ("not found" in output or "no such file or directory" in output):
+        return "environment"
+
+    return "code"
 
 
 def qa_enabled_from_env(*, legacy_validate_env: bool) -> bool:

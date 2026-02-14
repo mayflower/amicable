@@ -37,8 +37,10 @@ class _ExecResult:
 
 
 def _shell_wrap(command: str) -> str:
-    # Our sandbox runtime executes argv, not a shell. Wrap everything in sh -lc.
-    return f"sh -lc {shlex.quote(command)}"
+    # Our sandbox runtime executes argv, not a shell. Use a non-login shell so
+    # we preserve container-level PATH additions (for example Flutter in
+    # /opt/flutter/bin).
+    return f"sh -c {shlex.quote(command)}"
 
 
 class K8sSandboxRuntimeBackend(SandboxBackendProtocol):

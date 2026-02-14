@@ -128,6 +128,12 @@ class SandboxPolicyWrapper(SandboxBackendProtocol):
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         return self._backend.download_files(paths)
 
+    def manifest(self, dir: str = "/") -> list[dict[str, object]]:
+        backend_manifest = getattr(self._backend, "manifest", None)
+        if not callable(backend_manifest):
+            raise RuntimeError("sandbox backend does not support manifest()")
+        return backend_manifest(dir)
+
     # ---- Guarded operations
 
     def execute(self, command: str) -> ExecuteResponse:

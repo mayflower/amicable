@@ -135,6 +135,10 @@ def _runtime_ready_poll_ms() -> int:
     return max(50, _env_int("K8S_RUNTIME_READY_POLL_MS", 250))
 
 
+def _flutter_screenshot_timeout_s() -> int:
+    return max(15, _env_int("AMICABLE_FLUTTER_SCREENSHOT_TIMEOUT_S", 45))
+
+
 def _langgraph_database_url() -> str:
     # Prefer an explicit DSN for LangGraph store/checkpointing.
     # Fall back to DATABASE_URL for compatibility with LangChain docs/examples.
@@ -265,6 +269,7 @@ Hard rules:
 - For web UI changes, ensure changes render correctly inside an iframe and remain responsive.
 - For React projects using `react-router-dom`, use `Routes` (not `Switch`).
 - For visual/UI bugs, use the `capture_preview_screenshot` tool to inspect the live preview before guessing.
+- For Flutter previews, avoid rapid screenshot polling loops; prefer a single screenshot capture with a longer timeout.
 
 Workflow (always):
 1. Start by writing a short plan.
@@ -1397,6 +1402,13 @@ class Agent:
         viewport_height: int = 800,
     ) -> dict[str, Any]:
         from src.deepagents_backend.preview_screenshot import capture_preview_screenshot
+
+        template_id = ""
+        init_data = self.session_data.get(session_id)
+        if isinstance(init_data, dict):
+            template_id = str(init_data.get("template_id") or "").strip().lower()
+        if template_id == "flutter" and bool(full_page):
+            timeout_s = max(int(timeout_s), _flutter_screenshot_timeout_s())
 
         result = capture_preview_screenshot(
             source_urls=self._preview_url_candidates(session_id),

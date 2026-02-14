@@ -60,3 +60,28 @@ def test_exec_timeout_does_not_fallback():
     with pytest.raises(requests.Timeout):
         backend._exec_raw("echo hi", timeout_s=1)  # type: ignore[attr-defined]
     assert calls == ["execute"]
+
+
+def test_exec_shell_uses_non_login_sh_wrapper():
+    backend = K8sSandboxRuntimeBackend(
+        sandbox_id="s1",
+        base_url="http://example.invalid",
+        root_dir="/app",
+    )
+    seen: dict[str, str] = {}
+
+    class _R:
+        stdout = ""
+        stderr = ""
+        exit_code = 0
+
+    def _fake_exec_raw(command: str, *, timeout_s: int):
+        _ = timeout_s
+        seen["command"] = command
+        return _R()
+
+    backend._exec_raw = _fake_exec_raw  # type: ignore[method-assign]
+    backend._exec_shell("echo hello", timeout_s=3)  # type: ignore[attr-defined]
+    wrapped = seen["command"]
+    assert wrapped.startswith("sh -c ")
+    assert "sh -lc " not in wrapped

@@ -61,6 +61,11 @@ class _FakeBackend(SandboxBackendProtocol):
         return [FileDownloadResponse(path=p, content=b"", error=None) for p in paths]
 
 
+class _FakeBackendWithManifest(_FakeBackend):
+    def manifest(self, _dir: str = "/") -> list[dict[str, object]]:
+        return [{"path": "README.md", "kind": "file", "mode": 0o644}]
+
+
 class TestSandboxPolicyWrapper(unittest.TestCase):
     def test_denies_main_tsx_edits(self):
         wrapped = SandboxPolicyWrapper(
@@ -96,6 +101,20 @@ class TestSandboxPolicyWrapper(unittest.TestCase):
         res = wrapped.upload_files([("/src/main.tsx", b"")])
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0].error, "permission_denied")
+
+    def test_manifest_passthrough(self):
+        wrapped = SandboxPolicyWrapper(_FakeBackendWithManifest())
+        entries = wrapped.manifest("/")
+        self.assertEqual(
+            entries, [{"path": "README.md", "kind": "file", "mode": 0o644}]
+        )
+
+    def test_manifest_missing_backend_support_raises(self):
+        wrapped = SandboxPolicyWrapper(_FakeBackend())
+        with self.assertRaisesRegex(
+            RuntimeError, "sandbox backend does not support manifest\\(\\)"
+        ):
+            wrapped.manifest("/")
 
 
 if __name__ == "__main__":
