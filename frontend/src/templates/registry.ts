@@ -84,7 +84,6 @@ export const TEMPLATES: Array<{
 ];
 
 export const templateLabel = (id: string | null | undefined): string => {
-  const normalized = id === "lovable_vite" ? "vite" : id;
-  const found = TEMPLATES.find((t) => t.id === normalized);
+  const found = TEMPLATES.find((t) => t.id === id);
   return found ? found.title : "Single-Page App";
 };

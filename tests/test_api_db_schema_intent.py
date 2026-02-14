@@ -26,7 +26,7 @@ def test_api_db_schema_intent_version_conflict(monkeypatch) -> None:
         ws_server,
         "_ensure_project_access",
         lambda _request, project_id: _FakeProject(
-            project_id=project_id, slug="proj", template_id="lovable-vite"
+            project_id=project_id, slug="proj", template_id="vite"
         ),
     )
 
@@ -78,7 +78,7 @@ def test_api_db_schema_intent_success(monkeypatch) -> None:
         ws_server,
         "_ensure_project_access",
         lambda _request, project_id: _FakeProject(
-            project_id=project_id, slug="proj", template_id="lovable-vite"
+            project_id=project_id, slug="proj", template_id="vite"
         ),
     )
 

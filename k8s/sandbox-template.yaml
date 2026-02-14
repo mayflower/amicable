@@ -1,7 +1,7 @@
 # SandboxTemplates for Amicable workspaces.
 #
 # Build the sandbox images (example):
-#   docker build -t amicable-sandbox-lovable-vite:latest k8s/images/amicable-sandbox-lovable-vite
+#   docker build -t amicable-sandbox-vite:latest k8s/images/amicable-sandbox-vite
 #   docker build -t amicable-sandbox-nextjs15:latest      k8s/images/amicable-sandbox-nextjs15
 #   docker build -t amicable-sandbox-fastapi:latest       k8s/images/amicable-sandbox-fastapi
 #   docker build -t amicable-sandbox-hono:latest          k8s/images/amicable-sandbox-hono
@@ -15,7 +15,7 @@
 #   docker build -t amicable-sandbox-quarkus:latest       k8s/images/amicable-sandbox-quarkus
 #
 # Then load into your cluster (example for kind):
-#   kind load docker-image amicable-sandbox-lovable-vite:latest --name <cluster>
+#   kind load docker-image amicable-sandbox-vite:latest --name <cluster>
 #   ... repeat for each image ...
 #
 # Optional: if your cluster supports sandboxed runtimes (gVisor/Kata), set
@@ -25,17 +25,17 @@
 apiVersion: extensions.agents.x-k8s.io/v1alpha1
 kind: SandboxTemplate
 metadata:
-  name: amicable-sandbox-lovable-vite
+  name: amicable-sandbox-vite
 spec:
   podTemplateSpec:
     metadata:
       labels:
-        app: amicable-sandbox-lovable-vite
+        app: amicable-sandbox-vite
     spec:
       automountServiceAccountToken: false
       containers:
         - name: amicable-sandbox
-          image: amicable-sandbox-lovable-vite:latest
+          image: amicable-sandbox-vite:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: runtime

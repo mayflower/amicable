@@ -49,7 +49,7 @@ def test_api_git_pull_success(monkeypatch) -> None:
     monkeypatch.setattr(provisioning, "hasura_client_from_env", lambda: object())
     monkeypatch.setattr(gitlab_config, "git_sync_enabled", lambda: True)
 
-    proj = _FakeProject(project_id="p1", slug="my-proj", template_id="lovable-vite")
+    proj = _FakeProject(project_id="p1", slug="my-proj", template_id="vite")
 
     monkeypatch.setattr(projects_store, "get_project_by_id", lambda *_a, **_k: proj)
     monkeypatch.setattr(
@@ -93,7 +93,7 @@ def test_api_git_pull_baseline_missing(monkeypatch) -> None:
     monkeypatch.setattr(provisioning, "hasura_client_from_env", lambda: object())
     monkeypatch.setattr(gitlab_config, "git_sync_enabled", lambda: True)
 
-    proj = _FakeProject(project_id="p1", slug="my-proj", template_id="lovable-vite")
+    proj = _FakeProject(project_id="p1", slug="my-proj", template_id="vite")
 
     monkeypatch.setattr(projects_store, "get_project_by_id", lambda *_a, **_k: proj)
     monkeypatch.setattr(
@@ -149,7 +149,7 @@ def test_api_git_pull_missing_repo_url(monkeypatch) -> None:
     monkeypatch.setattr(provisioning, "hasura_client_from_env", lambda: object())
     monkeypatch.setattr(gitlab_config, "git_sync_enabled", lambda: True)
 
-    proj = _FakeProject(project_id="p1", slug="my-proj", template_id="lovable-vite")
+    proj = _FakeProject(project_id="p1", slug="my-proj", template_id="vite")
 
     monkeypatch.setattr(projects_store, "get_project_by_id", lambda *_a, **_k: proj)
     monkeypatch.setattr(

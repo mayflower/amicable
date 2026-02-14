@@ -1,4 +1,4 @@
-# Lovable Native (React + Vite) Sandbox
+# Vite Native (React + Vite) Sandbox
 
 This workspace is a Vite + React + Tailwind + shadcn/ui starter intended for AI-driven editing.
 

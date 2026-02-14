@@ -44,7 +44,7 @@ def test_api_db_schema_get_success(monkeypatch) -> None:
     monkeypatch.setattr(
         ws_server,
         "_ensure_project_access",
-        lambda _request, project_id: _FakeProject(project_id=project_id, slug="proj", template_id="lovable-vite"),
+        lambda _request, project_id: _FakeProject(project_id=project_id, slug="proj", template_id="vite"),
     )
 
     import src.db.provisioning as provisioning
@@ -89,7 +89,7 @@ def test_api_db_schema_review_version_conflict(monkeypatch) -> None:
     monkeypatch.setattr(
         ws_server,
         "_ensure_project_access",
-        lambda _request, project_id: _FakeProject(project_id=project_id, slug="proj", template_id="lovable-vite"),
+        lambda _request, project_id: _FakeProject(project_id=project_id, slug="proj", template_id="vite"),
     )
 
     import src.db.provisioning as provisioning
@@ -154,7 +154,7 @@ def test_api_db_schema_apply_requires_destructive_confirmation(monkeypatch) -> N
     )
     def _get_project_by_id(_client, owner, project_id):
         _ = owner
-        return _FakeProject(project_id=project_id, slug="proj", template_id="lovable-vite")
+        return _FakeProject(project_id=project_id, slug="proj", template_id="vite")
 
     monkeypatch.setattr(
         projects_store,
@@ -236,7 +236,7 @@ def test_api_db_schema_apply_success_without_git_sync(monkeypatch) -> None:
     )
     def _get_project_by_id(_client, owner, project_id):
         _ = owner
-        return _FakeProject(project_id=project_id, slug="proj", template_id="lovable-vite")
+        return _FakeProject(project_id=project_id, slug="proj", template_id="vite")
 
     monkeypatch.setattr(
         projects_store,

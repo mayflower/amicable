@@ -19,7 +19,7 @@ images:
 sandboxTemplate:
   # Fallback template name used by the agent if a project template id is unknown.
   # This should match one of the sandboxTemplates names when sandboxTemplates is set.
-  name: amicable-sandbox-lovable-vite
+  name: amicable-sandbox-vite
   additionalAllowedHosts: ".amicable-preview.data.mayflower.tech"
   # Optional: set a RuntimeClass for sandbox pods (example: "gvisor").
   # This must exist in the cluster as a RuntimeClass object.
@@ -29,9 +29,9 @@ sandboxTemplate:
 # If set, deploy/helm/amicable/templates/sandbox/sandbox-template.yaml will render one
 # SandboxTemplate resource per entry.
 sandboxTemplates:
-  - name: amicable-sandbox-lovable-vite
+  - name: amicable-sandbox-vite
     image:
-      repository: ghcr.io/mayflower/amicable-sandbox-lovable-vite
+      repository: ghcr.io/mayflower/amicable-sandbox-vite
       tag: main
       pullPolicy: IfNotPresent
     additionalAllowedHosts: ".amicable-preview.data.mayflower.tech"
@@ -203,8 +203,8 @@ sandboxTemplates:
 sandboxWarmPools:
   enabled: false
   pools:
-    - name: amicable-sandbox-lovable-vite
-      templateName: amicable-sandbox-lovable-vite
+    - name: amicable-sandbox-vite
+      templateName: amicable-sandbox-vite
       replicas: 1
     - name: amicable-sandbox-nextjs15
       templateName: amicable-sandbox-nextjs15

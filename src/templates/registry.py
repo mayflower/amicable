@@ -45,9 +45,7 @@ _DEFAULT_SPECS: dict[TemplateId, TemplateSpec] = {
     "vite": TemplateSpec(
         template_id="vite",
         label="Single-Page App (React + Vite)",
-        # Keep the historical SandboxTemplate name to avoid breaking existing
-        # cluster installs. Only the *template id* is renamed.
-        k8s_sandbox_template_name="amicable-sandbox-lovable-vite",
+        k8s_sandbox_template_name="amicable-sandbox-vite",
         db_inject_kind="vite_index_html",
     ),
     "nextjs15": TemplateSpec(
@@ -121,9 +119,6 @@ _DEFAULT_SPECS: dict[TemplateId, TemplateSpec] = {
 
 def parse_template_id(raw: Any) -> TemplateId | None:
     v = str(raw or "").strip()
-    # Back-compat: older projects/clients used "lovable_vite".
-    if v == "lovable_vite":
-        v = "vite"
     if v in _DEFAULT_SPECS:
         return v  # type: ignore[return-value]
     return None

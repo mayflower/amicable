@@ -62,7 +62,7 @@ def test_api_design_lifecycle(monkeypatch) -> None:
         ws_server,
         "_ensure_project_access",
         lambda _request, project_id: _FakeProject(
-            project_id=project_id, slug="proj", template_id="lovable-vite"
+            project_id=project_id, slug="proj", template_id="vite"
         ),
     )
     monkeypatch.setattr(ws_server, "_get_agent", lambda: _FakeAgent())
@@ -143,7 +143,7 @@ def test_api_design_select_invalid_id(monkeypatch) -> None:
         ws_server,
         "_ensure_project_access",
         lambda _request, project_id: _FakeProject(
-            project_id=project_id, slug="proj", template_id="lovable-vite"
+            project_id=project_id, slug="proj", template_id="vite"
         ),
     )
     monkeypatch.setattr(ws_server, "_get_agent", lambda: _FakeAgent())
@@ -200,7 +200,7 @@ def test_api_design_snapshot_failed(monkeypatch) -> None:
         ws_server,
         "_ensure_project_access",
         lambda _request, project_id: _FakeProject(
-            project_id=project_id, slug="proj", template_id="lovable-vite"
+            project_id=project_id, slug="proj", template_id="vite"
         ),
     )
 

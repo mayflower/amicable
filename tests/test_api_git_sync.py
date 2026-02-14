@@ -48,7 +48,7 @@ def test_api_git_sync_success(monkeypatch) -> None:
     monkeypatch.setattr(gitlab_config, "git_sync_enabled", lambda: True)
     monkeypatch.setattr(gitlab_config, "git_sync_required", lambda: True)
 
-    proj = _FakeProject(project_id="p1", slug="my-proj", template_id="lovable-vite")
+    proj = _FakeProject(project_id="p1", slug="my-proj", template_id="vite")
 
     def _get_project_by_id(*_args, **_kwargs):
         return proj
@@ -115,7 +115,7 @@ def test_api_git_sync_missing_repo_url(monkeypatch) -> None:
     monkeypatch.setattr(gitlab_config, "git_sync_enabled", lambda: True)
     monkeypatch.setattr(gitlab_config, "git_sync_required", lambda: True)
 
-    proj = _FakeProject(project_id="p1", slug="my-proj", template_id="lovable-vite")
+    proj = _FakeProject(project_id="p1", slug="my-proj", template_id="vite")
 
     def _get_project_by_id(*_args, **_kwargs):
         return proj

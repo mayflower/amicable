@@ -14,8 +14,8 @@ sandboxNamespace: amicable
 # Recommended for kind: load locally built images into the cluster:
 #   docker build -t amicable-agent:dev k8s/images/amicable-agent
 #   docker build -t amicable-editor:dev k8s/images/amicable-editor
-#   docker build -t amicable-sandbox-lovable-vite:dev k8s/images/amicable-sandbox-lovable-vite
-#   kind load docker-image amicable-agent:dev amicable-editor:dev amicable-sandbox-lovable-vite:dev
+#   docker build -t amicable-sandbox-vite:dev k8s/images/amicable-sandbox-vite
+#   kind load docker-image amicable-agent:dev amicable-editor:dev amicable-sandbox-vite:dev
 images:
   agent:
     repository: amicable-agent
@@ -28,7 +28,7 @@ images:
 
 sandboxTemplate:
   # The backend template id "vite" maps to this K8s SandboxTemplate name.
-  name: amicable-sandbox-lovable-vite
+  name: amicable-sandbox-vite
   additionalAllowedHosts: ".preview.127.0.0.1.nip.io"
   # Set to "gvisor" after you installed gVisor + created a RuntimeClass named gvisor.
   runtimeClassName: ""
@@ -36,9 +36,9 @@ sandboxTemplate:
 # Only define the templates you want to use locally.
 # Add more entries if you want Next.js/FastAPI/etc locally.
 sandboxTemplates:
-  - name: amicable-sandbox-lovable-vite
+  - name: amicable-sandbox-vite
     image:
-      repository: amicable-sandbox-lovable-vite
+      repository: amicable-sandbox-vite
       tag: dev
       pullPolicy: IfNotPresent
     additionalAllowedHosts: ".preview.127.0.0.1.nip.io"
@@ -54,8 +54,8 @@ sandboxTemplates:
 sandboxWarmPools:
   enabled: false
   pools:
-    - name: amicable-sandbox-lovable-vite
-      templateName: amicable-sandbox-lovable-vite
+    - name: amicable-sandbox-vite
+      templateName: amicable-sandbox-vite
       replicas: 1
 
 agent:

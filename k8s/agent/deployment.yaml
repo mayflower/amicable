@@ -30,7 +30,7 @@ spec:
             - name: K8S_SANDBOX_NAMESPACE
               value: "default"
             - name: K8S_SANDBOX_TEMPLATE_NAME
-              value: "amicable-sandbox-lovable-vite"
+              value: "amicable-sandbox-vite"
             - name: PREVIEW_BASE_DOMAIN
               value: "preview.example.com" # override for your cluster
             - name: PREVIEW_SCHEME

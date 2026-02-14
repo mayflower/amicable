@@ -134,13 +134,13 @@ Build (pick what you need; below is the minimal “Vite sandbox” path):
 ```bash
 docker build -t amicable-agent:dev k8s/images/amicable-agent
 docker build -t amicable-editor:dev k8s/images/amicable-editor
-docker build -t amicable-sandbox-lovable-vite:dev k8s/images/amicable-sandbox-lovable-vite
+docker build -t amicable-sandbox-vite:dev k8s/images/amicable-sandbox-vite
 ```
 
 Load into kind:
 
 ```bash
-kind load docker-image amicable-agent:dev amicable-editor:dev amicable-sandbox-lovable-vite:dev --name amicable
+kind load docker-image amicable-agent:dev amicable-editor:dev amicable-sandbox-vite:dev --name amicable
 ```
 
 On Apple Silicon you may need `docker buildx` to ensure your images match the kind node architecture.
@@ -204,7 +204,7 @@ export SANDBOX_BACKEND=k8s
 export K8S_SANDBOX_NAMESPACE=amicable
 export PREVIEW_BASE_DOMAIN=preview.127.0.0.1.nip.io
 export PREVIEW_SCHEME=http
-export K8S_SANDBOX_TEMPLATE_NAME=amicable-sandbox-lovable-vite
+export K8S_SANDBOX_TEMPLATE_NAME=amicable-sandbox-vite
 ```
 
 Then start the agent (see `docs/kubernetes.md` and `CLAUDE.md` for run commands). You still need the preview-router ingress in kind so the browser can reach the sandbox preview servers via wildcard hosts.

@@ -32,7 +32,7 @@ npm run lint                        # ESLint
 Images (built/published via GitHub Actions) live under `k8s/images/`:
 - Agent: `amicable-agent`
 - Editor: `amicable-editor`
-- Sandbox runtimes/templates: `amicable-sandbox`, `amicable-sandbox-lovable-vite`, `amicable-sandbox-nextjs15`, `amicable-sandbox-remix`, `amicable-sandbox-nuxt3`, `amicable-sandbox-sveltekit`, `amicable-sandbox-fastapi`, `amicable-sandbox-hono`, `amicable-sandbox-laravel`, `amicable-sandbox-flutter`, `amicable-sandbox-phoenix`, `amicable-sandbox-aspnetcore`, `amicable-sandbox-quarkus`
+- Sandbox runtimes/templates: `amicable-sandbox`, `amicable-sandbox-vite`, `amicable-sandbox-nextjs15`, `amicable-sandbox-remix`, `amicable-sandbox-nuxt3`, `amicable-sandbox-sveltekit`, `amicable-sandbox-fastapi`, `amicable-sandbox-hono`, `amicable-sandbox-laravel`, `amicable-sandbox-flutter`, `amicable-sandbox-phoenix`, `amicable-sandbox-aspnetcore`, `amicable-sandbox-quarkus`
 
 CI workflow: `.github/workflows/build-images.yml`.
 

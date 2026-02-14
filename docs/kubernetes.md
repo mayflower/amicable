@@ -183,8 +183,8 @@ If your cluster has the `SandboxWarmPool` CRD installed, you can enable warm poo
 sandboxWarmPools:
   enabled: true
   pools:
-    - name: amicable-sandbox-lovable-vite
-      templateName: amicable-sandbox-lovable-vite
+    - name: amicable-sandbox-vite
+      templateName: amicable-sandbox-vite
       replicas: 1
 ```
 

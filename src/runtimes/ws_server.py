@@ -1219,7 +1219,7 @@ def _platform_context_for_template(template_id: str | None) -> str:
     if tid == "flutter":
         return "Mobile app layout (Flutter)"
     if tid in {
-        "lovable-vite",
+        "vite",
         "nextjs15",
         "remix",
         "nuxt3",

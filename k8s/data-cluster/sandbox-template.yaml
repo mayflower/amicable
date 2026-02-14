@@ -1,18 +1,18 @@
 apiVersion: extensions.agents.x-k8s.io/v1alpha1
 kind: SandboxTemplate
 metadata:
-  name: amicable-sandbox-lovable-vite
+  name: amicable-sandbox-vite
   namespace: amicable
 spec:
   podTemplateSpec:
     metadata:
       labels:
-        app: amicable-sandbox-lovable-vite
+        app: amicable-sandbox-vite
     spec:
       automountServiceAccountToken: false
       containers:
         - name: amicable-sandbox
-          image: ghcr.io/mayflower/amicable-sandbox-lovable-vite:main
+          image: ghcr.io/mayflower/amicable-sandbox-vite:main
           imagePullPolicy: IfNotPresent
           ports:
             - name: runtime

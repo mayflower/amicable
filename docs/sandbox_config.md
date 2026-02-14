@@ -117,8 +117,8 @@ Example:
 sandboxWarmPools:
   enabled: true
   pools:
-    - name: amicable-sandbox-lovable-vite
-      templateName: amicable-sandbox-lovable-vite
+    - name: amicable-sandbox-vite
+      templateName: amicable-sandbox-vite
       replicas: 1
 ```
 
@@ -133,7 +133,7 @@ Templates are defined in two places and must stay in sync:
 
 Backend template ids (and default):
 
-- `vite` (default; renamed from `lovable_vite`)
+- `vite` (default)
 - `nextjs15`
 - `fastapi`
 - `hono`
@@ -152,7 +152,7 @@ The backend default is `DEFAULT_TEMPLATE_ID = "vite"` in `src/templates/registry
 
 Backend mapping is implemented by `k8s_template_name_for(template_id)` in `src/templates/registry.py`.
 
-- Each template id has a default Kubernetes `SandboxTemplate` name (for example `amicable-sandbox-lovable-vite`).
+- Each template id has a default Kubernetes `SandboxTemplate` name (for example `amicable-sandbox-vite`).
 - You can override mappings without code changes via:
 
 ```bash
@@ -160,8 +160,6 @@ export AMICABLE_TEMPLATE_K8S_TEMPLATE_MAP_JSON='{"vite":"my-sandbox-template-nam
 ```
 
 This is useful if you want to swap the underlying sandbox image for an existing template id.
-
-Note: the backend still accepts `lovable_vite` as an alias for `vite` for backwards compatibility with existing stored projects and older clients.
 
 ### DB injection kind (template behavior)
 
@@ -195,10 +193,10 @@ The agent loads “memory” from sandbox files (DeepAgents feature):
 
 Those files are baked into each sandbox image (see the Dockerfiles in `k8s/images/amicable-sandbox-*/Dockerfile`).
 
-Example (Lovable Vite template):
+Example (Vite template):
 
-- `k8s/images/amicable-sandbox-lovable-vite/AGENTS.md` -> `/app/AGENTS.md`
-- `k8s/images/amicable-sandbox-lovable-vite/.deepagents/AGENTS.md` -> `/app/.deepagents/AGENTS.md`
+- `k8s/images/amicable-sandbox-vite/AGENTS.md` -> `/app/AGENTS.md`
+- `k8s/images/amicable-sandbox-vite/.deepagents/AGENTS.md` -> `/app/.deepagents/AGENTS.md`
 
 Additionally, Amicable ensures a writable project memory directory exists:
 
@@ -218,11 +216,11 @@ Skills are Markdown documents with YAML frontmatter, typically stored as:
 /.deepagents/skills/<skill-name>/SKILL.md
 ```
 
-Example skills shipped in the Lovable Vite sandbox image:
+Example skills shipped in the Vite sandbox image:
 
-- `k8s/images/amicable-sandbox-lovable-vite/.deepagents/skills/sandbox-basics/SKILL.md`
-- `k8s/images/amicable-sandbox-lovable-vite/.deepagents/skills/react-vite-basics/SKILL.md`
-- `k8s/images/amicable-sandbox-lovable-vite/.deepagents/skills/hasura-graphql-client/SKILL.md`
+- `k8s/images/amicable-sandbox-vite/.deepagents/skills/sandbox-basics/SKILL.md`
+- `k8s/images/amicable-sandbox-vite/.deepagents/skills/react-vite-basics/SKILL.md`
+- `k8s/images/amicable-sandbox-vite/.deepagents/skills/hasura-graphql-client/SKILL.md`
 
 Operationally:
 
@@ -246,7 +244,7 @@ The following minimum set is enforced in CI by `tests/test_sandbox_skills_covera
 | Sandbox image | Required skills |
 |---|---|
 | `amicable-sandbox` | `sandbox-basics`, `sandbox-preview-contract` |
-| `amicable-sandbox-lovable-vite` | `sandbox-basics`, `sandbox-preview-contract`, `react-vite-basics`, `tanstack-query`, `hasura-graphql-client` |
+| `amicable-sandbox-vite` | `sandbox-basics`, `sandbox-preview-contract`, `react-vite-basics`, `tanstack-query`, `hasura-graphql-client` |
 | `amicable-sandbox-nextjs15` | `sandbox-basics`, `sandbox-preview-contract`, `nextjs-basics`, `hasura-graphql-client` |
 | `amicable-sandbox-remix` | `sandbox-basics`, `sandbox-preview-contract`, `remix-basics`, `hasura-graphql-client` |
 | `amicable-sandbox-nuxt3` | `sandbox-basics`, `sandbox-preview-contract`, `nuxt-basics`, `hasura-graphql-client` |

@@ -9,7 +9,7 @@ IMAGES_DIR = ROOT / "k8s" / "images"
 
 REQUIRED_SKILLS: dict[str, set[str]] = {
     "amicable-sandbox": {"sandbox-basics", "sandbox-preview-contract"},
-    "amicable-sandbox-lovable-vite": {
+    "amicable-sandbox-vite": {
         "sandbox-basics",
         "sandbox-preview-contract",
         "react-vite-basics",
@@ -80,7 +80,7 @@ REQUIRED_SKILLS: dict[str, set[str]] = {
 }
 
 DB_ENABLED_IMAGES = {
-    "amicable-sandbox-lovable-vite",
+    "amicable-sandbox-vite",
     "amicable-sandbox-nextjs15",
     "amicable-sandbox-remix",
     "amicable-sandbox-nuxt3",
