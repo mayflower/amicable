@@ -35,6 +35,14 @@ from src.agent_core import Agent, ChatHistoryPersistenceError, Message, MessageT
 # Load local env after imports to keep linting (E402) happy.
 load_dotenv()
 
+# Configure the root logger so that all application-level log calls
+# (logger.info / .warning / .error across every module) actually reach
+# stdout.  Uvicorn only configures its own "uvicorn.*" loggers.
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+)
+
 app = FastAPI()
 _agent: Agent | None = None
 logger = logging.getLogger(__name__)

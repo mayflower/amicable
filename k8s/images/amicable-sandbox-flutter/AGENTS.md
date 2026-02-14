@@ -8,8 +8,8 @@ The Flutter web dev server is **already running** on port 3000. The runtime mana
 
 - **NEVER kill, stop, or restart the Flutter preview process.** If the process is killed the preview will go dark until the runtime auto-restarts it (up to 3 seconds delay). Repeatedly killing it wastes restart budget.
 - **NEVER run `flutter run` manually** — the preview server is already running.
-- After writing or editing `.dart` files, the Flutter web dev server **automatically detects changes and recompiles** (hot restart). Wait 10–15 seconds for the rebuild to finish before checking the preview.
-- If the preview seems stuck or shows stale content, try running `flutter clean && flutter pub get` and then wait — the runtime will auto-restart the dev server.
+- After writing or editing `.dart` files, the Flutter web dev server **automatically detects changes and recompiles** (hot restart). Do **NOT** run `sleep` commands to wait for compilation — just continue with the next edit or task.
+- If the preview seems stuck or shows stale content, try running `flutter clean && flutter pub get` — the runtime will auto-restart the dev server. Do **NOT** use `sleep` to wait.
 
 ## File Editing — IMPORTANT
 
