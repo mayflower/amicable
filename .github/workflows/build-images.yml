@@ -25,8 +25,8 @@ jobs:
             dockerfile: k8s/images/amicable-agent/Dockerfile
           - name: amicable-sandbox
             dockerfile: k8s/images/amicable-sandbox/Dockerfile
-          - name: amicable-sandbox-lovable-vite
-            dockerfile: k8s/images/amicable-sandbox-lovable-vite/Dockerfile
+          - name: amicable-sandbox-vite
+            dockerfile: k8s/images/amicable-sandbox-vite/Dockerfile
           - name: amicable-sandbox-nextjs15
             dockerfile: k8s/images/amicable-sandbox-nextjs15/Dockerfile
           - name: amicable-sandbox-fastapi
