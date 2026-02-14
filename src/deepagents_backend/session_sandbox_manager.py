@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -10,6 +11,8 @@ if TYPE_CHECKING:  # pragma: no cover
 
 from src.deepagents_backend.k8s_runtime_backend import K8sSandboxRuntimeBackend
 from src.sandbox_backends.k8s_backend import K8sAgentSandboxBackend
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -99,8 +102,29 @@ class SessionSandboxManager:
         host = f"{env.sandbox_id}.{self._k8s_backend.namespace}.svc.cluster.local"
         return f"http://{host}:{self._k8s_backend.preview_port}/"
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(
+        self,
+        session_id: str,
+        *,
+        sandbox_id: str | None = None,
+        slug: str | None = None,
+    ) -> bool:
         """Delete the k8s SandboxClaim/pod for a session (best-effort)."""
         self._env_by_session.pop(session_id, None)
         self._backend_by_session.pop(session_id, None)
-        return bool(self._k8s_backend.delete_app_environment(session_id=session_id))
+        target_claim = (sandbox_id or "").strip()
+        if target_claim:
+            logger.info(
+                "Deleting session %s using explicit sandbox_id=%s", session_id, target_claim
+            )
+            return bool(
+                self._k8s_backend.delete_app_environment(claim_name=target_claim)
+            )
+
+        logger.warning(
+            "Deleting session %s without explicit sandbox_id; using derived claim name",
+            session_id,
+        )
+        return bool(
+            self._k8s_backend.delete_app_environment(session_id=session_id, slug=slug)
+        )

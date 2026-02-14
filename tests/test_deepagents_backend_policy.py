@@ -83,6 +83,12 @@ class TestSandboxPolicyWrapper(unittest.TestCase):
         self.assertEqual(res.exit_code, 126)
         self.assertIn("Policy denied", res.output)
 
+    def test_denies_normalized_dangerous_commands(self):
+        wrapped = SandboxPolicyWrapper(_FakeBackend(), deny_commands=["rm -rf /"])
+        res = wrapped.execute("  RM   -RF   /   ")
+        self.assertEqual(res.exit_code, 126)
+        self.assertIn("Policy denied", res.output)
+
     def test_denies_upload(self):
         wrapped = SandboxPolicyWrapper(
             _FakeBackend(), deny_write_paths=["/src/main.tsx"]

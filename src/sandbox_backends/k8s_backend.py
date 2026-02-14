@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
 import re
 import time
@@ -19,6 +20,7 @@ DEFAULT_PROJECT_ROOT = "/app"
 DEFAULT_CODE_PATH = "/app/src"
 
 _DNS_LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+logger = logging.getLogger(__name__)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -76,6 +78,29 @@ def _sandbox_ready(sandbox_obj: dict[str, Any]) -> bool:
         if cond.get("type") == "Ready" and cond.get("status") in ("True", True):
             return True
     return False
+
+
+def _ready_conditions_summary(sandbox_obj: dict[str, Any] | None) -> list[dict[str, str]]:
+    if not isinstance(sandbox_obj, dict):
+        return []
+    status = sandbox_obj.get("status")
+    if not isinstance(status, dict):
+        return []
+    conds = status.get("conditions")
+    if not isinstance(conds, list):
+        return []
+    out: list[dict[str, str]] = []
+    for c in conds:
+        if not isinstance(c, dict):
+            continue
+        out.append(
+            {
+                "type": str(c.get("type") or ""),
+                "status": str(c.get("status") or ""),
+                "reason": str(c.get("reason") or ""),
+            }
+        )
+    return out
 
 
 class K8sAgentSandboxBackend:
@@ -148,14 +173,39 @@ class K8sAgentSandboxBackend:
         }
 
     def delete_app_environment(
-        self, *, session_id: str, slug: str | None = None
+        self,
+        *,
+        session_id: str | None = None,
+        slug: str | None = None,
+        claim_name: str | None = None,
     ) -> bool:
-        """Delete the SandboxClaim for a session_id (best-effort).
+        """Delete the SandboxClaim (best-effort).
 
         Returns True if a claim existed and a delete was issued.
         """
-        claim_name = _dns_safe_claim_name(session_id, slug=slug)
-        if not self._claim_exists(claim_name):
+        target_claim = (claim_name or "").strip()
+        if target_claim:
+            if session_id:
+                expected = _dns_safe_claim_name(session_id, slug=slug)
+                if expected != target_claim:
+                    logger.warning(
+                        "delete_app_environment target differs from derived claim "
+                        "(target=%s derived=%s session_id=%s slug=%s)",
+                        target_claim,
+                        expected,
+                        session_id,
+                        slug,
+                    )
+        elif session_id:
+            target_claim = _dns_safe_claim_name(session_id, slug=slug)
+        else:
+            logger.warning(
+                "delete_app_environment missing target (session_id/claim_name both empty)"
+            )
+            return False
+
+        if not self._claim_exists(target_claim):
+            logger.info("SandboxClaim %s does not exist; nothing to delete", target_claim)
             return False
         try:
             self.custom_objects_api.delete_namespaced_custom_object(
@@ -163,11 +213,12 @@ class K8sAgentSandboxBackend:
                 version=CLAIM_API_VERSION,
                 namespace=self.namespace,
                 plural=CLAIM_PLURAL_NAME,
-                name=claim_name,
+                name=target_claim,
                 body=self._client.V1DeleteOptions(  # type: ignore[attr-defined]
                     propagation_policy="Foreground"
                 ),
             )
+            logger.info("Issued delete for SandboxClaim %s", target_claim)
             return True
         except self._client.ApiException as e:
             if e.status == 404:
@@ -234,7 +285,7 @@ class K8sAgentSandboxBackend:
                 w.stop()
                 break
 
-        # Final get for error context.
+        # Final get for error context and to handle watch races.
         try:
             sandbox = self.custom_objects_api.get_namespaced_custom_object(
                 group=SANDBOX_API_GROUP,
@@ -245,8 +296,16 @@ class K8sAgentSandboxBackend:
             )
         except Exception:
             sandbox = None
+        if _sandbox_ready(sandbox):
+            logger.info(
+                "Sandbox %s became Ready during final status check after watch timeout",
+                claim_name,
+            )
+            return
+        summary = _ready_conditions_summary(sandbox)
         raise RuntimeError(
-            f"Timed out waiting for sandbox '{claim_name}' to become Ready. Last object: {sandbox}"
+            "Timed out waiting for sandbox to become Ready "
+            f"(claim={claim_name}, namespace={self.namespace}, conditions={summary})"
         )
 
     def _runtime_base_url(self, claim_name: str) -> str:

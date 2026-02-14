@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import re
+import shlex
 from collections.abc import Callable
 
 try:
@@ -47,6 +49,7 @@ class SandboxPolicyWrapper(SandboxBackendProtocol):
             p.rstrip("/") + "/" for p in (deny_write_prefixes or [])
         ]
         self._deny_commands = deny_commands or []
+        self._deny_command_rules = self._build_deny_command_rules(self._deny_commands)
         self._audit_log = audit_log
 
     @property
@@ -59,8 +62,40 @@ class SandboxPolicyWrapper(SandboxBackendProtocol):
         normalized = path.rstrip("/") + "/" if path != "/" else "/"
         return any(normalized.startswith(p) for p in self._deny_write_prefixes)
 
-    def _is_denied_command(self, cmd: str) -> bool:
-        return any(pattern in cmd for pattern in self._deny_commands)
+    def _normalize_command(self, cmd: str) -> str:
+        normalized = " ".join(str(cmd or "").strip().split()).lower()
+        return normalized
+
+    def _build_deny_command_rules(
+        self, deny_commands: list[str]
+    ) -> list[tuple[str, re.Pattern[str], str]]:
+        rules: list[tuple[str, re.Pattern[str], str]] = []
+        for idx, raw in enumerate(deny_commands):
+            normalized = self._normalize_command(raw)
+            if not normalized:
+                continue
+            try:
+                tokens = shlex.split(normalized)
+            except Exception:
+                tokens = normalized.split()
+            if not tokens:
+                continue
+
+            # Match shell-like token sequences with flexible whitespace.
+            token_pat = r"\s+".join(re.escape(t) for t in tokens)
+            regex = re.compile(
+                rf"(^|[;&|()]\s*|\s+){token_pat}(\s|$)",
+                re.IGNORECASE,
+            )
+            rules.append((f"cmd_rule_{idx}", regex, raw))
+        return rules
+
+    def _matching_denied_command_rule(self, cmd: str) -> str | None:
+        normalized = self._normalize_command(cmd)
+        for rule_id, rule_re, _raw in self._deny_command_rules:
+            if rule_re.search(normalized):
+                return rule_id
+        return None
 
     def _audit(self, operation: str, target: str, metadata: dict) -> None:
         if self._audit_log:
@@ -96,8 +131,9 @@ class SandboxPolicyWrapper(SandboxBackendProtocol):
     # ---- Guarded operations
 
     def execute(self, command: str) -> ExecuteResponse:
-        if self._is_denied_command(command):
-            self._audit("execute_denied", command, {})
+        denied_rule = self._matching_denied_command_rule(command)
+        if denied_rule is not None:
+            self._audit("execute_denied", command, {"rule_id": denied_rule})
             return ExecuteResponse(
                 output="Policy denied: command contains a forbidden pattern",
                 exit_code=126,

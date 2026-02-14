@@ -1117,7 +1117,18 @@ async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
             delete_gitlab_repo_for_project(client, owner=owner, project=p)
         # Best-effort sandbox delete.
         with contextlib.suppress(Exception):
-            SessionSandboxManager().delete_session(project_id)
+            sandbox_id = str(getattr(p, "sandbox_id", "") or "").strip() or None
+            slug = str(getattr(p, "slug", "") or "").strip() or None
+            if sandbox_id is None:
+                logger.warning(
+                    "Project delete missing sandbox_id; deleting via derived name "
+                    "(project_id=%s slug=%s)",
+                    project_id,
+                    slug,
+                )
+            SessionSandboxManager().delete_session(
+                project_id, sandbox_id=sandbox_id, slug=slug
+            )
         # Best-effort DB cleanup.
         with contextlib.suppress(Exception):
             cleanup_app_db(client, app_id=project_id)
@@ -1127,6 +1138,11 @@ async def api_delete_project(project_id: str, request: Request) -> JSONResponse:
         # Finally remove row.
         with contextlib.suppress(Exception):
             hard_delete_project_row(client, owner=owner, project_id=project_id)
+        with contextlib.suppress(Exception):
+            _cleanup_project_runtime_state(project_id)
+        with contextlib.suppress(Exception):
+            if _agent is not None:
+                _agent.cleanup_session_state(project_id)
 
     bg.add_task(_cleanup)
     return JSONResponse({"status": "deleting"}, status_code=202, background=bg)
@@ -2664,6 +2680,22 @@ def _agent_run_lock(session_id: str) -> asyncio.Lock:
     return lock
 
 
+def _cleanup_project_runtime_state(session_id: str) -> None:
+    _bootstrap_lock_by_project.pop(session_id, None)
+    _git_pull_lock_by_project.pop(session_id, None)
+    _agent_run_lock_by_project.pop(session_id, None)
+    _runtime_autoheal_state_by_project.pop(session_id, None)
+
+
+async def _restore_pending_hitl_if_available(agent: Agent, session_id: str) -> None:
+    try:
+        await agent.restore_pending_hitl_from_checkpoint(session_id)
+    except Exception:
+        logger.exception(
+            "Failed to restore pending HITL request (session_id=%s)", session_id
+        )
+
+
 async def _handle_ws(ws: WebSocket) -> None:
     try:
         _require_auth(ws)
@@ -2892,6 +2924,7 @@ async def _handle_ws(ws: WebSocket) -> None:
                         "WS git bootstrap: failed to evaluate git_sync_required() (session_id=%s)",
                         session_id,
                     )
+            await _restore_pending_hitl_if_available(agent, str(session_id))
             pending = agent.get_pending_hitl(session_id)
             if pending:
                 init_data["hitl_pending"] = pending
@@ -2968,6 +3001,7 @@ async def _handle_ws(ws: WebSocket) -> None:
                 await ws.close(code=1011)
                 return
 
+            await _restore_pending_hitl_if_available(agent, str(session_id))
             pending = agent.get_pending_hitl(session_id)
             if pending:
                 await ws.send_json(
@@ -3023,6 +3057,7 @@ async def _handle_ws(ws: WebSocket) -> None:
                 await ws.close(code=1011)
                 return
 
+            await _restore_pending_hitl_if_available(agent, str(session_id))
             pending = agent.get_pending_hitl(str(session_id))
             if pending:
                 await ws.send_json(

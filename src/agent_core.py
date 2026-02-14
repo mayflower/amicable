@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import logging
 import os
+import random
 import time
 import uuid
 from dataclasses import dataclass
@@ -124,6 +126,14 @@ def _deepagents_skills_sources() -> list[str]:
 
 def _deepagents_tool_retry_max_retries() -> int:
     return max(0, _env_int("DEEPAGENTS_TOOL_RETRY_MAX_RETRIES", 2))
+
+
+def _runtime_probe_attempts() -> int:
+    return max(1, _env_int("AMICABLE_RUNTIME_PROBE_ATTEMPTS", 15))
+
+
+def _runtime_probe_base_delay_ms() -> int:
+    return max(50, _env_int("AMICABLE_RUNTIME_PROBE_BASE_DELAY_MS", 250))
 
 
 def _langgraph_database_url() -> str:
@@ -345,6 +355,7 @@ class Agent:
         # Optional persistent LangGraph checkpointer (PostgresSaver) for HITL resume across restarts.
         self._lg_checkpointer_ctx = None
         self._lg_checkpointer = None
+        self._warned_non_durable_hitl_restore = False
 
         # Avoid double-provisioning or double-injection for the same session_id when multiple
         # concurrent WS/HTTP requests hit init paths.
@@ -365,6 +376,42 @@ class Agent:
             lock = asyncio.Lock()
             self._ensure_env_lock_by_session[session_id] = lock
         return lock
+
+    def cleanup_session_state(self, session_id: str) -> None:
+        """Best-effort in-memory cleanup for deleted/expired sessions."""
+        self.session_data.pop(session_id, None)
+        self._hitl_pending.pop(session_id, None)
+        self._ensure_env_lock_by_session.pop(session_id, None)
+
+    def _probe_runtime_or_raise(
+        self,
+        *,
+        backend: Any,
+        session_id: str,
+        sandbox_id: str,
+    ) -> None:
+        probe_ok = False
+        probe_exc: Exception | None = None
+        attempts = _runtime_probe_attempts()
+        base_delay_ms = _runtime_probe_base_delay_ms()
+        for attempt in range(attempts):
+            try:
+                backend.execute("true")
+                probe_ok = True
+                break
+            except Exception as exc:
+                probe_exc = exc
+                if attempt + 1 >= attempts:
+                    break
+                jitter_ms = random.uniform(0, base_delay_ms * 0.25)
+                sleep_s = ((base_delay_ms * (1.3**attempt)) + jitter_ms) / 1000.0
+                time.sleep(min(2.5, sleep_s))
+        if not probe_ok:
+            raise RuntimeError(
+                "runtime_unreachable: sandbox runtime did not become reachable "
+                f"(session_id={session_id}, sandbox_id={sandbox_id}, attempts={attempts}, "
+                f"last_error={probe_exc})"
+            )
 
     async def _get_langgraph_checkpointer(self):
         """Return an AsyncPostgresSaver if configured, else None."""
@@ -658,6 +705,93 @@ class Agent:
             return []
         return self._normalize_conversation_history(raw_messages)
 
+    def _extract_pending_interrupt_from_snapshot(
+        self, snapshot: Any
+    ) -> tuple[str, Any] | None:
+        def _extract_from_item(item: Any) -> tuple[str, Any] | None:
+            if isinstance(item, dict):
+                iid = item.get("id") or item.get("interrupt_id")
+                value = item.get("value")
+                if value is None and "request" in item:
+                    value = item.get("request")
+            else:
+                iid = getattr(item, "id", None)
+                value = getattr(item, "value", None)
+            if isinstance(iid, str) and iid.strip():
+                return iid.strip(), value
+            return None
+
+        values = self._state_values_from_snapshot(snapshot)
+        raw_interrupts = values.get("__interrupt__")
+        if isinstance(raw_interrupts, (list, tuple)):
+            for intr in raw_interrupts:
+                found = _extract_from_item(intr)
+                if found is not None:
+                    return found
+
+        tasks = None
+        if isinstance(snapshot, dict):
+            tasks = snapshot.get("tasks")
+        if tasks is None:
+            tasks = getattr(snapshot, "tasks", None)
+        if not isinstance(tasks, (list, tuple)):
+            return None
+        for task in tasks:
+            task_interrupts = None
+            if isinstance(task, dict):
+                task_interrupts = task.get("interrupts")
+            if task_interrupts is None:
+                task_interrupts = getattr(task, "interrupts", None)
+            if not isinstance(task_interrupts, (list, tuple)):
+                continue
+            for intr in task_interrupts:
+                found = _extract_from_item(intr)
+                if found is not None:
+                    return found
+        return None
+
+    async def restore_pending_hitl_from_checkpoint(
+        self, session_id: str
+    ) -> dict[str, Any] | None:
+        if session_id in self._hitl_pending:
+            return self.get_pending_hitl(session_id)
+
+        checkpointer = await self._get_langgraph_checkpointer()
+        if checkpointer is None:
+            if not self._warned_non_durable_hitl_restore:
+                logger.warning(
+                    "HITL restore is non-durable without persistent LangGraph checkpointer"
+                )
+                self._warned_non_durable_hitl_restore = True
+            return None
+
+        try:
+            snapshot = await self._controller_state_snapshot(session_id)
+            pending = self._extract_pending_interrupt_from_snapshot(snapshot)
+        except Exception:
+            logger.exception(
+                "Failed to restore HITL state from checkpoint (session_id=%s)", session_id
+            )
+            return None
+        if pending is None:
+            return None
+
+        interrupt_id, request = pending
+        self._hitl_pending[session_id] = {
+            "interrupt_id": interrupt_id,
+            "request": request,
+            "plan_msg_id": str(uuid.uuid4()),
+            "file_msg_id": str(uuid.uuid4()),
+            "buffer": "",
+        }
+        logger.info(
+            "Restored pending HITL interrupt from checkpoint "
+            "(session_id=%s interrupt_id=%s)",
+            session_id,
+            interrupt_id,
+        )
+        return self.get_pending_hitl(session_id)
+
     async def ensure_ws_chat_history_ready(
         self, session_id: str
     ) -> list[dict[str, str]]:
@@ -887,32 +1021,18 @@ class Agent:
             session_id, template_name=sandbox_template_name, slug=effective_slug
         )
 
-        backend = None
+        backend = self._session_manager.get_backend(session_id)
 
-        # Poll the sandbox runtime API until it accepts connections. The K8s
-        # readiness probe should handle this, but a short retry here avoids
-        # races when the probe hasn't caught up yet.
-        try:
-            import time as _time
-
-            backend = self._session_manager.get_backend(session_id)
-            for _attempt in range(15):
-                try:
-                    backend.execute("true")
-                    break
-                except Exception:
-                    _time.sleep(1)
-        except Exception:
-            pass
+        # Poll the sandbox runtime API until it accepts connections. Fail closed if
+        # it never becomes reachable to avoid persisting a broken session.
+        self._probe_runtime_or_raise(
+            backend=backend, session_id=session_id, sandbox_id=sess.sandbox_id
+        )
 
         # Ensure the conventional memories directory exists inside the sandbox workspace.
         # (This is sandbox-local, not store-backed.)
-        try:
-            if backend is None:
-                backend = self._session_manager.get_backend(session_id)
+        with contextlib.suppress(Exception):
             backend.execute("cd /app && mkdir -p memories")
-        except Exception:
-            pass
 
         init_data: dict[str, Any] = {
             # Prefer a slug-based preview hostname when we have a slug. With the
@@ -2937,19 +3057,8 @@ class Agent:
             logger.exception("Web tools unavailable; continuing without them")
 
         memory_sources = _deepagents_memory_sources()
+        # Per-session workspace instructions are layered at request time.
         system_prompt = _DEEPAGENTS_SYSTEM_PROMPT
-        try:
-            from src.prompting.instruction_loader import compose_instruction_prompt
-
-            backend = self._session_manager.get_backend("default-thread")
-            composed = compose_instruction_prompt(
-                base_prompt=_DEEPAGENTS_SYSTEM_PROMPT, backend=backend
-            )
-            if composed.prompt.strip():
-                system_prompt = composed.prompt
-        except Exception:
-            # Per-session instruction layering is applied at request time.
-            system_prompt = _DEEPAGENTS_SYSTEM_PROMPT
 
         self._deep_agent = create_deep_agent(
             model=_deepagents_model(),

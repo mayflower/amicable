@@ -457,8 +457,31 @@ class K8sSandboxRuntimeBackend(SandboxBackendProtocol):
         payload = {"command": command}
         try:
             resp = self._request("POST", "execute", json=payload, timeout=timeout_s)
-        except Exception:
+            logger.debug("exec endpoint selected: /execute (sandbox_id=%s)", self._sandbox_id)
+        except requests.HTTPError as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status not in (404, 405):
+                logger.warning(
+                    "execute request failed without fallback (sandbox_id=%s status=%s): %s",
+                    self._sandbox_id,
+                    status,
+                    exc,
+                )
+                raise
+            logger.info(
+                "execute endpoint unavailable; falling back to /exec "
+                "(sandbox_id=%s status=%s)",
+                self._sandbox_id,
+                status,
+            )
             resp = self._request("POST", "exec", json=payload, timeout=timeout_s)
+        except requests.RequestException as exc:
+            logger.warning(
+                "execute request failed without fallback (sandbox_id=%s): %s",
+                self._sandbox_id,
+                exc,
+            )
+            raise
         data = resp.json()
         return _ExecResult(
             stdout=str(data.get("stdout") or ""),

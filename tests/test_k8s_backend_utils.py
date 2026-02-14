@@ -85,6 +85,69 @@ class TestK8sBackendUtils(unittest.TestCase):
             "my-template",
         )
 
+    def test_delete_app_environment_prefers_explicit_claim_name(self):
+        class _FakeCustomObjects:
+            def __init__(self):
+                self.deleted_name = None
+
+            def delete_namespaced_custom_object(self, **kwargs):
+                self.deleted_name = kwargs.get("name")
+
+        class _FakeClient:
+            class _ApiExceptionError(Exception):
+                def __init__(self, status: int):
+                    self.status = status
+
+            ApiException = _ApiExceptionError
+
+            class V1DeleteOptions:
+                def __init__(self, **_kwargs):
+                    pass
+
+        b = K8sAgentSandboxBackend.__new__(K8sAgentSandboxBackend)
+        b.namespace = "ns"
+        b.custom_objects_api = _FakeCustomObjects()
+        b._client = _FakeClient
+        b._claim_exists = lambda name: name == "actual-claim"
+
+        ok = b.delete_app_environment(
+            session_id="sess-1",
+            slug="my-slug",
+            claim_name="actual-claim",
+        )
+        self.assertTrue(ok)
+        self.assertEqual(b.custom_objects_api.deleted_name, "actual-claim")
+
+    def test_wait_for_sandbox_ready_passes_on_final_ready_check(self):
+        class _FakeWatch:
+            def stream(self, **_kwargs):
+                return []
+
+            def stop(self):
+                return None
+
+        class _FakeCustomObjects:
+            def list_namespaced_custom_object(self, **_kwargs):
+                return {}
+
+            def get_namespaced_custom_object(self, **_kwargs):
+                return {
+                    "status": {
+                        "conditions": [
+                            {"type": "Ready", "status": "True", "reason": "Running"}
+                        ]
+                    }
+                }
+
+        b = K8sAgentSandboxBackend.__new__(K8sAgentSandboxBackend)
+        b.namespace = "ns"
+        b.sandbox_ready_timeout_s = 1
+        b.custom_objects_api = _FakeCustomObjects()
+        b._watch_cls = _FakeWatch
+
+        # Must not raise when final object is Ready.
+        b._wait_for_sandbox_ready("claim-1")
+
 
 if __name__ == "__main__":
     unittest.main()
