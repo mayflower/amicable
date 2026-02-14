@@ -234,7 +234,7 @@ agent:
     #   AUTH_REDIRECT_ALLOW_ORIGINS: "https://amicable.data.mayflower.tech"
     # Langfuse (non-secret values):
     #   LANGFUSE_PUBLIC_KEY: "pk-lf-..."
-    #   LANGFUSE_HOST: "https://langfuse.mayflower.cloud"
+    #   LANGFUSE_BASE_URL: "https://langfuse.mayflower.cloud"
     extra: {}
   secret:
     name: amicable-agent-secrets
