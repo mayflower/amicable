@@ -1,4 +1,4 @@
-FROM php:8.3-cli-bookworm
+FROM php:8.4-cli-bookworm
 
 # Install system deps: python for runtime API, node/npm for Laravel tooling.
 RUN apt-get update \
