@@ -27,6 +27,19 @@ class DesignApproach:
             "height": int(self.height),
         }
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> DesignApproach:
+        return cls(
+            approach_id=str(d["approach_id"]),
+            title=str(d["title"]),
+            rationale=str(d["rationale"]),
+            render_prompt=str(d["render_prompt"]),
+            image_base64=str(d["image_base64"]),
+            mime_type=str(d["mime_type"]),
+            width=int(d["width"]),
+            height=int(d["height"]),
+        )
+
 
 @dataclass
 class DesignState:
@@ -54,6 +67,21 @@ class DesignState:
             "last_user_instruction": self.last_user_instruction,
             "updated_at_ms": int(self.updated_at_ms),
         }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> DesignState:
+        return cls(
+            project_id=str(d["project_id"]),
+            path=str(d["path"]),
+            viewport_width=int(d["viewport_width"]),
+            viewport_height=int(d["viewport_height"]),
+            approaches=[DesignApproach.from_dict(a) for a in d.get("approaches", [])],
+            selected_approach_id=d.get("selected_approach_id"),
+            total_iterations=int(d.get("total_iterations", 0)),
+            pending_continue_decision=bool(d.get("pending_continue_decision", False)),
+            last_user_instruction=d.get("last_user_instruction"),
+            updated_at_ms=int(d.get("updated_at_ms", 0)),
+        )
 
 
 @dataclass
