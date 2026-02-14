@@ -29,6 +29,7 @@ RUN curl -fsSL "https://storage.googleapis.com/flutter_infra_release/releases/${
   && mkdir -p /opt \
   && tar -xf /tmp/flutter.tar.xz -C /opt \
   && rm /tmp/flutter.tar.xz \
+  && git config --global --add safe.directory /opt/flutter \
   && flutter --version \
   && flutter config --enable-web \
   && (flutter --disable-analytics || true)
@@ -41,6 +42,21 @@ WORKDIR /app
 COPY k8s/images/amicable-sandbox-flutter/app/pubspec.yaml k8s/images/amicable-sandbox-flutter/app/pubspec.lock ./
 RUN flutter pub get
 COPY k8s/images/amicable-sandbox-flutter/app/ /app/
+
+# Pre-download the Web SDK and warm the DDC compilation cache so that
+# the warm-pool pod starts serving the preview in seconds instead of ~30 s.
+# 1) Download the Web SDK artifacts at build time.
+# 2) Start a throwaway debug server, wait until DDC compiles, then kill it.
+#    This populates .dart_tool/ caches that `flutter run` reuses at runtime.
+RUN flutter precache --web
+RUN sh -c '\
+  flutter run -d web-server --web-port 19999 --no-dds & \
+  FPID=$! ; \
+  for i in $(seq 1 180); do \
+    curl -s -o /dev/null http://localhost:19999/ 2>/dev/null && break ; \
+    sleep 1 ; \
+  done ; \
+  kill $FPID 2>/dev/null ; wait $FPID 2>/dev/null || true'
 
 # Default DeepAgents memory/skills locations.
 COPY k8s/images/amicable-sandbox-flutter/AGENTS.md /app/AGENTS.md
