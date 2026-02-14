@@ -201,6 +201,67 @@ def _langfuse_callback_handler():
         return None
 
 
+def _openinference_attributes_context(
+    *,
+    session_id: str,
+    permission_mode: PermissionMode,
+    thinking_level: ThinkingLevel,
+    configurable: dict[str, Any],
+):
+    metadata: dict[str, Any] = {
+        "permission_mode": permission_mode,
+        "thinking_level": thinking_level,
+    }
+    project_slug = configurable.get("project_slug")
+    if isinstance(project_slug, str) and project_slug:
+        metadata["project_slug"] = project_slug
+    project_name = configurable.get("project_name")
+    if isinstance(project_name, str) and project_name:
+        metadata["project_name"] = project_name
+
+    try:
+        from openinference.instrumentation import using_attributes
+    except Exception:
+        return contextlib.nullcontext()
+
+    kwargs: dict[str, Any] = {"session_id": session_id}
+    if metadata:
+        kwargs["metadata"] = metadata
+    try:
+        return using_attributes(**kwargs)
+    except Exception:
+        logger.warning(
+            "OpenInference run context setup failed; continuing without attributes",
+            exc_info=True,
+        )
+        return contextlib.nullcontext()
+
+
+async def _astream_controller_events_with_openinference(
+    *,
+    controller: Any,
+    payload: Any,
+    config: dict[str, Any],
+    session_id: str,
+    permission_mode: PermissionMode,
+    thinking_level: ThinkingLevel,
+):
+    configurable_raw = config.get("configurable")
+    configurable = configurable_raw if isinstance(configurable_raw, dict) else {}
+    with _openinference_attributes_context(
+        session_id=session_id,
+        permission_mode=permission_mode,
+        thinking_level=thinking_level,
+        configurable=configurable,
+    ):
+        async for event in controller.astream_events(
+            payload,
+            config=config,
+            version="v2",
+        ):
+            yield event
+
+
 def _deepagents_qa_enabled() -> bool:
     # Backwards-compatible behavior: existing deployments set DEEPAGENTS_VALIDATE=1.
     from src.deepagents_backend.qa import qa_enabled_from_env
@@ -1758,10 +1819,13 @@ class Agent:
                     )
                 ]
             )
-            async for event in self._deep_controller.astream_events(
-                {"messages": initial_messages, "attempt": 0},
+            async for event in _astream_controller_events_with_openinference(
+                controller=self._deep_controller,
+                payload={"messages": initial_messages, "attempt": 0},
                 config=config,
-                version="v2",
+                session_id=session_id,
+                permission_mode=permission_mode,
+                thinking_level=thinking_level,
             ):
                 etype = event.get("event")
                 name = event.get("name")
@@ -2545,10 +2609,13 @@ class Agent:
         try:
             from langgraph.types import Command  # type: ignore
 
-            async for event in self._deep_controller.astream_events(
-                Command(resume=response),
+            async for event in _astream_controller_events_with_openinference(
+                controller=self._deep_controller,
+                payload=Command(resume=response),
                 config=config,
-                version="v2",
+                session_id=session_id,
+                permission_mode=permission_mode,
+                thinking_level=thinking_level,
             ):
                 etype = event.get("event")
                 name = event.get("name")

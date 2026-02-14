@@ -2557,6 +2557,17 @@ async def db_graphql_proxy(app_id: str, request: Request) -> Response:
 async def _startup() -> None:
     global _agent
     _require_hasura()
+    try:
+        from src.observability.openinference_otel import (
+            init_openinference_langchain_otel,
+        )
+
+        init_openinference_langchain_otel()
+    except Exception:
+        logger.warning(
+            "OpenInference OTEL startup init failed; continuing without tracing",
+            exc_info=True,
+        )
     if _agent is None:
         _agent = Agent()
 

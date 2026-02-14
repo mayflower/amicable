@@ -279,6 +279,14 @@ agent:
     # Langfuse (non-secret values):
     #   LANGFUSE_PUBLIC_KEY: "pk-lf-..."
     #   LANGFUSE_BASE_URL: "https://langfuse.mayflower.cloud"
+    # OpenInference / OTEL tracing (staging-first rollout):
+    #   AMICABLE_OTEL_ENABLED: "1"
+    #   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://monitoring-stack-alloy.monitoring.svc.cluster.local:4318/v1/traces"
+    #   OTEL_SERVICE_NAME: "amicable-agent-staging"
+    #   OTEL_RESOURCE_ATTRIBUTES: "service.namespace=amicable,deployment.environment=staging"
+    #   OPENINFERENCE_HIDE_INPUT_TEXT: "true"
+    #   OPENINFERENCE_HIDE_OUTPUT_TEXT: "true"
+    #   OPENINFERENCE_HIDE_INPUT_IMAGES: "true"
     extra: {}
   secret:
     name: amicable-agent-secrets

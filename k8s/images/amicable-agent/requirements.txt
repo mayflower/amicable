@@ -163,26 +163,48 @@ oauthlib==3.3.1
     # via requests-oauthlib
 openai==2.21.0
     # via langfuse
+openinference-instrumentation==0.1.44
+    # via
+    #   -r k8s/images/amicable-agent/requirements.in
+    #   openinference-instrumentation-langchain
+openinference-instrumentation-langchain==0.1.59
+    # via -r k8s/images/amicable-agent/requirements.in
+openinference-semantic-conventions==0.1.26
+    # via
+    #   openinference-instrumentation
+    #   openinference-instrumentation-langchain
 opentelemetry-api==1.39.1
     # via
     #   langfuse
+    #   openinference-instrumentation
+    #   openinference-instrumentation-langchain
     #   opentelemetry-exporter-otlp-proto-http
+    #   opentelemetry-instrumentation
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
 opentelemetry-exporter-otlp-proto-common==1.39.1
     # via opentelemetry-exporter-otlp-proto-http
 opentelemetry-exporter-otlp-proto-http==1.39.1
-    # via langfuse
+    # via
+    #   -r k8s/images/amicable-agent/requirements.in
+    #   langfuse
+opentelemetry-instrumentation==0.60b1
+    # via openinference-instrumentation-langchain
 opentelemetry-proto==1.39.1
     # via
     #   opentelemetry-exporter-otlp-proto-common
     #   opentelemetry-exporter-otlp-proto-http
 opentelemetry-sdk==1.39.1
     # via
+    #   -r k8s/images/amicable-agent/requirements.in
     #   langfuse
+    #   openinference-instrumentation
     #   opentelemetry-exporter-otlp-proto-http
 opentelemetry-semantic-conventions==0.60b1
-    # via opentelemetry-sdk
+    # via
+    #   openinference-instrumentation-langchain
+    #   opentelemetry-instrumentation
+    #   opentelemetry-sdk
 orjson==3.11.7
     # via
     #   langgraph-checkpoint-postgres
@@ -195,6 +217,7 @@ packaging==25.0
     #   langchain-core
     #   langfuse
     #   langsmith
+    #   opentelemetry-instrumentation
 playwright==1.58.0
     # via -r k8s/images/amicable-agent/requirements.in
 protobuf==6.33.5
@@ -343,7 +366,11 @@ websockets==15.0.1
     #   google-genai
     #   uvicorn
 wrapt==1.17.3
-    # via langfuse
+    # via
+    #   langfuse
+    #   openinference-instrumentation
+    #   openinference-instrumentation-langchain
+    #   opentelemetry-instrumentation
 xxhash==3.6.0
     # via
     #   langgraph

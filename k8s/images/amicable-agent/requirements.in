@@ -19,6 +19,12 @@ playwright
 langfuse
 python-dotenv
 
+# OpenTelemetry + OpenInference instrumentation
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
+openinference-instrumentation
+openinference-instrumentation-langchain
+
 # GraphQL query rewriting for Hasura DB proxy
 graphql-core
 
