@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import threading
 from typing import Any
+
+# Hasura metadata API uses optimistic concurrency (resource_version).
+# Parallel db_create_table calls race on metadata updates and hit 409 conflicts.
+# Serialize all metadata-mutating DB tool calls with a process-wide lock.
+_metadata_lock = threading.Lock()
 
 
 def get_db_tools() -> list[Any]:
@@ -202,10 +208,11 @@ def get_db_tools() -> list[Any]:
         sql = f"CREATE TABLE IF NOT EXISTS {app.schema_name}.{tname} ({', '.join(col_sql)});"
         client.run_sql(sql)
 
-        _track_table(client, schema=app.schema_name, table=tname)
-        _ensure_crud_permissions(
-            client, schema=app.schema_name, table=tname, role=app.role_name
-        )
+        with _metadata_lock:
+            _track_table(client, schema=app.schema_name, table=tname)
+            _ensure_crud_permissions(
+                client, schema=app.schema_name, table=tname, role=app.role_name
+            )
 
         return f"created table {app.schema_name}.{tname} and granted CRUD permissions to role {app.role_name}"
 
@@ -226,7 +233,8 @@ def get_db_tools() -> list[Any]:
         client = hasura_client_from_env()
         app = ensure_app(client, app_id=app_id)
         tname = validate_pg_ident(table)
-        _untrack_table(client, schema=app.schema_name, table=tname)
+        with _metadata_lock:
+            _untrack_table(client, schema=app.schema_name, table=tname)
         client.run_sql(f"DROP TABLE IF EXISTS {app.schema_name}.{tname} CASCADE;")
         return f"dropped {app.schema_name}.{tname}"
 
