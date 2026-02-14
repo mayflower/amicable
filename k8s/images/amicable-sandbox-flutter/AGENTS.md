@@ -11,6 +11,10 @@ The Flutter web dev server is **already running** on port 3000. The runtime mana
 - After writing or editing `.dart` files, the Flutter web dev server **automatically detects changes and recompiles** (hot restart). Wait 10–15 seconds for the rebuild to finish before checking the preview.
 - If the preview seems stuck or shows stale content, try running `flutter clean && flutter pub get` and then wait — the runtime will auto-restart the dev server.
 
+## File Editing — IMPORTANT
+
+- **`write_file` overwrites the target file.** Never use `rm` or `unlink` to delete a file before rewriting it — just call `write_file` directly.
+- Prefer `write_file` over `edit_file` when replacing most or all of a file's content.
 ## Commands (from /app)
 - `flutter pub get`
 - `flutter clean` (only if dependencies or generated code are in a bad state)

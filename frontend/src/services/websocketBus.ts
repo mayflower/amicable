@@ -23,6 +23,7 @@ export class WebSocketBus {
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
   private connectTimeoutMs = 10_000;
+  private _terminalClose = false;
 
   constructor(config: WebSocketBusConfig) {
     this.config = config;
@@ -117,10 +118,13 @@ export class WebSocketBus {
           return;
         }
 
-        if (
-          event.code !== 1000 &&
-          this.reconnectAttempts < this.maxReconnectAttempts
-        ) {
+        // 1008 = Policy Violation (server rejected session, e.g. not_found / auth error).
+        // 1011 = Internal Error (server-side crash).
+        // These are terminal — reconnecting won't help.
+        const terminalCodes = [1000, 1008, 1011];
+        if (terminalCodes.includes(event.code)) {
+          this._terminalClose = true;
+        } else if (this.reconnectAttempts < this.maxReconnectAttempts) {
           this.scheduleReconnect();
         }
       };
@@ -241,6 +245,11 @@ export class WebSocketBus {
 
   public getConnected(): boolean {
     return this.isReady && this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  /** True if the server rejected the session with a terminal close code (e.g. not_found). */
+  public get terminalClose(): boolean {
+    return this._terminalClose;
   }
 }
 

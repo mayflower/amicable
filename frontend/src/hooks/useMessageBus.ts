@@ -44,6 +44,7 @@ export const useMessageBus = ({
   const webSocketRef = useRef<WebSocketBus | null>(null);
   const handlersRef = useRef(handlers);
   const isConnectingRef = useRef(false);
+  const terminalCloseRef = useRef(false);
   const lastConnectParamsRef = useRef<{
     wsUrl: string;
     sessionId?: string;
@@ -110,6 +111,9 @@ export const useMessageBus = ({
       },
       onDisconnect: () => {
         console.log("MessageBus disconnected");
+        if (webSocketRef.current?.terminalClose) {
+          terminalCloseRef.current = true;
+        }
         setIsConnected(false);
         setIsConnecting(false);
         isConnectingRef.current = false;
@@ -127,6 +131,12 @@ export const useMessageBus = ({
       throw new Error("MessageBus not initialized");
     }
 
+    // Don't reconnect after a terminal server rejection (e.g. not_found, auth error).
+    if (terminalCloseRef.current) {
+      console.log("Connection terminated by server, not reconnecting");
+      return;
+    }
+
     // Prevent multiple simultaneous connection attempts
     if (isConnectingRef.current) {
       console.log("Connection already in progress, skipping...");
@@ -135,6 +145,12 @@ export const useMessageBus = ({
 
     const nextParams = { wsUrl, sessionId, permissionMode, thinkingLevel };
     const prevParams = lastConnectParamsRef.current;
+
+    // Reset terminal state when connecting to a different session.
+    if (prevParams && prevParams.sessionId !== nextParams.sessionId) {
+      terminalCloseRef.current = false;
+    }
+
     const sameParams =
       prevParams &&
       prevParams.wsUrl === nextParams.wsUrl &&

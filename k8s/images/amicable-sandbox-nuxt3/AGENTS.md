@@ -2,6 +2,10 @@
 
 This workspace is a Nuxt 3 starter (Vue + Vite) intended for AI-driven editing.
 
+## File Editing
+
+- **`write_file` overwrites the target file.** Never use `rm` or `unlink` to delete a file before rewriting it — just call `write_file` directly.
+- Prefer `write_file` over `edit_file` when replacing most or all of a file's content.
 ## Commands (from /app)
 - `npm install`
 - `npm run dev` (preview runs on port 3000)
