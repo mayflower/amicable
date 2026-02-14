@@ -212,6 +212,8 @@ const Create = () => {
   const runtimeErrorRecentRef = useRef<Map<string, number>>(new Map());
   const runtimeProbeSeqRef = useRef(0);
   const processedMessageIds = useRef<Set<string>>(new Set());
+  const templateIdRef = useRef<string | null>(null);
+  const updateFileRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const location = useLocation();
   const routeState = (location.state as unknown as CreateRouteState | null) ?? null;
   const navigate = useNavigate();
@@ -785,6 +787,10 @@ const Create = () => {
         console.log("Sandbox already exists, skipping initial prompt");
       }
 
+      if (typeof message.data.template_id === "string") {
+        templateIdRef.current = message.data.template_id;
+      }
+
       const conversationHistory = asConversationHistory(
         message.data.conversation_history
       );
@@ -1159,6 +1165,18 @@ const Create = () => {
           },
         ];
       });
+
+      // Flutter has no browser-side HMR; a full iframe reload is the only
+      // way to pick up recompiled code.  Debounce so rapid file writes
+      // collapse into a single refresh once the batch settles.
+      if (templateIdRef.current === "flutter") {
+        if (updateFileRefreshTimerRef.current) {
+          clearTimeout(updateFileRefreshTimerRef.current);
+        }
+        updateFileRefreshTimerRef.current = setTimeout(() => {
+          refreshIframe();
+        }, 2000);
+      }
     },
 
     [MessageType.UPDATE_COMPLETED]: (message: Message) => {
@@ -1486,6 +1504,14 @@ const Create = () => {
       rejectDesignIterationWaiter("View was closed");
     };
   }, [rejectDesignIterationWaiter]);
+
+  useEffect(() => {
+    return () => {
+      if (updateFileRefreshTimerRef.current) {
+        clearTimeout(updateFileRefreshTimerRef.current);
+      }
+    };
+  }, []);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
