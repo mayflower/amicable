@@ -106,6 +106,9 @@ Preview URLs are generally `https://<sandbox_id>.<PREVIEW_BASE_DOMAIN>/`. In clu
 - `PUBLIC_BASE_URL` — OAuth callback URL base
 - `CORS_ALLOW_ORIGINS`, `AUTH_REDIRECT_ALLOW_ORIGINS` — allowlists
 - `K8S_SANDBOX_NAMESPACE`, `K8S_SANDBOX_TEMPLATE_NAME`
+- `K8S_RUNTIME_READY_TIMEOUT_S` (default `5`) — probe timeout for pre-existing sandboxes
+- `K8S_RUNTIME_READY_NEW_TIMEOUT_S` (default `30`) — probe timeout for newly created sandboxes (allows DNS/Service propagation)
+- `K8S_RUNTIME_READY_POLL_MS` (default `250`) — poll interval between runtime probe attempts
 - `PREVIEW_BASE_DOMAIN`, `PREVIEW_SCHEME`
 - `PREVIEW_RESOLVER_TOKEN` — optional shared token for the in-cluster preview-router → agent resolver (`/internal/preview/resolve`)
 - `AMICABLE_TEMPLATE_K8S_TEMPLATE_MAP_JSON` — optional JSON map of `template_id` → K8s SandboxTemplate name (override defaults)

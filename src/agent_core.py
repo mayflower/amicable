@@ -131,6 +131,11 @@ def _runtime_ready_timeout_s() -> int:
     return max(1, _env_int("K8S_RUNTIME_READY_TIMEOUT_S", 5))
 
 
+def _runtime_ready_new_timeout_s() -> int:
+    """Timeout for newly created sandboxes where DNS/Service may not be ready yet."""
+    return max(1, _env_int("K8S_RUNTIME_READY_NEW_TIMEOUT_S", 30))
+
+
 def _runtime_ready_poll_ms() -> int:
     return max(50, _env_int("K8S_RUNTIME_READY_POLL_MS", 250))
 
@@ -393,9 +398,15 @@ class Agent:
         backend: Any,
         session_id: str,
         sandbox_id: str,
+        sandbox_is_new: bool = False,
     ) -> None:
         start = time.monotonic()
-        deadline = start + float(_runtime_ready_timeout_s())
+        timeout_s = (
+            _runtime_ready_new_timeout_s()
+            if sandbox_is_new
+            else _runtime_ready_timeout_s()
+        )
+        deadline = start + float(timeout_s)
         poll_s = float(_runtime_ready_poll_ms()) / 1000.0
         attempts = 0
         probe_exc: Exception | None = None
@@ -434,12 +445,12 @@ class Agent:
             raise RuntimeError(
                 "runtime_unreachable: sandbox runtime did not become reachable "
                 f"(session_id={session_id}, sandbox_id={sandbox_id}, attempts={attempts}, "
-                f"timeout_s={_runtime_ready_timeout_s()}, last_error={probe_exc})"
+                f"timeout_s={timeout_s}, is_new={sandbox_is_new}, last_error={probe_exc})"
             )
         raise RuntimeError(
             "runtime_unreachable: sandbox runtime did not become reachable "
             f"(session_id={session_id}, sandbox_id={sandbox_id}, attempts={attempts}, "
-            f"timeout_s={_runtime_ready_timeout_s()})"
+            f"timeout_s={timeout_s}, is_new={sandbox_is_new})"
         )
 
     async def _get_langgraph_checkpointer(self):
@@ -1084,7 +1095,10 @@ class Agent:
         # Poll the sandbox runtime API until it accepts connections. Fail closed if
         # it never becomes reachable to avoid persisting a broken session.
         self._probe_runtime_or_raise(
-            backend=backend, session_id=session_id, sandbox_id=sess.sandbox_id
+            backend=backend,
+            session_id=session_id,
+            sandbox_id=sess.sandbox_id,
+            sandbox_is_new=not sess.exists,
         )
         _log_stage("runtime_probe")
 
