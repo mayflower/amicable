@@ -253,6 +253,7 @@ const Create = () => {
   const designStateRef = useRef<DesignState | null>(null);
   const [designLoading, setDesignLoading] = useState(false);
   const [designIterating, setDesignIterating] = useState(false);
+  const [designBatchStarting, setDesignBatchStarting] = useState(false);
   const [designBatchProgress, setDesignBatchProgress] = useState(0);
   const [designError, setDesignError] = useState<string | null>(null);
   const designIterationWaiterRef = useRef<{
@@ -653,8 +654,12 @@ const Create = () => {
   const runDesignIterationBatch = useCallback(
     async (batchSize = 5) => {
       const st = designStateRef.current;
-      if (!resolvedSessionId || !st || !st.selected_approach_id) return;
+      if (!resolvedSessionId || !st || !st.selected_approach_id) {
+        setDesignBatchStarting(false);
+        return;
+      }
       if (!isConnectedRef.current) {
+        setDesignBatchStarting(false);
         setDesignError("Not connected to workspace.");
         return;
       }
@@ -662,10 +667,12 @@ const Create = () => {
         (a) => a.approach_id === st.selected_approach_id
       );
       if (!selected) {
+        setDesignBatchStarting(false);
         setDesignError("Selected design could not be found.");
         return;
       }
 
+      setDesignBatchStarting(false);
       setDesignIterating(true);
       setDesignBatchProgress(0);
       setDesignError(null);
@@ -689,6 +696,19 @@ const Create = () => {
             "Preserve current product functionality, data flow, and information architecture.",
             `Iteration: ${iterationNumber}`,
           ].join("\n");
+
+          setMessages((prev) => [
+            ...prev,
+            {
+              type: MessageType.USER,
+              timestamp: Date.now(),
+              data: {
+                text: `[Design Iteration ${i + 1}/${batchSize}]\n${text}`,
+                sender: Sender.USER,
+              },
+              session_id: resolvedSessionId || undefined,
+            },
+          ]);
 
           sendRef.current(MessageType.USER, {
             text,
@@ -729,6 +749,7 @@ const Create = () => {
         });
         setDesignError(apiErrorMessage(err, "Design iteration failed."));
       } finally {
+        setDesignBatchStarting(false);
         setDesignIterating(false);
       }
     },
@@ -1701,25 +1722,37 @@ const Create = () => {
   const handleDesignAccept = useCallback(
     (approachId: string) => {
       if (designIterating) return;
+      setDesignBatchStarting(true);
+      pushAssistantMessage(
+        "Accepted design. Starting a 5-iteration implementation batch to move the UI toward the selected layout."
+      );
       void syncDesignSelection({
         approachId,
         pendingContinueDecision: false,
       }).then((st) => {
-        if (!st) return;
+        if (!st) {
+          setDesignBatchStarting(false);
+          return;
+        }
         void runDesignIterationBatch(5);
       });
     },
-    [syncDesignSelection, runDesignIterationBatch, designIterating]
+    [syncDesignSelection, runDesignIterationBatch, designIterating, pushAssistantMessage]
   );
 
   const handleDesignContinue = useCallback(() => {
     const st = designStateRef.current;
     if (!st?.selected_approach_id) return;
+    setDesignBatchStarting(true);
     void syncDesignSelection({
       approachId: st.selected_approach_id,
       totalIterations: st.total_iterations,
       pendingContinueDecision: false,
-    }).then(() => {
+    }).then((next) => {
+      if (!next) {
+        setDesignBatchStarting(false);
+        return;
+      }
       void runDesignIterationBatch(5);
     });
   }, [syncDesignSelection, runDesignIterationBatch]);
@@ -1727,6 +1760,7 @@ const Create = () => {
   const handleDesignStop = useCallback(() => {
     const st = designStateRef.current;
     if (!st?.selected_approach_id) return;
+    setDesignBatchStarting(false);
     void syncDesignSelection({
       approachId: st.selected_approach_id,
       totalIterations: st.total_iterations,
@@ -2553,6 +2587,7 @@ const Create = () => {
               <DesignPane
                 state={designState}
                 loading={designLoading}
+                batchStarting={designBatchStarting}
                 iterating={designIterating}
                 batchProgress={designBatchProgress}
                 error={designError}

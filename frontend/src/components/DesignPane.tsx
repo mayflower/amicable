@@ -5,6 +5,7 @@ import { Loader2 } from "lucide-react";
 type DesignPaneProps = {
   state: DesignState | null;
   loading: boolean;
+  batchStarting: boolean;
   iterating: boolean;
   batchProgress: number;
   error: string | null;
@@ -20,6 +21,7 @@ const imageSrc = (mimeType: string, b64: string) => `data:${mimeType};base64,${b
 export const DesignPane = ({
   state,
   loading,
+  batchStarting,
   iterating,
   batchProgress,
   error,
@@ -58,6 +60,13 @@ export const DesignPane = ({
             Viewport: {state.viewport_width}x{state.viewport_height}
             {" • "}
             Iterations: {state.total_iterations}
+          </div>
+        ) : null}
+
+        {batchStarting && !iterating ? (
+          <div className="border border-border rounded-md p-3 bg-muted/30 flex items-center gap-2 text-sm">
+            <Loader2 size={14} className="animate-spin" />
+            <span>Design batch started. Preparing first iteration...</span>
           </div>
         ) : null}
 
