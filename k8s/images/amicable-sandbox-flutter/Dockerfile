@@ -17,7 +17,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 ARG FLUTTER_CHANNEL=stable
-ARG FLUTTER_VERSION=3.27.3
+ARG FLUTTER_VERSION=3.41.1
 ARG FLUTTER_HOME=/opt/flutter
 
 ENV FLUTTER_HOME=${FLUTTER_HOME}
