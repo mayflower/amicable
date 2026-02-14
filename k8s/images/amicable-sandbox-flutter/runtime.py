@@ -4,6 +4,7 @@ import asyncio
 import base64
 import contextlib
 import os
+import pty
 import selectors
 import shlex
 import signal
@@ -218,8 +219,43 @@ def _safe_path(rel_path: str) -> Path:
     return full
 
 
+# PTY master fd for sending hot-restart commands to the Flutter process.
+_pty_master_fd: int | None = None
+_pty_lock = threading.Lock()
+
+# Debounced hot restart: multiple rapid writes coalesce into one restart.
+_hot_restart_timer: threading.Timer | None = None
+_hot_restart_timer_lock = threading.Lock()
+_HOT_RESTART_DEBOUNCE_S = 0.5
+
+
+def _send_hot_restart_now() -> None:
+    """Send 'R' (hot restart) to the Flutter dev server via PTY."""
+    with _pty_lock:
+        fd = _pty_master_fd
+        if fd is None:
+            return
+        try:
+            os.write(fd, b"R")
+        except Exception:
+            pass
+
+
+def _schedule_hot_restart() -> None:
+    """Schedule a debounced hot restart (coalesces rapid writes)."""
+    global _hot_restart_timer
+    with _hot_restart_timer_lock:
+        if _hot_restart_timer is not None:
+            _hot_restart_timer.cancel()
+        _hot_restart_timer = threading.Timer(
+            _HOT_RESTART_DEBOUNCE_S, _send_hot_restart_now
+        )
+        _hot_restart_timer.daemon = True
+        _hot_restart_timer.start()
+
+
 def _start_preview() -> None:
-    # Start the preview server in the background with auto-respawn.
+    global _pty_master_fd
     env = os.environ.copy()
     raw = (env.get("AMICABLE_PREVIEW_CMD") or "").strip()
     if raw:
@@ -230,23 +266,32 @@ def _start_preview() -> None:
     max_restarts = 100
 
     def _run() -> None:
+        global _pty_master_fd
         restarts = 0
         log_path = (env.get("AMICABLE_PREVIEW_LOG_PATH") or "/tmp/amicable-preview.log").strip()
         pid_path = (env.get("AMICABLE_PREVIEW_PID_PATH") or "/tmp/amicable-preview.pid").strip()
         while restarts < max_restarts:
             logf = None
+            master_fd = None
             try:
                 try:
                     logf = open(log_path, "a", encoding="utf-8", errors="replace")
                 except Exception:
                     logf = None
+                # Allocate a PTY so Flutter sees isatty(stdin)==true and
+                # enables its interactive key handler (R = hot restart).
+                master_fd, slave_fd = pty.openpty()
                 proc = subprocess.Popen(
                     cmd,
                     cwd=str(APP_ROOT),
                     env=env,
+                    stdin=slave_fd,
                     stdout=logf or subprocess.DEVNULL,
                     stderr=subprocess.STDOUT if logf else subprocess.DEVNULL,
                 )
+                os.close(slave_fd)
+                with _pty_lock:
+                    _pty_master_fd = master_fd
                 try:
                     Path(pid_path).write_text(str(proc.pid), encoding="utf-8")
                 except Exception:
@@ -255,6 +300,11 @@ def _start_preview() -> None:
             except Exception as exc:
                 print(f"Preview server error: {exc}")
             finally:
+                with _pty_lock:
+                    _pty_master_fd = None
+                if master_fd is not None:
+                    with contextlib.suppress(Exception):
+                        os.close(master_fd)
                 try:
                     if logf is not None:
                         logf.close()
@@ -289,6 +339,7 @@ async def exec_cmd(req: ExecRequest) -> ExecResponse:
             timeout_s=_exec_timeout_s(),
             max_output_chars=_exec_max_output_chars(),
         )
+        _schedule_hot_restart()
         return ExecResponse(stdout=stdout, stderr=stderr, exit_code=code)
     except ValueError as exc:
         return ExecResponse(stdout="", stderr=f"Invalid command: {exc}", exit_code=2)
@@ -514,4 +565,12 @@ async def write_b64(req: WriteB64Request) -> dict:
         full.write_bytes(payload)
 
     await asyncio.to_thread(_write_sync)
+    _schedule_hot_restart()
     return {"ok": True, "path": str(req.path)}
+
+
+@app.post("/hot-restart")
+async def hot_restart() -> dict:
+    """Explicitly trigger a Flutter hot restart."""
+    _send_hot_restart_now()
+    return {"ok": True}
