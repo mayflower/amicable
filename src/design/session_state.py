@@ -172,13 +172,18 @@ def set_state(state: DesignState) -> DesignState:
 
 
 def update_state(project_id: str, **changes: object) -> DesignState | None:
-    current = _state_by_project.get(_project_key(project_id))
+    key = _project_key(project_id)
+    current = _state_by_project.get(key)
     if current is None:
-        return None
+        # Cache miss — try Postgres before giving up
+        current = _load_from_db(key)
+        if current is None:
+            return None
+        _state_by_project[key] = current
     if "approaches" in changes and isinstance(changes["approaches"], list):
         changes["approaches"] = list(changes["approaches"])
     next_state = replace(current, **changes, updated_at_ms=int(time.time() * 1000))
-    _state_by_project[_project_key(project_id)] = next_state
+    _state_by_project[key] = next_state
     _save_to_db(next_state)
     return replace(next_state, approaches=list(next_state.approaches))
 
