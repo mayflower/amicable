@@ -175,7 +175,7 @@ def _langfuse_callback_handler():
     if not os.environ.get("LANGFUSE_PUBLIC_KEY"):
         return None
     try:
-        from langfuse.callback import CallbackHandler
+        from langfuse.langchain import CallbackHandler
 
         return CallbackHandler()
     except Exception:
