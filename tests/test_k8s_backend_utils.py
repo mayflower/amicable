@@ -148,6 +148,64 @@ class TestK8sBackendUtils(unittest.TestCase):
         # Must not raise when final object is Ready.
         b._wait_for_sandbox_ready("claim-1")
 
+    def test_wait_for_sandbox_ready_fast_path_skips_watch(self):
+        class _WatchShouldNotBeUsed:
+            def __init__(self):
+                raise AssertionError("watch should not be created for ready sandbox")
+
+        class _FakeCustomObjects:
+            def get_namespaced_custom_object(self, **_kwargs):
+                return {
+                    "status": {
+                        "conditions": [
+                            {"type": "Ready", "status": "True", "reason": "WarmPoolReady"}
+                        ]
+                    }
+                }
+
+        b = K8sAgentSandboxBackend.__new__(K8sAgentSandboxBackend)
+        b.namespace = "ns"
+        b.sandbox_ready_timeout_s = 1
+        b.custom_objects_api = _FakeCustomObjects()
+        b._watch_cls = _WatchShouldNotBeUsed
+
+        b._wait_for_sandbox_ready("claim-fast")
+
+    def test_wait_for_sandbox_ready_raises_with_condition_summary(self):
+        class _FakeWatch:
+            def stream(self, **_kwargs):
+                return []
+
+            def stop(self):
+                return None
+
+        class _FakeCustomObjects:
+            def get_namespaced_custom_object(self, **_kwargs):
+                return {
+                    "status": {
+                        "conditions": [
+                            {
+                                "type": "Ready",
+                                "status": "False",
+                                "reason": "ImagePullBackOff",
+                            }
+                        ]
+                    }
+                }
+
+            def list_namespaced_custom_object(self, **_kwargs):
+                return {}
+
+        b = K8sAgentSandboxBackend.__new__(K8sAgentSandboxBackend)
+        b.namespace = "ns"
+        b.sandbox_ready_timeout_s = 1
+        b.custom_objects_api = _FakeCustomObjects()
+        b._watch_cls = _FakeWatch
+
+        with self.assertRaises(RuntimeError) as ctx:
+            b._wait_for_sandbox_ready("claim-slow")
+        self.assertIn("ImagePullBackOff", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

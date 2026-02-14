@@ -7,7 +7,6 @@ RUN apt-get update \
     clang \
     cmake \
     curl \
-    git \
     libglu1-mesa \
     ninja-build \
     pkg-config \
@@ -18,6 +17,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 ARG FLUTTER_CHANNEL=stable
+ARG FLUTTER_VERSION=3.27.3
 ARG FLUTTER_HOME=/opt/flutter
 
 ENV FLUTTER_HOME=${FLUTTER_HOME}
@@ -25,7 +25,10 @@ ENV PATH=${FLUTTER_HOME}/bin:${FLUTTER_HOME}/bin/cache/dart-sdk/bin:${PATH}
 ENV FLUTTER_SUPPRESS_ANALYTICS=true
 ENV CI=true
 
-RUN git clone https://github.com/flutter/flutter.git --branch "${FLUTTER_CHANNEL}" --depth 1 "${FLUTTER_HOME}" \
+RUN curl -fsSL "https://storage.googleapis.com/flutter_infra_release/releases/${FLUTTER_CHANNEL}/linux/flutter_linux_${FLUTTER_VERSION}-${FLUTTER_CHANNEL}.tar.xz" -o /tmp/flutter.tar.xz \
+  && mkdir -p /opt \
+  && tar -xf /tmp/flutter.tar.xz -C /opt \
+  && rm /tmp/flutter.tar.xz \
   && flutter --version \
   && flutter config --enable-web \
   && (flutter --disable-analytics || true)
@@ -34,10 +37,10 @@ WORKDIR /runtime
 COPY k8s/images/amicable-sandbox-flutter/requirements.txt ./
 RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
-# App workspace.
 WORKDIR /app
-RUN flutter create --platforms=android,ios,web --org com.amicable --project-name amicable_starter . \
-  && flutter pub get
+COPY k8s/images/amicable-sandbox-flutter/app/pubspec.yaml k8s/images/amicable-sandbox-flutter/app/pubspec.lock ./
+RUN flutter pub get
+COPY k8s/images/amicable-sandbox-flutter/app/ /app/
 
 # Default DeepAgents memory/skills locations.
 COPY k8s/images/amicable-sandbox-flutter/AGENTS.md /app/AGENTS.md

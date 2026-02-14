@@ -56,6 +56,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Guard sandbox Dockerfiles are deterministic
+        run: |
+          set -euo pipefail
+          files=$(find k8s/images -maxdepth 2 -type f -name Dockerfile | grep 'amicable-sandbox' || true)
+          if [ -z "${files}" ]; then
+            echo "No sandbox Dockerfiles found"
+            exit 0
+          fi
+          forbidden='git clone|create-next-app|create-react-router|nuxi@.* init|sv@.* create|composer create-project|flutter create|mix phx.new|@latest'
+          if rg -n -E "${forbidden}" ${files}; then
+            echo "Found forbidden non-deterministic scaffold command(s) in sandbox Dockerfiles"
+            exit 1
+          fi
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 

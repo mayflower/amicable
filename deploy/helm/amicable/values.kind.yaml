@@ -51,6 +51,13 @@ sandboxTemplates:
         cpu: "1000m"
         memory: "1Gi"
 
+sandboxWarmPools:
+  enabled: false
+  pools:
+    - name: amicable-sandbox-lovable-vite
+      templateName: amicable-sandbox-lovable-vite
+      replicas: 1
+
 agent:
   replicas: 1
   ingress:
@@ -66,6 +73,8 @@ agent:
     previewScheme: http
     runtimePort: "8888"
     previewPort: "3000"
+    runtimeReadyTimeoutS: "5"
+    runtimeReadyPollMs: "250"
     gitSyncRequired: "0"
     extra:
       # Disable GitLab sync for local dev unless you actually configured it.

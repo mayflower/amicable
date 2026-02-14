@@ -82,6 +82,8 @@ These are consumed by `src/sandbox_backends/k8s_backend.py` and `src/deepagents_
 - `SANDBOX_RUNTIME_PORT` (default `8888`)
 - `SANDBOX_PREVIEW_PORT` (default `3000`)
 - `K8S_SANDBOX_READY_TIMEOUT` (default `180` seconds; sandbox ready wait)
+- `K8S_RUNTIME_READY_TIMEOUT_S` (default `5` seconds; runtime API probe timeout after sandbox reports Ready)
+- `K8S_RUNTIME_READY_POLL_MS` (default `250` milliseconds; runtime API probe polling interval)
 
 DeepAgents runtime adapter (timeouts and root mapping):
 
@@ -100,6 +102,25 @@ For Vite-based templates, the SandboxTemplate typically also sets:
 - `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=".your-preview-domain.tld"`
 
 This must include your preview base domain (usually with a leading dot) to keep HMR and host checks working through the wildcard router.
+
+### Optional Warm Pools
+
+If your cluster has the `SandboxWarmPool` CRD (agent-sandbox extensions), Helm can keep ready-to-claim warm sandboxes:
+
+- Values key: `sandboxWarmPools.enabled` and `sandboxWarmPools.pools`
+- Template rendered by chart: `SandboxWarmPool` (`extensions.agents.x-k8s.io/v1alpha1`)
+- Each pool entry maps to a `SandboxTemplate` and replica count.
+
+Example:
+
+```yaml
+sandboxWarmPools:
+  enabled: true
+  pools:
+    - name: amicable-sandbox-lovable-vite
+      templateName: amicable-sandbox-lovable-vite
+      replicas: 1
+```
 
 ## Templates
 
@@ -293,6 +314,8 @@ If you only want to change which image a template id uses, prefer `AMICABLE_TEMP
   - Check `SandboxClaim` and `Sandbox` objects and their conditions/events.
   - Ensure the agent has RBAC to create/read/watch the CRDs in `K8S_SANDBOX_NAMESPACE`.
   - Increase `K8S_SANDBOX_READY_TIMEOUT` if image pulls/build steps are slow.
+  - If using warm pools, check warm pool readiness:
+    - `kubectl get sandboxwarmpools.extensions.agents.x-k8s.io -n <ns>`
 - Preview URL shows 404 or wrong app:
   - Ensure wildcard DNS and ingress route to preview-router.
   - Ensure preview-router’s host parsing matches `PREVIEW_BASE_DOMAIN` and the namespace matches `K8S_SANDBOX_NAMESPACE`.

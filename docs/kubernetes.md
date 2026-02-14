@@ -132,6 +132,7 @@ If your packages are private, configure an `imagePullSecret` in the namespace wh
 
 The Helm chart deploys the full stack:
 - `SandboxTemplate` (agent-sandbox extension)
+- optional `SandboxWarmPool` resources (agent-sandbox extension)
 - `amicable-preview-router` (nginx wildcard router for previews)
 - `amicable-agent` (WebSocket server) + RBAC
 - `amicable-editor` (optional) as a static nginx deployment with runtime config in `/config.js`
@@ -173,6 +174,25 @@ helm upgrade --install amicable ./deploy/helm/amicable \
 ```
 
 For more control, prefer a values file instead of many `--set` flags.
+
+### 4.1 Optional warm pools (cold-start reduction)
+
+If your cluster has the `SandboxWarmPool` CRD installed, you can enable warm pools in Helm values:
+
+```yaml
+sandboxWarmPools:
+  enabled: true
+  pools:
+    - name: amicable-sandbox-lovable-vite
+      templateName: amicable-sandbox-lovable-vite
+      replicas: 1
+```
+
+Verify readiness:
+
+```bash
+kubectl get sandboxwarmpools.extensions.agents.x-k8s.io -n amicable
+```
 
 ## 5. Install With Raw Manifests (optional)
 
@@ -420,6 +440,9 @@ kubectl describe sandbox -n <ns> <name>
 ```
 
 - Confirm your `SandboxTemplate` image is pullable by the cluster and the pod can start.
+- If warm pools are enabled, verify pool health:
+  - `kubectl get sandboxwarmpools.extensions.agents.x-k8s.io -n <ns>`
+  - `kubectl describe sandboxwarmpool -n <ns> <name>`
 
 ### Preview URL returns 404
 - Verify wildcard DNS and ingress host matches `*.preview.<DOMAIN>`.
@@ -434,6 +457,21 @@ kubectl describe sandbox -n <ns> <name>
 ### File edits don’t apply
 - The agent talks to the sandbox runtime API at `http://<sandbox-id>.<ns>.svc.cluster.local:8888`.
 - Check the sandbox container logs to confirm the runtime API is running.
+
+## 12. Warm Pool Promotion Gate (staging -> production)
+
+Recommended rollout gate before production promotion:
+
+1. Deploy warm pool config to staging.
+2. Wait until every configured pool reports desired replicas.
+3. Run startup latency verification (for example P95 init latency target).
+4. Promote the same config to production only after staging passes.
+
+Quick check:
+
+```bash
+kubectl get sandboxwarmpools.extensions.agents.x-k8s.io -n amicable-staging
+```
 
 ## 11. QA + Self-Healing (DeepAgents)
 

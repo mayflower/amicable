@@ -198,6 +198,48 @@ sandboxTemplates:
         cpu: "1000m"
         memory: "1Gi"
 
+# Optional warm pools to reduce sandbox cold-start latency.
+# Requires SandboxWarmPool CRD from agent-sandbox extensions.
+sandboxWarmPools:
+  enabled: false
+  pools:
+    - name: amicable-sandbox-lovable-vite
+      templateName: amicable-sandbox-lovable-vite
+      replicas: 1
+    - name: amicable-sandbox-nextjs15
+      templateName: amicable-sandbox-nextjs15
+      replicas: 1
+    - name: amicable-sandbox-fastapi
+      templateName: amicable-sandbox-fastapi
+      replicas: 1
+    - name: amicable-sandbox-hono
+      templateName: amicable-sandbox-hono
+      replicas: 1
+    - name: amicable-sandbox-remix
+      templateName: amicable-sandbox-remix
+      replicas: 1
+    - name: amicable-sandbox-nuxt3
+      templateName: amicable-sandbox-nuxt3
+      replicas: 1
+    - name: amicable-sandbox-sveltekit
+      templateName: amicable-sandbox-sveltekit
+      replicas: 1
+    - name: amicable-sandbox-laravel
+      templateName: amicable-sandbox-laravel
+      replicas: 1
+    - name: amicable-sandbox-flutter
+      templateName: amicable-sandbox-flutter
+      replicas: 1
+    - name: amicable-sandbox-phoenix
+      templateName: amicable-sandbox-phoenix
+      replicas: 1
+    - name: amicable-sandbox-aspnetcore
+      templateName: amicable-sandbox-aspnetcore
+      replicas: 1
+    - name: amicable-sandbox-quarkus
+      templateName: amicable-sandbox-quarkus
+      replicas: 1
+
 agent:
   replicas: 2
   service:
@@ -222,6 +264,8 @@ agent:
     previewScheme: https
     runtimePort: "8888"
     previewPort: "3000"
+    runtimeReadyTimeoutS: "5"
+    runtimeReadyPollMs: "250"
     # Whether Git sync is required. In production: "1". For local dev: "0".
     gitSyncRequired: "1"
     # Additional env vars passed directly to the agent container.

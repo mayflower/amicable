@@ -1,58 +1,33 @@
 FROM php:8.3-cli-bookworm
 
-# Install system deps: python for runtime API, node/npm for Laravel tooling, git/curl for scaffolding.
+# Install system deps: python for runtime API, node/npm for Laravel tooling.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     python3 python3-pip git curl ca-certificates unzip tini \
+     python3 python3-pip curl ca-certificates unzip tini \
   && rm -rf /var/lib/apt/lists/*
 
-# Install Node 20 (for Laravel's package.json tooling)
+# Install Node 20 (for Laravel tooling)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
   && apt-get update \
   && apt-get install -y --no-install-recommends nodejs \
   && rm -rf /var/lib/apt/lists/*
 
-# Install composer
-RUN curl -fsSL https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+# Install Composer (pinned major line)
+COPY --from=composer:2.8 /usr/bin/composer /usr/local/bin/composer
 
 WORKDIR /runtime
 COPY k8s/images/amicable-sandbox-laravel/requirements.txt ./requirements.txt
 RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
-# Bake the workspace template into /app.
 WORKDIR /app
 ENV COMPOSER_ALLOW_SUPERUSER=1
-RUN composer create-project laravel/laravel /app \
-  && npm install
-
-# Pre-wire the base app with DB proxy wiring (Hasura via agent).
+COPY k8s/images/amicable-sandbox-laravel/app/composer.json k8s/images/amicable-sandbox-laravel/app/composer.lock ./
+COPY k8s/images/amicable-sandbox-laravel/app/package.json k8s/images/amicable-sandbox-laravel/app/package-lock.json ./
+RUN composer install --no-interaction --prefer-dist --no-progress --no-scripts \
+  && npm ci
+COPY k8s/images/amicable-sandbox-laravel/app/ /app/
+RUN composer install --no-interaction --prefer-dist --no-progress
 COPY k8s/images/amicable-sandbox-laravel/overlay/ /app/
-
-# Pre-wire Hasura DB proxy integration for the Laravel template.
-# The agent will overwrite /public/amicable-db.js with real credentials when Hasura is configured.
-RUN python3 - <<'PY'
-from pathlib import Path
-
-# Placeholder asset served at /amicable-db.js.
-db_js = Path("/app/public/amicable-db.js")
-if not db_js.exists():
-    db_js.write_text(
-        "window.__AMICABLE_DB__ = window.__AMICABLE_DB__ || null;\n",
-        encoding="utf-8",
-    )
-
-# Ensure the default welcome page includes the script tag (idempotent).
-welcome = Path("/app/resources/views/welcome.blade.php")
-if welcome.exists():
-    text = welcome.read_text(encoding="utf-8", errors="replace")
-    if "/amicable-db.js" not in text:
-        tag = '    <script src="/amicable-db.js"></script>\n'
-        if "</head>" in text:
-            text = text.replace("</head>", tag + "</head>", 1)
-        else:
-            text = text + "\n" + tag
-        welcome.write_text(text, encoding="utf-8")
-PY
 
 # Default DeepAgents memory/skills locations.
 COPY k8s/images/amicable-sandbox-laravel/AGENTS.md /app/AGENTS.md

@@ -263,6 +263,20 @@ class K8sAgentSandboxBackend:
             raise
 
     def _wait_for_sandbox_ready(self, claim_name: str) -> None:
+        # Fast-path: when a warm claim is already Ready, avoid watch startup delay.
+        try:
+            existing = self.custom_objects_api.get_namespaced_custom_object(
+                group=SANDBOX_API_GROUP,
+                version=SANDBOX_API_VERSION,
+                namespace=self.namespace,
+                plural=SANDBOX_PLURAL_NAME,
+                name=claim_name,
+            )
+            if _sandbox_ready(existing):
+                return
+        except Exception:
+            pass
+
         w = self._watch_cls()
         start = time.time()
 

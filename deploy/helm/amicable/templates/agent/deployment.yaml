@@ -45,6 +45,10 @@ spec:
               value: {{ .Values.agent.env.runtimePort | quote }}
             - name: SANDBOX_PREVIEW_PORT
               value: {{ .Values.agent.env.previewPort | quote }}
+            - name: K8S_RUNTIME_READY_TIMEOUT_S
+              value: {{ (.Values.agent.env.runtimeReadyTimeoutS | default "5") | quote }}
+            - name: K8S_RUNTIME_READY_POLL_MS
+              value: {{ (.Values.agent.env.runtimeReadyPollMs | default "250") | quote }}
             {{- range $name, $val := .Values.agent.env.extra }}
             - name: {{ $name | quote }}
               value: {{ $val | quote }}

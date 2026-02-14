@@ -6,7 +6,6 @@ import contextlib
 import json
 import logging
 import os
-import random
 import time
 import uuid
 from dataclasses import dataclass
@@ -128,12 +127,12 @@ def _deepagents_tool_retry_max_retries() -> int:
     return max(0, _env_int("DEEPAGENTS_TOOL_RETRY_MAX_RETRIES", 2))
 
 
-def _runtime_probe_attempts() -> int:
-    return max(1, _env_int("AMICABLE_RUNTIME_PROBE_ATTEMPTS", 15))
+def _runtime_ready_timeout_s() -> int:
+    return max(1, _env_int("K8S_RUNTIME_READY_TIMEOUT_S", 5))
 
 
-def _runtime_probe_base_delay_ms() -> int:
-    return max(50, _env_int("AMICABLE_RUNTIME_PROBE_BASE_DELAY_MS", 250))
+def _runtime_ready_poll_ms() -> int:
+    return max(50, _env_int("K8S_RUNTIME_READY_POLL_MS", 250))
 
 
 def _langgraph_database_url() -> str:
@@ -390,28 +389,53 @@ class Agent:
         session_id: str,
         sandbox_id: str,
     ) -> None:
-        probe_ok = False
+        start = time.monotonic()
+        deadline = start + float(_runtime_ready_timeout_s())
+        poll_s = float(_runtime_ready_poll_ms()) / 1000.0
+        attempts = 0
         probe_exc: Exception | None = None
-        attempts = _runtime_probe_attempts()
-        base_delay_ms = _runtime_probe_base_delay_ms()
-        for attempt in range(attempts):
+        while True:
+            attempts += 1
             try:
                 backend.execute("true")
-                probe_ok = True
-                break
+                elapsed_ms = int((time.monotonic() - start) * 1000)
+                logger.info(
+                    "sandbox_init_stage session_id=%s sandbox_id=%s stage=runtime_probe "
+                    "status=ok attempts=%d duration_ms=%d",
+                    session_id,
+                    sandbox_id,
+                    attempts,
+                    elapsed_ms,
+                )
+                return
             except Exception as exc:
                 probe_exc = exc
-                if attempt + 1 >= attempts:
+                now = time.monotonic()
+                if now >= deadline:
                     break
-                jitter_ms = random.uniform(0, base_delay_ms * 0.25)
-                sleep_s = ((base_delay_ms * (1.3**attempt)) + jitter_ms) / 1000.0
-                time.sleep(min(2.5, sleep_s))
-        if not probe_ok:
+                time.sleep(min(poll_s, max(0.01, deadline - now)))
+
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        logger.warning(
+            "sandbox_init_stage session_id=%s sandbox_id=%s stage=runtime_probe "
+            "status=failed attempts=%d duration_ms=%d error=%s",
+            session_id,
+            sandbox_id,
+            attempts,
+            elapsed_ms,
+            probe_exc,
+        )
+        if probe_exc is not None:
             raise RuntimeError(
                 "runtime_unreachable: sandbox runtime did not become reachable "
                 f"(session_id={session_id}, sandbox_id={sandbox_id}, attempts={attempts}, "
-                f"last_error={probe_exc})"
+                f"timeout_s={_runtime_ready_timeout_s()}, last_error={probe_exc})"
             )
+        raise RuntimeError(
+            "runtime_unreachable: sandbox runtime did not become reachable "
+            f"(session_id={session_id}, sandbox_id={sandbox_id}, attempts={attempts}, "
+            f"timeout_s={_runtime_ready_timeout_s()})"
+        )
 
     async def _get_langgraph_checkpointer(self):
         """Return an AsyncPostgresSaver if configured, else None."""
@@ -973,6 +997,26 @@ class Agent:
         template_id: str | None = None,
         slug: str | None = None,
     ) -> bool:
+        init_start = time.monotonic()
+        stage_start = init_start
+
+        def _log_stage(stage: str, *, status: str = "ok", **fields: Any) -> None:
+            nonlocal stage_start
+            duration_ms = int((time.monotonic() - stage_start) * 1000)
+            total_ms = int((time.monotonic() - init_start) * 1000)
+            extra = " ".join(f"{k}={v}" for k, v in fields.items())
+            suffix = f" {extra}" if extra else ""
+            logger.info(
+                "sandbox_init_stage session_id=%s stage=%s status=%s duration_ms=%d total_ms=%d%s",
+                session_id,
+                stage,
+                status,
+                duration_ms,
+                total_ms,
+                suffix,
+            )
+            stage_start = time.monotonic()
+
         from src.db.provisioning import hasura_client_from_env, require_hasura_from_env
         from src.deepagents_backend.session_sandbox_manager import SessionSandboxManager
         from src.templates.registry import (
@@ -983,9 +1027,11 @@ class Agent:
 
         # This deployment requires Hasura. Fail fast for clearer errors.
         require_hasura_from_env()
+        _log_stage("hasura_require")
 
         if self._session_manager is None:
             self._session_manager = SessionSandboxManager()
+        _log_stage("session_manager_ready")
 
         # Resolve missing slug from the DB so all init paths (WS + HTTP sandbox FS)
         # can create/reuse the same sandbox and generate stable preview URLs.
@@ -1020,19 +1066,28 @@ class Agent:
         sess = self._session_manager.ensure_session(
             session_id, template_name=sandbox_template_name, slug=effective_slug
         )
+        _log_stage(
+            "sandbox_claim_ready",
+            exists=sess.exists,
+            sandbox_id=sess.sandbox_id,
+            template=sandbox_template_name,
+        )
 
         backend = self._session_manager.get_backend(session_id)
+        _log_stage("runtime_backend_ready", sandbox_id=sess.sandbox_id)
 
         # Poll the sandbox runtime API until it accepts connections. Fail closed if
         # it never becomes reachable to avoid persisting a broken session.
         self._probe_runtime_or_raise(
             backend=backend, session_id=session_id, sandbox_id=sess.sandbox_id
         )
+        _log_stage("runtime_probe")
 
         # Ensure the conventional memories directory exists inside the sandbox workspace.
         # (This is sandbox-local, not store-backed.)
         with contextlib.suppress(Exception):
             backend.execute("cd /app && mkdir -p memories")
+        _log_stage("memory_dir_ensure")
 
         init_data: dict[str, Any] = {
             # Prefer a slug-based preview hostname when we have a slug. With the
@@ -1061,6 +1116,7 @@ class Agent:
             )
         except Exception:
             pass
+        _log_stage("persist_sandbox_id")
 
         # Now that we have both PREVIEW_BASE_DOMAIN and the slug, override the
         # init preview URL to use the slug host label if possible.
@@ -1071,6 +1127,7 @@ class Agent:
                 init_data["url"] = f"{scheme}://{effective_slug}.{base}/"
         except Exception:
             pass
+        _log_stage("preview_url_finalize")
 
         # Platform scaffolding: Backstage + SonarQube + TechDocs (+ optional CI).
         # Non-destructive (create-only) and best-effort.
@@ -1133,8 +1190,10 @@ class Agent:
                     gitlab_group_path=group,
                     create_ci=True,
                 )
+                _log_stage("platform_scaffold")
         except Exception:
             logger.exception("platform scaffolding failed (continuing)")
+            _log_stage("platform_scaffold", status="failed")
 
         # DB provisioning + sandbox injection (required).
         from urllib.parse import urlparse
@@ -1275,6 +1334,7 @@ class Agent:
                         (runtime_js_path, runtime_js.encode("utf-8")),
                     ]
                 )
+        _log_stage("db_inject")
 
         init_data["app_id"] = session_id
         init_data["db"] = {"graphql_url": graphql_url}
@@ -1282,6 +1342,13 @@ class Agent:
         init_data["db_role"] = app.role_name
 
         self.session_data[session_id] = init_data
+        _log_stage("session_data_write")
+        logger.info(
+            "sandbox_init_complete session_id=%s sandbox_id=%s total_ms=%d",
+            session_id,
+            sess.sandbox_id,
+            int((time.monotonic() - init_start) * 1000),
+        )
         return bool(sess.exists)
 
     def get_pending_hitl(self, session_id: str) -> dict[str, Any] | None:

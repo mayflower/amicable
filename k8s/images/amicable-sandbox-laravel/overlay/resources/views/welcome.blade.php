@@ -40,6 +40,7 @@
         color: #b00020;
       }
     </style>
+      <script src="/amicable-db.js"></script>
   </head>
   <body>
     <h1 style="margin: 0 0 8px">Build something great</h1>

@@ -1,0 +1,14 @@
+{{- if .Values.sandboxWarmPools.enabled }}
+{{- range $p := .Values.sandboxWarmPools.pools }}
+---
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: {{ $p.name | quote }}
+  namespace: {{ $.Values.sandboxNamespace | quote }}
+spec:
+  replicas: {{ ($p.replicas | default 1) | int }}
+  sandboxTemplateRef:
+    name: {{ $p.templateName | quote }}
+{{- end }}
+{{- end }}

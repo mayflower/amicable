@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+.venv-uv312
+.pytest_cache
+.ruff_cache
+.playwright-cli
+.vscode
+output
+frontend/node_modules
+frontend/dist
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.DS_Store
